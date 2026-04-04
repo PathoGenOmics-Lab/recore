@@ -15,8 +15,7 @@ pub enum RescueType {
     Fragmented { n_fragments: usize, total_coverage: f64 },
     /// Start site variant: gene is there but with a different start annotation.
     StartVariant { length_diff_bp: i64 },
-    /// Gene hit overlaps a paralog from a different cluster.
-    #[allow(dead_code)]
+    /// Gene hit overlaps a paralog from a different cluster (identity <95%).
     Paralog { other_cluster: String },
 }
 
@@ -225,10 +224,13 @@ fn detect_start_variant(
     let overlapping = gff.overlapping(&hit.target, hit.target_start, hit.target_end);
     let hit_len = (hit.target_end - hit.target_start) as f64;
 
+    let target_aln_len = (hit.target_end - hit.target_start) as i64;
+
     for gene in &overlapping {
         let gene_len = (gene.end - gene.start) as i64;
-        let query_len = hit.query_length as i64;
-        let diff = gene_len - query_len;
+        // Compare GFF gene length vs actual alignment footprint on the genome,
+        // NOT the full query length (which may differ due to soft-clipping, partial alignment).
+        let diff = gene_len - target_aln_len;
 
         if diff.unsigned_abs() < 300 && diff != 0 {
             let overlap_start = hit.target_start.max(gene.start);
@@ -388,13 +390,26 @@ fn classify_single_hit(
 
     if let Some(&other_ci) = gene_to_cluster.get(&matched_gene.gene_id) {
         if other_ci != ci {
-            return (
-                RescueType::Split {
-                    other_cluster: pa.cluster_name(other_ci).to_string(),
-                },
-                Some(matched_gene.gene_id.clone()),
-                base_confidence * 1.1,
-            );
+            // Gene is annotated but assigned to a different Panaroo cluster.
+            // High identity (≥95%) → SPLIT (same gene, mis-clustered by Panaroo).
+            // Lower identity → PARALOG (similar gene from a related family).
+            if hit.identity() >= 95.0 {
+                return (
+                    RescueType::Split {
+                        other_cluster: pa.cluster_name(other_ci).to_string(),
+                    },
+                    Some(matched_gene.gene_id.clone()),
+                    base_confidence * 1.1,
+                );
+            } else {
+                return (
+                    RescueType::Paralog {
+                        other_cluster: pa.cluster_name(other_ci).to_string(),
+                    },
+                    Some(matched_gene.gene_id.clone()),
+                    base_confidence * 0.7, // lower confidence: paralog, not real gene
+                );
+            }
         }
     }
 
@@ -649,6 +664,31 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_start_variant_uses_target_not_query_len() {
+        // GFF gene: 0-1050 (length 1050)
+        // Hit: query_length=1100, query aligned 0-1050. Target: 0-1000 (footprint 1000bp).
+        // With fix: diff = gene_len(1050) - target_aln_len(1000) = +50bp ✓
+        // Old bug would compute: diff = 1050 - 1100(query_length) = -50bp ✗
+        let genes = vec![
+            GffGene { contig: "c".into(), start: 0, end: 1050, strand: '+', gene_id: "gene1".into() },
+        ];
+        let idx = GffIndex::build(genes);
+        let hit = Hit {
+            query: "g".into(), cluster: "g".into(), query_length: 1100,
+            query_start: 0, query_end: 1050, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 1000,
+            matches: 1000, alignment_length: 1050, mapq: 60,
+        };
+        // identity = 1000/1050 = 95.2% (≥98%? NO — need 98%)
+        // query_coverage = 1050/1100 = 95.5% (≥90% ✓)
+        // Adjust matches to pass identity filter:
+        let hit = Hit { matches: 1040, ..hit }; // 1040/1050 = 99.0%
+        let result = detect_start_variant(&hit, Some(&idx));
+        // diff = gene_len(1050) - target_aln_len(1000) = +50
+        assert_eq!(result, Some((50, "gene1".to_string())));
+    }
+
+    #[test]
     fn test_detect_start_variant_no_gff() {
         let hit = make_hit(0, 1000, 1000);
         assert!(detect_start_variant(&hit, None).is_none());
@@ -730,5 +770,53 @@ mod tests {
             RescueType::Fragmented { n_fragments, .. } => assert_eq!(n_fragments, 2),
             _ => panic!("Expected Fragmented"),
         }
+    }
+
+    #[test]
+    fn test_classify_split_vs_paralog() {
+        // Setup: cluster "target_cluster" absent in genome, hit lands on a gene
+        // assigned to "other_cluster". Identity determines SPLIT vs PARALOG.
+        let gff_genes = vec![
+            GffGene { contig: "c".into(), start: 0, end: 1000, strand: '+', gene_id: "geneA".into() },
+        ];
+        let gff = GffIndex::build(gff_genes);
+
+        let pa = PresenceAbsence::new_for_test(
+            vec!["target_cluster".into(), "other_cluster".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()], vec!["geneA".into()]],
+        );
+
+        let mut g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        g2c.insert("geneA".into(), ClusterIdx(1)); // geneA belongs to other_cluster
+
+        // High identity (99%) → SPLIT
+        let hit_high = Hit {
+            query: "q".into(), cluster: "target_cluster".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 1000,
+            matches: 990, alignment_length: 1000, mapq: 60,
+        };
+        let result = classify_hits(&[hit_high], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let r = result.unwrap();
+        match &r.rescue_type {
+            RescueType::Split { other_cluster } => assert_eq!(other_cluster, "other_cluster"),
+            other => panic!("Expected Split, got {:?}", other),
+        }
+
+        // Low identity (90%) → PARALOG
+        let hit_low = Hit {
+            query: "q".into(), cluster: "target_cluster".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 1000,
+            matches: 900, alignment_length: 1000, mapq: 60,
+        };
+        let result = classify_hits(&[hit_low], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let r = result.unwrap();
+        match &r.rescue_type {
+            RescueType::Paralog { other_cluster } => assert_eq!(other_cluster, "other_cluster"),
+            other => panic!("Expected Paralog, got {:?}", other),
+        }
+        assert!(r.confidence < 0.7, "Paralog should have reduced confidence");
     }
 }
