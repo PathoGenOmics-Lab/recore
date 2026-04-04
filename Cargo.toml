@@ -2,7 +2,7 @@
 name = "recore"
 version = "0.1.0"
 edition = "2021"
-authors = ["Paula Ruiz-Rodriguez <paula.ruiz@uv.es>"]
+authors = ["Paula Ruiz-Rodriguez <paula.ruiz.rodriguez@csic.es>"]
 description = "Post-hoc rescue of falsely absent genes in pangenome matrices"
 license = "GPL-3.0-only"
 repository = "https://github.com/PathoGenOmics-Lab/recore"
