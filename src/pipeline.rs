@@ -1,5 +1,5 @@
 use ahash::{HashMap, HashMapExt};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{info, warn};
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -154,35 +154,34 @@ pub fn run(args: &Args) -> Result<()> {
         &args.preset,
     )?;
 
-    // ── 6. Classify hits into rescue events ──
-    let mut rescues: Vec<RescueEvent> = Vec::new();
+    // ── 6. Classify hits into rescue events (parallel) ──
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(args.threads)
+        .build()
+        .context("Failed to build rayon thread pool")?;
 
-    for ((gi, cluster_name), hits) in &hits_map {
-        let Some(&ci) = cluster_to_idx.get(cluster_name.as_str()) else {
-            continue;
-        };
-        let gff_index = gff_indices.get(gi);
-        let gene_to_cluster = gene_to_cluster_maps
-            .get(gi)
-            .map(|m| m as &HashMap<String, usize>);
+    let classify_inputs: Vec<_> = hits_map
+        .iter()
+        .filter_map(|((gi, cluster_name), hits)| {
+            let ci = *cluster_to_idx.get(cluster_name.as_str())?;
+            Some((ci, *gi, cluster_name.as_str(), hits.as_slice()))
+        })
+        .collect();
 
-        // Empty map fallback (genome has no GFF)
-        let empty_map = HashMap::new();
-        let g2c = gene_to_cluster.unwrap_or(&empty_map);
+    let empty_map: HashMap<String, usize> = HashMap::new();
+    let rescues: Vec<RescueEvent> = pool.install(|| {
+        use rayon::prelude::*;
+        classify_inputs
+            .par_iter()
+            .filter_map(|&(ci, gi, _cluster_name, hits)| {
+                let gff_index = gff_indices.get(&gi);
+                let g2c = gene_to_cluster_maps.get(&gi).unwrap_or(&empty_map);
+                classify_hits(hits, ci, gi, &pa, gff_index, g2c, args.min_coverage)
+            })
+            .collect()
+    });
 
-        if let Some(rescue) = classify_hits(
-            hits,
-            ci,
-            *gi,
-            &pa,
-            gff_index,
-            g2c,
-            args.min_coverage,
-        ) {
-            rescues.push(rescue);
-        }
-    }
-
+    let mut rescues = rescues;
     info!("Raw rescues before filtering: {}", rescues.len());
 
     // ── 7. Synteny validation (if requested) ──
@@ -321,7 +320,7 @@ fn write_corrected_csv(
 ) -> Result<()> {
     let path = output_dir.join("gene_presence_absence_recore.csv");
     let file = fs::File::create(&path)?;
-    let writer = BufWriter::new(file);
+    let writer = BufWriter::with_capacity(256 * 1024, file);
     let mut csv_writer = csv::Writer::from_writer(writer);
 
     csv_writer.write_record(&pa.header)?;

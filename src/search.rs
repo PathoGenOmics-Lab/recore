@@ -2,7 +2,7 @@ use ahash::HashMap;
 use anyhow::{Context, Result};
 use log::{debug, info};
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 
 /// Separator between genome name and original contig name in concatenated targets.
@@ -55,17 +55,18 @@ impl Hit {
 /// 1. Write all unique query sequences to a single temp FASTA
 /// 2. Concatenate all genome FASTAs into one target, prefixing contig names
 ///    with `genome_name|||original_contig` to avoid collisions
-/// 3. Run minimap2 once (multi-threaded)
-/// 4. Demux hits back to per-(genome, cluster) groups
-/// 5. Filter: only return hits for (cluster, genome) pairs that are actual gaps
+/// 3. Pre-build minimap2 index (.mmi) — reusable, avoids re-indexing
+/// 4. Run minimap2 alignment with piped stdout (streaming PAF, no RAM spike)
+/// 5. Demux hits back to per-(genome, cluster) groups
+/// 6. Filter: only return hits for (cluster, genome) pairs that are actual gaps
 ///
 /// Returns: HashMap<(genome_idx, cluster_name), Vec<Hit>>
 pub fn batch_search(
-    queries: &HashMap<String, Vec<Vec<u8>>>,    // cluster → allele sequences (owned)
-    genome_files: &HashMap<String, std::path::PathBuf>,  // genome_name → fasta path
-    searchable_genomes: &[(usize, Vec<usize>)], // (genome_idx, cluster_indices_to_search)
-    genome_names: &[String],                     // pa.genomes
-    cluster_names: &[String],                    // pa.clusters
+    queries: &HashMap<String, Vec<Vec<u8>>>,
+    genome_files: &HashMap<String, std::path::PathBuf>,
+    searchable_genomes: &[(usize, Vec<usize>)],
+    genome_names: &[String],
+    cluster_names: &[String],
     threads: usize,
     min_identity: f64,
     preset: &str,
@@ -114,10 +115,9 @@ pub fn batch_search(
     // ── 3. Concatenate genome FASTAs with prefixed contig names ──
     let mut target_file = NamedTempFile::new().context("Cannot create temp target file")?;
     {
-        let mut writer = BufWriter::new(&mut target_file);
+        let mut writer = BufWriter::with_capacity(256 * 1024, &mut target_file);
         let mut genomes_written = 0usize;
 
-        // Only include genomes that actually have gaps to search
         let genome_indices_needed: ahash::HashSet<usize> = searchable_genomes
             .iter()
             .map(|(gi, _)| *gi)
@@ -131,12 +131,11 @@ pub fn batch_search(
 
             let file = std::fs::File::open(fasta_path)
                 .with_context(|| format!("Cannot open genome {}", fasta_path.display()))?;
-            let reader = BufReader::new(file);
+            let reader = BufReader::with_capacity(128 * 1024, file);
 
             for line in reader.lines() {
                 let line = line?;
                 if let Some(header) = line.strip_prefix('>') {
-                    // Prefix contig name: genome_name|||original_header
                     writeln!(writer, ">{}{}{}", genome_name, CONTIG_SEP, header)?;
                 } else {
                     writer.write_all(line.as_bytes())?;
@@ -152,35 +151,48 @@ pub fn batch_search(
         );
     }
 
-    // ── 4. Run minimap2 ONCE ──
-    let output = Command::new("minimap2")
+    // ── 4. Pre-build minimap2 index (.mmi) ──
+    let index_file = NamedTempFile::new().context("Cannot create temp index file")?;
+    let index_path = index_file.path().to_string_lossy().to_string();
+
+    let idx_output = Command::new("minimap2")
+        .args([
+            "-x", preset,
+            "-t", &threads.to_string(),
+            "-d", &index_path,
+            &target_file.path().to_string_lossy(),
+        ])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .output()
+        .context("Failed to run minimap2 indexing — is it installed?")?;
+
+    if !idx_output.status.success() {
+        let stderr = String::from_utf8_lossy(&idx_output.stderr);
+        anyhow::bail!("minimap2 indexing failed: {}", stderr);
+    }
+    info!("Built minimap2 index");
+
+    // ── 5. Run minimap2 alignment with streamed stdout ──
+    let mut child = Command::new("minimap2")
         .args([
             "-x", preset,
             "-t", &threads.to_string(),
             "--secondary=yes",
             "-N", "50",
             "-p", "0.5",
-            &target_file.path().to_string_lossy(),
+            &index_path,
             &query_file.path().to_string_lossy(),
         ])
-        .output()
-        .context("Failed to run minimap2 — is it installed?")?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to spawn minimap2 — is it installed?")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("minimap2 failed: {}", stderr);
-    }
+    let stdout = child.stdout.take().context("No stdout from minimap2")?;
+    let paf_reader = BufReader::with_capacity(256 * 1024, stdout);
 
-    if !output.stderr.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        for line in stderr.lines() {
-            if line.contains("[WARNING]") || line.contains("[W::") {
-                log::warn!("minimap2: {}", line);
-            }
-        }
-    }
-
-    // ── 5. Build gap lookup: which (genome_idx, cluster_idx) pairs are gaps? ──
+    // ── 6. Build gap lookup ──
     let mut gap_set: ahash::HashSet<(usize, usize)> = ahash::HashSet::default();
     for (gi, cluster_indices) in searchable_genomes {
         for &ci in cluster_indices {
@@ -188,27 +200,25 @@ pub fn batch_search(
         }
     }
 
-    // genome_name → genome_idx for O(1) lookup during PAF parsing
     let genome_name_to_idx: HashMap<&str, usize> = genome_names
         .iter()
         .enumerate()
         .map(|(i, n)| (n.as_str(), i))
         .collect();
 
-    // cluster_name → cluster_idx for gap filtering
     let cluster_name_to_idx: HashMap<&str, usize> = cluster_names
         .iter()
         .enumerate()
         .map(|(i, n)| (n.as_str(), i))
         .collect();
 
-    // ── 6. Parse PAF and demux hits ──
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // ── 7. Stream-parse PAF (no full stdout in RAM) ──
     let mut hits: HashMap<(usize, String), Vec<Hit>> = HashMap::default();
     let mut total_hits = 0usize;
     let mut filtered_hits = 0usize;
 
-    for line in stdout.lines() {
+    for line_result in paf_reader.lines() {
+        let line = line_result?;
         let fields: Vec<&str> = line.split('\t').collect();
         if fields.len() < 12 {
             continue;
@@ -221,19 +231,16 @@ pub fn batch_search(
             continue;
         };
         let genome_name = &target_field[..sep_pos];
-        // Original contig: strip prefix, take first whitespace-delimited token
         let original_header = &target_field[sep_pos + CONTIG_SEP.len()..];
         let original_contig = original_header
             .split_whitespace()
             .next()
             .unwrap_or(original_header);
 
-        // Resolve genome index
         let Some(&gi) = genome_name_to_idx.get(genome_name) else {
             continue;
         };
 
-        // Resolve cluster
         let query_name = fields[0];
         let cluster_name = name_to_cluster
             .get(query_name)
@@ -243,7 +250,7 @@ pub fn batch_search(
         // Filter: only keep hits for actual gaps
         if let Some(&ci) = cluster_name_to_idx.get(cluster_name) {
             if !gap_set.contains(&(gi, ci)) {
-                continue; // gene already present in this genome, skip
+                continue;
             }
         }
 
@@ -270,6 +277,25 @@ pub fn batch_search(
         hits.entry((gi, cluster_name.to_string()))
             .or_default()
             .push(hit);
+    }
+
+    // Wait for minimap2 to finish and check exit code
+    let status = child.wait().context("minimap2 process failed")?;
+    if !status.success() {
+        // Try to read stderr for diagnostics
+        if let Some(mut stderr) = child.stderr.take() {
+            let mut err_buf = String::new();
+            use std::io::Read;
+            stderr.read_to_string(&mut err_buf).ok();
+            if !err_buf.is_empty() {
+                for line in err_buf.lines() {
+                    if line.contains("[WARNING]") || line.contains("[W::") {
+                        log::warn!("minimap2: {}", line);
+                    }
+                }
+            }
+        }
+        anyhow::bail!("minimap2 alignment exited with {}", status);
     }
 
     debug!(
