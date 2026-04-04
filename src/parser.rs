@@ -26,6 +26,7 @@ pub struct PresenceAbsence {
 
 impl PresenceAbsence {
     /// Find all (cluster_idx, genome_idx) pairs where the gene is absent.
+    #[allow(dead_code)]
     pub fn gaps(&self) -> Vec<(usize, usize)> {
         let mut gaps = Vec::new();
         for (ci, present_set) in self.present.iter().enumerate() {
@@ -39,6 +40,7 @@ impl PresenceAbsence {
     }
 
     /// Cluster prevalence: fraction of genomes where cluster is present.
+    #[allow(dead_code)]
     pub fn prevalence(&self, ci: usize) -> f64 {
         if self.genomes.is_empty() {
             return 0.0;
@@ -169,33 +171,48 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
 /// Parse pan_genome_reference.fa → HashMap<cluster_name, Vec<sequence>>.
 /// In multi-allele mode, keeps ALL alleles per cluster.
 /// In single mode, keeps only the longest.
+/// Uses buffered line-by-line reading instead of read_to_string for large files.
 pub fn parse_pan_reference(
     path: &Path,
     multi_allele: bool,
 ) -> Result<HashMap<String, Vec<Vec<u8>>>> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Cannot read {}", path.display()))?;
+    use std::io::{BufRead, BufReader};
+
+    let file = fs::File::open(path)
+        .with_context(|| format!("Cannot open {}", path.display()))?;
+    let reader = BufReader::new(file);
 
     let mut refs: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
     let mut current_name: Option<String> = None;
-    let mut current_seq = Vec::new();
+    let mut current_seq: Vec<u8> = Vec::new();
 
-    for line in content.lines() {
+    /// Helper: flush current record into the map.
+    fn flush_record(
+        name: String,
+        seq: Vec<u8>,
+        refs: &mut HashMap<String, Vec<Vec<u8>>>,
+        multi_allele: bool,
+    ) {
+        if seq.is_empty() {
+            return;
+        }
+        let entry = refs.entry(name).or_default();
+        if multi_allele {
+            entry.push(seq);
+        } else if entry.is_empty() || entry[0].len() < seq.len() {
+            if entry.is_empty() {
+                entry.push(seq);
+            } else {
+                entry[0] = seq;
+            }
+        }
+    }
+
+    for line_result in reader.lines() {
+        let line = line_result?;
         if let Some(header) = line.strip_prefix('>') {
             if let Some(name) = current_name.take() {
-                if !current_seq.is_empty() {
-                    let entry = refs.entry(name).or_default();
-                    if multi_allele {
-                        entry.push(current_seq.clone());
-                    } else if entry.is_empty() || entry[0].len() < current_seq.len() {
-                        // Single mode: keep only the longest allele
-                        if entry.is_empty() {
-                            entry.push(current_seq.clone());
-                        } else {
-                            entry[0] = current_seq.clone();
-                        }
-                    }
-                }
+                flush_record(name, std::mem::take(&mut current_seq), &mut refs, multi_allele);
             }
             current_seq.clear();
 
@@ -213,18 +230,7 @@ pub fn parse_pan_reference(
 
     // Last record
     if let Some(name) = current_name {
-        if !current_seq.is_empty() {
-            let entry = refs.entry(name).or_default();
-            if multi_allele {
-                entry.push(current_seq);
-            } else if entry.is_empty() || entry[0].len() < current_seq.len() {
-                if entry.is_empty() {
-                    entry.push(current_seq);
-                } else {
-                    entry[0] = current_seq;
-                }
-            }
-        }
+        flush_record(name, current_seq, &mut refs, multi_allele);
     }
 
     let total_alleles: usize = refs.values().map(|v| v.len()).sum();
@@ -274,12 +280,17 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
 pub type GffRecord = (String, u64, u64, char, String);
 
 /// Parse CDS features from a GFF file.
+/// Uses buffered line-by-line reading for memory efficiency.
 pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Cannot read GFF {}", path.display()))?;
+    use std::io::{BufRead, BufReader};
+
+    let file = fs::File::open(path)
+        .with_context(|| format!("Cannot open GFF {}", path.display()))?;
+    let reader = BufReader::new(file);
 
     let mut genes = Vec::new();
-    for line in content.lines() {
+    for line_result in reader.lines() {
+        let line = line_result?;
         if line.starts_with('#') || !line.contains('\t') {
             continue;
         }
