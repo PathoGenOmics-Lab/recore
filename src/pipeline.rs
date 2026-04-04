@@ -206,8 +206,13 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 5. Synteny validation (if requested) ──
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
+        // Build gene_to_cluster maps for all genomes with GFF
+        let mut gene_to_cluster_maps: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+        for &gi in gff_indices.keys() {
+            gene_to_cluster_maps.insert(gi, build_gene_to_cluster(&pa, gi));
+        }
         for rescue in &mut rescues {
-            validate_synteny(rescue, &pa, &gff_indices);
+            validate_synteny(rescue, &pa, &gff_indices, &gene_to_cluster_maps);
         }
         let validated = rescues.iter().filter(|r| r.synteny_ok == Some(true)).count();
         let failed = rescues.iter().filter(|r| r.synteny_ok == Some(false)).count();

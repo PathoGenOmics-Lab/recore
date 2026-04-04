@@ -87,8 +87,8 @@ pub fn search_genome(
             "--secondary=yes",
             "-N", "50",
             "-p", "0.5",
-            genome_fasta.to_str().unwrap(),
-            query_file.path().to_str().unwrap(),
+            &genome_fasta.to_string_lossy(),
+            &query_file.path().to_string_lossy(),
         ])
         .output()
         .context("Failed to run minimap2 — is it installed?")?;
