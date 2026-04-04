@@ -40,4 +40,20 @@ pub struct Args {
     /// minimap2 preset: asm5 (≤5% divergence, faster), asm20 (≤20%, safer)
     #[arg(long, default_value = "asm5")]
     pub preset: String,
+
+    /// Minimum cluster prevalence (fraction of genomes) to attempt rescue.
+    /// Clusters present in fewer genomes than this are likely truly accessory.
+    /// Set to 0 to try rescuing everything.
+    #[arg(long, default_value_t = 0.1)]
+    pub min_prevalence: f64,
+
+    /// Use all alleles per cluster as queries (slower but more sensitive).
+    /// By default, only the longest representative is used.
+    #[arg(long, default_value_t = false)]
+    pub multi_allele: bool,
+
+    /// Check flanking gene synteny to validate rescues (requires -a).
+    /// Rescued genes whose flanking context doesn't match are downgraded.
+    #[arg(long, default_value_t = false)]
+    pub synteny: bool,
 }

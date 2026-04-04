@@ -4,8 +4,7 @@ use log::info;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Presence/absence matrix: gene_cluster -> {genome -> gene_id or empty}.
-/// We store which genomes have gaps (gene absent).
+/// Presence/absence matrix.
 pub struct PresenceAbsence {
     /// All gene cluster names, in order.
     pub clusters: Vec<String>,
@@ -13,7 +12,7 @@ pub struct PresenceAbsence {
     pub genomes: Vec<String>,
     /// For each cluster index, set of genome indices where the gene is present.
     pub present: Vec<HashSet<usize>>,
-    /// Original cell values: present[cluster_idx][genome_idx] = gene_id string.
+    /// Original cell values: cell_values[cluster_idx][genome_idx] = gene_id string.
     pub cell_values: Vec<Vec<String>>,
 }
 
@@ -31,10 +30,12 @@ impl PresenceAbsence {
         gaps
     }
 
-    /// Number of genomes where a cluster is present.
-    #[allow(dead_code)]
-    pub fn cluster_count(&self, ci: usize) -> usize {
-        self.present[ci].len()
+    /// Cluster prevalence: fraction of genomes where cluster is present.
+    pub fn prevalence(&self, ci: usize) -> f64 {
+        if self.genomes.is_empty() {
+            return 0.0;
+        }
+        self.present[ci].len() as f64 / self.genomes.len() as f64
     }
 
     /// Core size: clusters present in ALL genomes.
@@ -42,9 +43,15 @@ impl PresenceAbsence {
         let n = self.genomes.len();
         self.present.iter().filter(|p| p.len() == n).count()
     }
+
+    /// Soft-core size: clusters present in ≥95% of genomes.
+    pub fn soft_core_size(&self) -> usize {
+        let threshold = (self.genomes.len() as f64 * 0.95).ceil() as usize;
+        self.present.iter().filter(|p| p.len() >= threshold).count()
+    }
 }
 
-/// Panaroo metadata column names to skip when identifying genome columns.
+/// Panaroo metadata columns to skip when identifying genome columns.
 const METADATA_COLS: &[&str] = &[
     "Gene",
     "Non-unique Gene name",
@@ -76,7 +83,6 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         .position(|h| h == "Gene")
         .context("Missing 'Gene' column in presence/absence CSV")?;
 
-    // Genome columns: indices and names
     let genome_indices: Vec<usize> = headers
         .iter()
         .enumerate()
@@ -114,9 +120,17 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
     }
 
     info!(
-        "Parsed presence/absence matrix: {} clusters × {} genomes",
+        "Parsed presence/absence: {} clusters × {} genomes (core: {}, soft-core 95%: {})",
         clusters.len(),
-        genomes.len()
+        genomes.len(),
+        {
+            let n = genomes.len();
+            present.iter().filter(|p| p.len() == n).count()
+        },
+        {
+            let t = (genomes.len() as f64 * 0.95).ceil() as usize;
+            present.iter().filter(|p| p.len() >= t).count()
+        }
     );
 
     Ok(PresenceAbsence {
@@ -127,28 +141,39 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
     })
 }
 
-/// Parse pan_genome_reference.fa → HashMap<cluster_name, sequence>.
-/// Panaroo format: >cluster_name~~~gene_id description
-pub fn parse_pan_reference(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
+/// Parse pan_genome_reference.fa → HashMap<cluster_name, Vec<sequence>>.
+/// In multi-allele mode, keeps ALL alleles per cluster.
+/// In single mode, keeps only the longest.
+pub fn parse_pan_reference(
+    path: &Path,
+    multi_allele: bool,
+) -> Result<HashMap<String, Vec<Vec<u8>>>> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
 
-    let mut refs: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut refs: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
     let mut current_name: Option<String> = None;
     let mut current_seq = Vec::new();
 
     for line in content.lines() {
         if let Some(header) = line.strip_prefix('>') {
-            // Save previous record
             if let Some(name) = current_name.take() {
-                let existing = refs.get(&name);
-                if existing.is_none() || existing.unwrap().len() < current_seq.len() {
-                    refs.insert(name, current_seq.clone());
+                if !current_seq.is_empty() {
+                    let entry = refs.entry(name).or_default();
+                    if multi_allele {
+                        entry.push(current_seq.clone());
+                    } else if entry.is_empty() || entry[0].len() < current_seq.len() {
+                        // Single mode: keep only the longest allele
+                        if entry.is_empty() {
+                            entry.push(current_seq.clone());
+                        } else {
+                            entry[0] = current_seq.clone();
+                        }
+                    }
                 }
             }
             current_seq.clear();
 
-            // Parse name: cluster_name~~~gene_id or just cluster_name
             let id = header.split_whitespace().next().unwrap_or(header);
             let name = if let Some(pos) = id.find("~~~") {
                 &id[..pos]
@@ -163,22 +188,31 @@ pub fn parse_pan_reference(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
 
     // Last record
     if let Some(name) = current_name {
-        let existing = refs.get(&name);
-        if existing.is_none() || existing.unwrap().len() < current_seq.len() {
-            refs.insert(name, current_seq);
+        if !current_seq.is_empty() {
+            let entry = refs.entry(name).or_default();
+            if multi_allele {
+                entry.push(current_seq);
+            } else if entry.is_empty() || entry[0].len() < current_seq.len() {
+                if entry.is_empty() {
+                    entry.push(current_seq);
+                } else {
+                    entry[0] = current_seq;
+                }
+            }
         }
     }
 
+    let total_alleles: usize = refs.values().map(|v| v.len()).sum();
     info!(
-        "Parsed {} representative sequences from {}",
+        "Parsed {} clusters ({} total alleles) from {}",
         refs.len(),
+        total_alleles,
         path.display()
     );
     Ok(refs)
 }
 
 /// Find genome FASTA files in a directory.
-/// Returns HashMap<genome_name, file_path>.
 pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     let extensions = [".fasta", ".fa", ".fna", ".fasta.gz", ".fa.gz", ".fna.gz"];
     let mut files: HashMap<String, PathBuf> = HashMap::new();
@@ -194,7 +228,6 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
 
         let filename = path.file_name().unwrap().to_string_lossy().to_string();
 
-        // Strip extension to get genome name
         let mut name = filename.clone();
         for ext in &extensions {
             if name.ends_with(ext) {
@@ -203,7 +236,6 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
             }
         }
 
-        // Only accept known extensions
         if name != filename {
             files.entry(name).or_insert(path);
         }
@@ -236,7 +268,6 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         let end: u64 = fields[4].parse().unwrap_or(0);
         let strand = fields[6].chars().next().unwrap_or('+');
 
-        // Extract ID or locus_tag from attributes
         let mut gene_id = String::new();
         for attr in fields[8].split(';') {
             if let Some(val) = attr.strip_prefix("ID=") {
@@ -278,17 +309,29 @@ mod tests {
         let pa = parse_presence_absence(csv.path()).unwrap();
         assert_eq!(pa.clusters.len(), 2);
         assert_eq!(pa.genomes.len(), 3);
-        assert_eq!(pa.core_size(), 1); // gA is core, gB is not
-        assert_eq!(pa.gaps().len(), 1); // gB missing in g2
+        assert_eq!(pa.core_size(), 1);
+        assert_eq!(pa.gaps().len(), 1);
     }
 
     #[test]
-    fn test_parse_pan_ref() {
-        let fa = write_temp(">clusterA~~~gene1 product\nATGCATGC\n>clusterB\nGGGGAAAA\n");
-        let refs = parse_pan_reference(fa.path()).unwrap();
+    fn test_parse_pan_ref_single() {
+        let fa = write_temp(
+            ">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n",
+        );
+        let refs = parse_pan_reference(fa.path(), false).unwrap();
         assert_eq!(refs.len(), 2);
-        assert_eq!(refs["clusterA"], b"ATGCATGC");
-        assert_eq!(refs["clusterB"], b"GGGGAAAA");
+        assert_eq!(refs["clA"].len(), 1);
+        assert_eq!(refs["clA"][0].len(), 12); // kept the longest
+        assert_eq!(refs["clB"][0], b"GGGGAAAA");
+    }
+
+    #[test]
+    fn test_parse_pan_ref_multi() {
+        let fa = write_temp(
+            ">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n",
+        );
+        let refs = parse_pan_reference(fa.path(), true).unwrap();
+        assert_eq!(refs["clA"].len(), 2); // both alleles
     }
 
     #[test]
@@ -303,8 +346,21 @@ mod tests {
             gC,gC,p,0,0,0,0,0,0,,1,1,1,,\n",
         );
         let pa = parse_presence_absence(csv.path()).unwrap();
-        let gaps = pa.gaps();
-        // gB missing in g2 (1 gap), gC missing in g1 and g2 (2 gaps)
-        assert_eq!(gaps.len(), 3);
+        assert_eq!(pa.gaps().len(), 3);
+    }
+
+    #[test]
+    fn test_prevalence() {
+        let csv = write_temp(
+            "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,\
+            Avg sequences per isolate,Genome Fragment,Order within Fragment,\
+            Accessory Order,QC,Min group size nuc,Max group size nuc,\
+            Avg group size nuc,g1,g2,g3,g4,g5,g6,g7,g8,g9,g10\n\
+            gA,gA,p,10,10,1,0,0,0,,1,1,1,a,a,a,a,a,a,a,a,a,a\n\
+            gB,gB,p,1,1,1,0,0,0,,1,1,1,b,,,,,,,,,\n",
+        );
+        let pa = parse_presence_absence(csv.path()).unwrap();
+        assert!((pa.prevalence(0) - 1.0).abs() < 0.001); // gA: 100%
+        assert!((pa.prevalence(1) - 0.1).abs() < 0.001); // gB: 10%
     }
 }
