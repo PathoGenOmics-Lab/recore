@@ -359,12 +359,11 @@ pub fn run(args: &Args) -> Result<()> {
 
     let core_after = count_core_after(&pa, &rescue_map, &nsc_result);
     let soft_core_after = count_soft_core_after(&pa, &rescue_map, &nsc_result);
-    info!("Core genome: {} → {} (+{})", core_before, core_after, core_after - core_before);
-    info!(
-        "Soft-core (≥95%): {} → {} (+{})",
-        pa.soft_core_size(), soft_core_after,
-        soft_core_after - pa.soft_core_size()
-    );
+    let core_diff = core_after as i64 - core_before as i64;
+    let soft_core_before = pa.soft_core_size();
+    let soft_diff = soft_core_after as i64 - soft_core_before as i64;
+    info!("Core genome: {} → {} ({:+})", core_before, core_after, core_diff);
+    info!("Soft-core (≥95%): {} → {} ({:+})", soft_core_before, soft_core_after, soft_diff);
     info!("Output: {}", args.output.display());
 
     Ok(())
@@ -649,8 +648,10 @@ fn write_summary(
     writeln!(w, "Rescued:               {}", rescues.len())?;
     writeln!(w, "Remaining gaps:        {}", stats.filtered_gaps - rescues.len())?;
     writeln!(w)?;
-    writeln!(w, "Core genome (strict):  {} → {} (+{})", stats.core_before, core_after, core_after - stats.core_before)?;
-    writeln!(w, "Soft-core (≥95%):      {} → {} (+{})", soft_core_before, soft_core_after, soft_core_after - soft_core_before)?;
+    let core_diff = core_after as i64 - stats.core_before as i64;
+    let soft_diff = soft_core_after as i64 - soft_core_before as i64;
+    writeln!(w, "Core genome (strict):  {} → {} ({:+})", stats.core_before, core_after, core_diff)?;
+    writeln!(w, "Soft-core (≥95%):      {} → {} ({:+})", soft_core_before, soft_core_after, soft_diff)?;
     writeln!(w)?;
     writeln!(w, "Rescue types:")?;
     writeln!(w, "  DROPPED:       {}", stats.dropped)?;
