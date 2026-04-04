@@ -661,4 +661,33 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unsafe genome name"));
     }
+
+    #[test]
+    fn test_load_genome_contigs_plain() {
+        let fa = write_temp(">contig1\nATCGATCG\n>contig2\nGGGGAAAA\n");
+        let contigs = load_genome_contigs(fa.path()).unwrap();
+        assert_eq!(contigs.len(), 2);
+        assert_eq!(contigs["contig1"], b"ATCGATCG");
+        assert_eq!(contigs["contig2"], b"GGGGAAAA");
+    }
+
+    #[test]
+    fn test_load_genome_contigs_gz() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let gz_path = dir.path().join("genome.fasta.gz");
+        {
+            let file = std::fs::File::create(&gz_path).unwrap();
+            let mut gz = GzEncoder::new(file, Compression::fast());
+            gz.write_all(b">ctg1\nATCGATCG\n>ctg2\nTTTTCCCC\n").unwrap();
+            gz.finish().unwrap();
+        }
+        let contigs = load_genome_contigs(&gz_path).unwrap();
+        assert_eq!(contigs.len(), 2);
+        assert_eq!(contigs["ctg1"], b"ATCGATCG");
+        assert_eq!(contigs["ctg2"], b"TTTTCCCC");
+    }
 }

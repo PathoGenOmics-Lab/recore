@@ -319,6 +319,12 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 12. Generate outputs ──
     fs::create_dir_all(&args.output)?;
 
+    // Sort rescues for deterministic output order regardless of thread scheduling
+    rescues.sort_by(|a, b| {
+        a.cluster_idx.cmp(&b.cluster_idx)
+            .then(a.genome_idx.cmp(&b.genome_idx))
+    });
+
     let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
         .iter()
         .map(|r| ((r.cluster_idx, r.genome_idx), r))
