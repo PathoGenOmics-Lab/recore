@@ -645,11 +645,15 @@ pub fn validate_synteny(
     pa: &PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    verbose: bool,
 ) {
     let ci = rescue.cluster_idx;
     let gi = rescue.genome_idx;
 
     let Some(target_gff) = gff_indices.get(&gi) else {
+        if verbose {
+            log::debug!("Synteny skip: no GFF for target genome idx={}", gi.val());
+        }
         return;
     };
     let Some(target_g2c) = gene_to_cluster_maps.get(&gi) else {
@@ -662,6 +666,22 @@ pub fn validate_synteny(
     let target_down_cluster = target_down.and_then(|g| target_g2c.get(&g.gene_id).copied());
 
     if target_up_cluster.is_none() && target_down_cluster.is_none() {
+        if verbose {
+            log::debug!(
+                "Synteny skip: no flanking genes mapped to clusters for rescue cluster={} genome={} at {}:{}-{}",
+                ci.val(), gi.val(), rescue.contig, rescue.start, rescue.end
+            );
+            if let Some(up) = target_up {
+                log::debug!("  Upstream gene '{}' not found in any Panaroo cluster", up.gene_id);
+            } else {
+                log::debug!("  No upstream gene found in GFF");
+            }
+            if let Some(down) = target_down {
+                log::debug!("  Downstream gene '{}' not found in any Panaroo cluster", down.gene_id);
+            } else {
+                log::debug!("  No downstream gene found in GFF");
+            }
+        }
         return;
     }
 
@@ -681,6 +701,12 @@ pub fn validate_synteny(
         let ref_gene_id = ref_cell.split(';').next().unwrap_or(ref_cell).trim();
 
         let Some(ref_gene) = ref_gff.get_by_id(ref_gene_id) else {
+            if verbose {
+                log::debug!(
+                    "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
+                    ref_gene_id, ref_gi.val()
+                );
+            }
             continue;
         };
 

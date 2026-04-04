@@ -78,6 +78,10 @@ pub struct Args {
     #[arg(long, default_value = "minhash")]
     pub nsc_engine: String,
 
+    /// Verbose debug logging: show sample matches, GFF parsing details, synteny decisions.
+    #[arg(short = 'v', long, default_value_t = false)]
+    pub verbose: bool,
+
     /// Minimum sequence identity for mmseqs2 linclust clustering (0.0-1.0).
     #[arg(long, default_value_t = 0.9)]
     pub nsc_min_seq_id: f64,

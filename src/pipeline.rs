@@ -1,6 +1,6 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::{Context, Result};
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::fs;
 use std::io::{BufWriter, Write};
 
@@ -66,16 +66,23 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 3. Filter to genomes with FASTA files ──
     let mut searchable_genomes: Vec<(GenomeIdx, Vec<ClusterIdx>)> = Vec::new();
     let mut missing_genomes = 0usize;
+    let mut missing_names: Vec<String> = Vec::new();
     for (gi, cluster_indices) in gaps_by_genome {
         let genome_name = pa.genome_name(gi);
         if genome_files.contains_key(genome_name) {
             searchable_genomes.push((gi, cluster_indices));
         } else {
             missing_genomes += 1;
+            if args.verbose {
+                missing_names.push(genome_name.to_string());
+            }
         }
     }
     if missing_genomes > 0 {
         warn!("{} genomes with gaps have no FASTA file (skipped)", missing_genomes);
+        for name in &missing_names {
+            debug!("  Missing FASTA: {}", name);
+        }
     }
 
     // ── 4. Load GFF annotations ──
@@ -107,8 +114,30 @@ pub fn run(args: &Args) -> Result<()> {
                 Err(e) => warn!("Cannot parse GFF for {}: {}", genome_name, e),
             }
         }
-        if !data.is_empty() {
-            info!("Loaded GFF annotations for {} genomes", data.len());
+        let loaded = data.len();
+        let missing = n_genomes - loaded;
+        if loaded > 0 {
+            info!("Loaded GFF annotations for {} genomes", loaded);
+        }
+        if missing > 0 && loaded > 0 {
+            warn!("{} genomes have no matching GFF file in {}", missing, ann_dir.display());
+            if args.verbose {
+                let mut shown = 0;
+                for gi_val in 0..n_genomes {
+                    let gi = GenomeIdx(gi_val);
+                    if !data.contains_key(&gi) {
+                        debug!("  Missing GFF: {}", pa.genome_name(gi));
+                        shown += 1;
+                        if shown >= 10 {
+                            debug!("  ... and {} more", missing - shown);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if loaded == 0 {
+            warn!("No GFF files found in {} — synteny and annotation-based classification will be skipped", ann_dir.display());
+            warn!("Expected files like: {}.gff or {}.gff3", pa.genome_name(GenomeIdx(0)), pa.genome_name(GenomeIdx(0)));
         }
         data
     } else {
@@ -232,11 +261,20 @@ pub fn run(args: &Args) -> Result<()> {
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
         for rescue in &mut rescues {
-            validate_synteny(rescue, &pa, &gff_indices, &gene_to_cluster_maps);
+            validate_synteny(rescue, &pa, &gff_indices, &gene_to_cluster_maps, args.verbose);
         }
         let validated = rescues.iter().filter(|r| r.synteny_ok == Some(true)).count();
         let failed = rescues.iter().filter(|r| r.synteny_ok == Some(false)).count();
-        info!("Synteny: {} validated, {} failed", validated, failed);
+        let skipped = rescues.iter().filter(|r| r.synteny_ok.is_none()).count();
+        info!("Synteny: {} validated, {} failed, {} skipped (no flanking genes found)", validated, failed, skipped);
+        if validated == 0 && failed == 0 && skipped > 0 {
+            warn!("Synteny could not validate any rescue. Possible causes:");
+            warn!("  - GFF gene IDs don't match the IDs in Panaroo's CSV cells");
+            warn!("  - GFF has no genes flanking the rescued regions");
+            warn!("  Rerun with -v to see detailed synteny debug output");
+        }
+    } else if args.synteny && gff_indices.is_empty() {
+        warn!("Synteny requested (--synteny) but no GFF annotations loaded — skipping");
     }
 
     // ── 9. Conflict resolution ──
@@ -270,6 +308,19 @@ pub fn run(args: &Args) -> Result<()> {
         "Final rescues: {} (DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, START_VARIANT: {}, PARALOG: {}, PSEUDOGENE: {})",
         rescues.len(), dropped, split, fragmented, start_variant, paralog, pseudogene
     );
+
+    if args.verbose && !rescues.is_empty() {
+        debug!("Top rescues (first 10):");
+        for r in rescues.iter().take(10) {
+            let cluster_name = pa.cluster_name(r.cluster_idx);
+            let genome_name = pa.genome_name(r.genome_idx);
+            debug!(
+                "  {} in {} → {:?} (id={:.1}%, cov={:.1}%, conf={:.2}, synteny={:?})",
+                cluster_name, genome_name, r.rescue_type,
+                r.identity * 100.0, r.coverage * 100.0, r.confidence, r.synteny_ok
+            );
+        }
+    }
 
     // ── 11. Nucleotide Similarity Clustering (optional) ──
     let nsc_result = if args.nscluster {
