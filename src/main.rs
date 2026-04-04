@@ -3,6 +3,7 @@ mod types;
 mod parser;
 mod search;
 mod rescue;
+mod nscluster;
 mod pipeline;
 
 use anyhow::Result;

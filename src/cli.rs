@@ -56,4 +56,20 @@ pub struct Args {
     /// Rescued genes whose flanking context doesn't match are downgraded.
     #[arg(long, default_value_t = false)]
     pub synteny: bool,
+
+    // ── Nucleotide Similarity Clustering ──
+
+    /// Enable nucleotide similarity clustering to merge redundant Panaroo clusters.
+    /// Detects clusters split at the AA level but identical at the DNA level.
+    #[arg(long, default_value_t = false)]
+    pub nscluster: bool,
+
+    /// k-mer size for nucleotide similarity sketching.
+    #[arg(long, default_value_t = 21)]
+    pub nsc_kmer_size: usize,
+
+    /// Max containment threshold for merging clusters (0.0-1.0).
+    /// Higher = stricter (fewer merges). PanQC default: 0.8.
+    #[arg(long, default_value_t = 0.8)]
+    pub nsc_threshold: f64,
 }

@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{BufWriter, Write};
 
 use crate::cli::Args;
+use crate::nscluster;
 use crate::parser::{
     find_genome_files, parse_gff_genes, parse_pan_reference, parse_presence_absence,
     validate_inputs,
@@ -218,7 +219,37 @@ pub fn run(args: &Args) -> Result<()> {
         rescues.len(), dropped, split, fragmented, start_variant, paralog
     );
 
-    // ── 11. Generate outputs ──
+    // ── 11. Nucleotide Similarity Clustering (optional) ──
+    let nsc_result = if args.nscluster {
+        info!("Running nucleotide similarity clustering (k={}, threshold={:.2})...",
+              args.nsc_kmer_size, args.nsc_threshold);
+
+        let prevalences: Vec<f64> = (0..n_clusters)
+            .map(|ci_val| pa.present_count(ClusterIdx(ci_val)) as f64 / n_genomes as f64)
+            .collect();
+
+        let result = nscluster::run_nscluster(
+            &pan_ref,
+            pa.cluster_names(),
+            &prevalences,
+            args.nsc_kmer_size,
+            args.nsc_threshold,
+            args.threads,
+        );
+
+        if result.n_clusters > 0 {
+            info!("NSC: {} clusters merged into {} NS groups ({} genes total)",
+                  result.total_merged_genes, result.n_clusters,
+                  result.total_merged_genes);
+        } else {
+            info!("NSC: no redundant clusters found");
+        }
+        Some(result)
+    } else {
+        None
+    };
+
+    // ── 12. Generate outputs ──
     fs::create_dir_all(&args.output)?;
 
     let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
@@ -227,7 +258,7 @@ pub fn run(args: &Args) -> Result<()> {
         .collect();
 
     write_report(&rescues, &pa, &args.output)?;
-    write_corrected_csv(&pa, &rescue_map, &args.output)?;
+    write_corrected_csv(&pa, &rescue_map, &args.output, &nsc_result)?;
 
     let stats = SummaryStats {
         core_before,
@@ -240,11 +271,20 @@ pub fn run(args: &Args) -> Result<()> {
         start_variant,
         paralog,
         synteny_enabled: args.synteny,
+        nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
+        nsc_merged_genes: nsc_result.as_ref().map(|r| r.total_merged_genes).unwrap_or(0),
     };
     write_summary(&pa, &rescue_map, &rescues, &stats, &args.output)?;
 
-    let core_after = count_core_after(&pa, &rescue_map);
-    let soft_core_after = count_soft_core_after(&pa, &rescue_map);
+    // Write NSC report if clusters were merged
+    if let Some(ref nsc) = nsc_result {
+        if !nsc.merged_clusters.is_empty() {
+            write_nsc_report(nsc, pa.cluster_names(), &args.output)?;
+        }
+    }
+
+    let core_after = count_core_after(&pa, &rescue_map, &nsc_result);
+    let soft_core_after = count_soft_core_after(&pa, &rescue_map, &nsc_result);
     info!("Core genome: {} → {} (+{})", core_before, core_after, core_after - core_before);
     info!(
         "Soft-core (≥95%): {} → {} (+{})",
@@ -300,7 +340,26 @@ fn write_corrected_csv(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     output_dir: &std::path::Path,
+    nsc_result: &Option<nscluster::NsClusterResult>,
 ) -> Result<()> {
+    // Build set of clusters to skip (merged into another by NSC)
+    let clusters_to_skip: ahash::HashSet<usize> = nsc_result
+        .as_ref()
+        .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
+        .unwrap_or_default();
+
+    // Build NSC presence updates: (rep_ci, gi) pairs to mark present
+    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
+        .as_ref()
+        .map(|r| {
+            let (_, updates) = nscluster::apply_ns_merges(
+                &r.merge_map,
+                |ci, gi| pa.is_present(ci, gi),
+                pa.n_genomes(),
+            );
+            updates.into_iter().map(|(ci, gi)| (ci.val(), gi.val())).collect()
+        })
+        .unwrap_or_default();
     let path = output_dir.join("gene_presence_absence_recore.csv");
     let file = fs::File::create(&path)?;
     let writer = BufWriter::with_capacity(256 * 1024, file);
@@ -323,6 +382,11 @@ fn write_corrected_csv(
     let mut rescue_buf = String::new();
 
     for ci_val in 0..pa.n_clusters() {
+        // Skip clusters merged by NSC (their presence is merged into representative)
+        if clusters_to_skip.contains(&ci_val) {
+            continue;
+        }
+
         let ci = ClusterIdx(ci_val);
 
         for (mi, &col_idx) in meta_col_indices.iter().enumerate() {
@@ -335,6 +399,7 @@ fn write_corrected_csv(
         }
 
         let mut rescue_count = 0usize;
+        let mut nsc_count = 0usize;
         for (gi_val, &col_idx) in pa.genome_col_indices().iter().enumerate() {
             let gi = GenomeIdx(gi_val);
             if let Some(r) = rescue_map.get(&(ci, gi)) {
@@ -344,13 +409,19 @@ fn write_corrected_csv(
                     .expect("write to String is infallible");
                 row[col_idx].clone_from(&rescue_buf);
                 rescue_count += 1;
+            } else if nsc_presence.contains(&(ci_val, gi_val)) {
+                // Gene absent in this cluster but present in a merged NSC member
+                row[col_idx].clear();
+                row[col_idx].push_str("NSC_MERGED");
+                nsc_count += 1;
             } else {
                 row[col_idx].clone_from(&pa.cell(ci, gi).to_owned());
             }
         }
 
-        if rescue_count > 0 {
-            let new_count = pa.present_count(ci) + rescue_count;
+        let total_new = rescue_count + nsc_count;
+        if total_new > 0 {
+            let new_count = pa.present_count(ci) + total_new;
             use std::fmt::Write as FmtWrite;
             if let Some(col) = isolates_col {
                 row[col].clear();
@@ -378,35 +449,67 @@ fn write_corrected_csv(
 fn count_core_after(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_result: &Option<nscluster::NsClusterResult>,
 ) -> usize {
     let n = pa.n_genomes();
+    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
+        .as_ref()
+        .map(|r| {
+            let (_, updates) = nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
+            updates.into_iter().map(|(ci, gi)| (ci.val(), gi.val())).collect()
+        })
+        .unwrap_or_default();
+    let clusters_to_skip: ahash::HashSet<usize> = nsc_result
+        .as_ref()
+        .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
+        .unwrap_or_default();
+
     (0..pa.n_clusters()).filter(|&ci_val| {
+        if clusters_to_skip.contains(&ci_val) { return false; }
         let ci = ClusterIdx(ci_val);
         let present = pa.present_count(ci);
         if present == n { return true; }
-        let rescued = (0..n).filter(|&gi_val| {
+        let extra = (0..n).filter(|&gi_val| {
             let gi = GenomeIdx(gi_val);
-            !pa.is_present(ci, gi) && rescue_map.contains_key(&(ci, gi))
+            !pa.is_present(ci, gi)
+                && (rescue_map.contains_key(&(ci, gi))
+                    || nsc_presence.contains(&(ci_val, gi_val)))
         }).count();
-        present + rescued == n
+        present + extra == n
     }).count()
 }
 
 fn count_soft_core_after(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_result: &Option<nscluster::NsClusterResult>,
 ) -> usize {
     let n = pa.n_genomes();
     let threshold = (n as f64 * 0.95).ceil() as usize;
+    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
+        .as_ref()
+        .map(|r| {
+            let (_, updates) = nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
+            updates.into_iter().map(|(ci, gi)| (ci.val(), gi.val())).collect()
+        })
+        .unwrap_or_default();
+    let clusters_to_skip: ahash::HashSet<usize> = nsc_result
+        .as_ref()
+        .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
+        .unwrap_or_default();
+
     (0..pa.n_clusters()).filter(|&ci_val| {
+        if clusters_to_skip.contains(&ci_val) { return false; }
         let ci = ClusterIdx(ci_val);
         let present = pa.present_count(ci);
         if present >= threshold { return true; }
-        let rescued = (0..n).filter(|&gi_val| {
+        let extra = (0..n).filter(|&gi_val| {
             let gi = GenomeIdx(gi_val);
-            !pa.is_present(ci, gi) && rescue_map.contains_key(&(ci, gi))
+            !pa.is_present(ci, gi)
+                && (rescue_map.contains_key(&(ci, gi))
+                    || nsc_presence.contains(&(ci_val, gi_val)))
         }).count();
-        present + rescued >= threshold
+        present + extra >= threshold
     }).count()
 }
 
@@ -421,6 +524,30 @@ struct SummaryStats {
     start_variant: usize,
     paralog: usize,
     synteny_enabled: bool,
+    nsc_clusters: usize,
+    nsc_merged_genes: usize,
+}
+
+fn write_nsc_report(
+    nsc: &nscluster::NsClusterResult,
+    cluster_names: &[String],
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let path = output_dir.join("nscluster_report.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(w, "ns_cluster\trepresentative\tn_members\tmembers")?;
+    for (i, nsc_cl) in nsc.merged_clusters.iter().enumerate() {
+        let member_names: Vec<&str> = nsc_cl.members
+            .iter()
+            .map(|ci| cluster_names[ci.val()].as_str())
+            .collect();
+        writeln!(w, "NS_{}\t{}\t{}\t{}",
+                 i, nsc_cl.representative, nsc_cl.members.len(),
+                 member_names.join(";"))?;
+    }
+    w.flush()?;
+    Ok(())
 }
 
 fn write_summary(
@@ -430,9 +557,9 @@ fn write_summary(
     stats: &SummaryStats,
     output_dir: &std::path::Path,
 ) -> Result<()> {
-    let core_after = count_core_after(pa, rescue_map);
+    let core_after = count_core_after(pa, rescue_map, &None);
     let soft_core_before = pa.soft_core_size();
-    let soft_core_after = count_soft_core_after(pa, rescue_map);
+    let soft_core_after = count_soft_core_after(pa, rescue_map, &None);
 
     let path = output_dir.join("summary.txt");
     let file = fs::File::create(&path)?;
@@ -463,6 +590,13 @@ fn write_summary(
         writeln!(w, "Synteny validation:")?;
         writeln!(w, "  PASS:  {}", syn_pass)?;
         writeln!(w, "  FAIL:  {}", syn_fail)?;
+    }
+    if stats.nsc_clusters > 0 {
+        writeln!(w)?;
+        writeln!(w, "Nucleotide similarity clustering:")?;
+        writeln!(w, "  NS clusters:     {}", stats.nsc_clusters)?;
+        writeln!(w, "  Genes merged:    {}", stats.nsc_merged_genes)?;
+        writeln!(w, "  Clusters removed: {}", stats.nsc_merged_genes - stats.nsc_clusters)?;
     }
     w.flush()?;
     Ok(())
