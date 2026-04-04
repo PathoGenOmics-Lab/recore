@@ -13,6 +13,7 @@ use crate::rescue::{
     GffGene, GffIndex, RescueEvent, RescueType,
 };
 use crate::search::batch_search;
+use crate::types::{ClusterIdx, GenomeIdx};
 
 pub fn run(args: &Args) -> Result<()> {
     // ── 1. Parse inputs ──
@@ -20,26 +21,24 @@ pub fn run(args: &Args) -> Result<()> {
     let pan_ref = parse_pan_reference(&args.pan_reference, args.multi_allele)?;
     let genome_files = find_genome_files(&args.genomes)?;
 
-    // Cluster name → index for O(1) lookup
-    let cluster_to_idx: HashMap<String, usize> = pa
-        .clusters
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.clone(), i))
-        .collect();
+    let cluster_to_idx = pa.cluster_index();
 
-    // ── 2. Filter gaps by prevalence (no intermediate Vec) ──
+    // ── 2. Filter gaps by prevalence (streaming, no intermediate Vec) ──
     let min_prevalence = args.min_prevalence;
-    let mut gaps_by_genome: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut gaps_by_genome: HashMap<GenomeIdx, Vec<ClusterIdx>> = HashMap::new();
     let mut total_gaps = 0usize;
     let mut filtered_gaps = 0usize;
     let mut skipped_by_prevalence = 0usize;
 
-    let n_genomes = pa.genomes.len();
-    for (ci, present_set) in pa.present.iter().enumerate() {
-        let prevalence = present_set.len() as f64 / n_genomes as f64;
-        for gi in 0..n_genomes {
-            if !present_set.contains(&gi) {
+    let n_genomes = pa.n_genomes();
+    let n_clusters = pa.n_clusters();
+
+    for ci_val in 0..n_clusters {
+        let ci = ClusterIdx(ci_val);
+        let prevalence = pa.present_count(ci) as f64 / n_genomes as f64;
+        for gi_val in 0..n_genomes {
+            let gi = GenomeIdx(gi_val);
+            if !pa.is_present(ci, gi) {
                 total_gaps += 1;
                 if prevalence < min_prevalence {
                     skipped_by_prevalence += 1;
@@ -54,22 +53,15 @@ pub fn run(args: &Args) -> Result<()> {
     let core_before = pa.core_size();
     info!(
         "Gaps: {} total, {} after prevalence filter (≥{:.0}%), {} skipped",
-        total_gaps,
-        filtered_gaps,
-        min_prevalence * 100.0,
-        skipped_by_prevalence
+        total_gaps, filtered_gaps, min_prevalence * 100.0, skipped_by_prevalence
     );
-    info!(
-        "Core genome (before): {} / {} clusters",
-        core_before,
-        pa.clusters.len()
-    );
+    info!("Core genome (before): {} / {} clusters", core_before, n_clusters);
 
-    // Check genome file availability
-    let mut searchable_genomes: Vec<(usize, Vec<usize>)> = Vec::new();
+    // ── 3. Filter to genomes with FASTA files ──
+    let mut searchable_genomes: Vec<(GenomeIdx, Vec<ClusterIdx>)> = Vec::new();
     let mut missing_genomes = 0usize;
     for (gi, cluster_indices) in gaps_by_genome {
-        let genome_name = &pa.genomes[gi];
+        let genome_name = pa.genome_name(gi);
         if genome_files.contains_key(genome_name) {
             searchable_genomes.push((gi, cluster_indices));
         } else {
@@ -77,16 +69,15 @@ pub fn run(args: &Args) -> Result<()> {
         }
     }
     if missing_genomes > 0 {
-        warn!(
-            "{} genomes with gaps have no FASTA file (skipped)",
-            missing_genomes
-        );
+        warn!("{} genomes with gaps have no FASTA file (skipped)", missing_genomes);
     }
 
-    // ── 3. Load GFF annotations ──
-    let gff_indices: HashMap<usize, GffIndex> = if let Some(ref ann_dir) = args.annotations {
+    // ── 4. Load GFF annotations ──
+    let gff_indices: HashMap<GenomeIdx, GffIndex> = if let Some(ref ann_dir) = args.annotations {
         let mut data = HashMap::new();
-        for (gi, genome_name) in pa.genomes.iter().enumerate() {
+        for gi_val in 0..n_genomes {
+            let gi = GenomeIdx(gi_val);
+            let genome_name = pa.genome_name(gi);
             let gff_path = ann_dir.join(format!("{}.gff", genome_name));
             let alt_path = ann_dir.join(format!("{}.gff3", genome_name));
             let path = if gff_path.exists() {
@@ -101,18 +92,12 @@ pub fn run(args: &Args) -> Result<()> {
                     let genes: Vec<GffGene> = raw_genes
                         .into_iter()
                         .map(|(contig, start, end, strand, gene_id)| GffGene {
-                            contig,
-                            start,
-                            end,
-                            strand,
-                            gene_id,
+                            contig, start, end, strand, gene_id,
                         })
                         .collect();
                     data.insert(gi, GffIndex::build(genes));
                 }
-                Err(e) => {
-                    warn!("Cannot parse GFF for {}: {}", genome_name, e);
-                }
+                Err(e) => warn!("Cannot parse GFF for {}: {}", genome_name, e),
             }
         }
         if !data.is_empty() {
@@ -123,57 +108,60 @@ pub fn run(args: &Args) -> Result<()> {
         HashMap::new()
     };
 
-    // ── 4. Build gene_to_cluster maps ONCE (reused in rescue + synteny) ──
-    // Only build for genomes that have GFF or have gaps (need for classify_hits)
-    let gene_to_cluster_maps: HashMap<usize, HashMap<String, usize>> = {
+    // ── 5. Build gene_to_cluster maps ONCE ──
+    let gene_to_cluster_maps: HashMap<GenomeIdx, HashMap<String, ClusterIdx>> = {
         let mut maps = HashMap::new();
-        // Genomes with gaps (for classify_hits)
         for (gi, _) in &searchable_genomes {
-            maps.entry(*gi)
-                .or_insert_with(|| build_gene_to_cluster(&pa, *gi));
+            maps.entry(*gi).or_insert_with(|| build_gene_to_cluster(&pa, *gi));
         }
-        // Genomes with GFF (for synteny validation)
         if args.synteny {
             for &gi in gff_indices.keys() {
-                maps.entry(gi)
-                    .or_insert_with(|| build_gene_to_cluster(&pa, gi));
+                maps.entry(gi).or_insert_with(|| build_gene_to_cluster(&pa, gi));
             }
         }
         maps
     };
 
-    // ── 5. Batch search: ONE minimap2 invocation for all genomes ──
+    // ── 6. Batch search: ONE minimap2 invocation ──
+    // Adapt types for batch_search (uses usize internally for genome files lookup)
+    let searchable_usize: Vec<(usize, Vec<usize>)> = searchable_genomes
+        .iter()
+        .map(|(gi, cis)| (gi.val(), cis.iter().map(|ci| ci.val()).collect()))
+        .collect();
+
     let hits_map = batch_search(
         &pan_ref,
         &genome_files,
-        &searchable_genomes,
-        &pa.genomes,
-        &pa.clusters,
+        &searchable_usize,
+        pa.genome_names(),
+        pa.cluster_names(),
         args.threads,
         args.min_identity,
         &args.preset,
     )?;
 
-    // ── 6. Classify hits into rescue events (parallel) ──
+    // ── 7. Classify hits (parallel) ──
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(args.threads)
         .build()
         .context("Failed to build rayon thread pool")?;
 
-    let classify_inputs: Vec<_> = hits_map
+    let classify_inputs: Vec<(ClusterIdx, GenomeIdx, &[crate::search::Hit])> = hits_map
         .iter()
-        .filter_map(|((gi, cluster_name), hits)| {
+        .filter_map(|((gi_val, cluster_name), hits)| {
             let ci = *cluster_to_idx.get(cluster_name.as_str())?;
-            Some((ci, *gi, cluster_name.as_str(), hits.as_slice()))
+            let gi = GenomeIdx(*gi_val);
+            Some((ci, gi, hits.as_slice()))
         })
         .collect();
 
-    let empty_map: HashMap<String, usize> = HashMap::new();
+    let empty_map: HashMap<String, ClusterIdx> = HashMap::new();
+
     let rescues: Vec<RescueEvent> = pool.install(|| {
         use rayon::prelude::*;
         classify_inputs
             .par_iter()
-            .filter_map(|&(ci, gi, _cluster_name, hits)| {
+            .filter_map(|&(ci, gi, hits)| {
                 let gff_index = gff_indices.get(&gi);
                 let g2c = gene_to_cluster_maps.get(&gi).unwrap_or(&empty_map);
                 classify_hits(hits, ci, gi, &pa, gff_index, g2c, args.min_coverage)
@@ -184,7 +172,7 @@ pub fn run(args: &Args) -> Result<()> {
     let mut rescues = rescues;
     info!("Raw rescues before filtering: {}", rescues.len());
 
-    // ── 7. Synteny validation (if requested) ──
+    // ── 8. Synteny validation ──
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
         for rescue in &mut rescues {
@@ -195,19 +183,17 @@ pub fn run(args: &Args) -> Result<()> {
         info!("Synteny: {} validated, {} failed", validated, failed);
     }
 
-    // ── 8. Conflict resolution ──
+    // ── 9. Conflict resolution ──
     let before_conflicts = rescues.len();
     resolve_conflicts(&mut rescues);
     if before_conflicts != rescues.len() {
         info!(
             "Conflict resolution: {} → {} rescues ({} conflicts resolved)",
-            before_conflicts,
-            rescues.len(),
-            before_conflicts - rescues.len()
+            before_conflicts, rescues.len(), before_conflicts - rescues.len()
         );
     }
 
-    // ── 9. Count rescue types ──
+    // ── 10. Count rescue types ──
     let mut dropped = 0usize;
     let mut split = 0usize;
     let mut fragmented = 0usize;
@@ -227,11 +213,10 @@ pub fn run(args: &Args) -> Result<()> {
         rescues.len(), dropped, split, fragmented, start_variant, paralog
     );
 
-    // ── 10. Generate outputs ──
+    // ── 11. Generate outputs ──
     fs::create_dir_all(&args.output)?;
 
-    // Build rescue lookup
-    let rescue_map: HashMap<(usize, usize), &RescueEvent> = rescues
+    let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
         .iter()
         .map(|r| ((r.cluster_idx, r.genome_idx), r))
         .collect();
@@ -253,19 +238,12 @@ pub fn run(args: &Args) -> Result<()> {
     };
     write_summary(&pa, &rescue_map, &rescues, &stats, &args.output)?;
 
-    // Log final stats
     let core_after = count_core_after(&pa, &rescue_map);
     let soft_core_after = count_soft_core_after(&pa, &rescue_map);
-    info!(
-        "Core genome: {} → {} (+{})",
-        core_before,
-        core_after,
-        core_after - core_before
-    );
+    info!("Core genome: {} → {} (+{})", core_before, core_after, core_after - core_before);
     info!(
         "Soft-core (≥95%): {} → {} (+{})",
-        pa.soft_core_size(),
-        soft_core_after,
+        pa.soft_core_size(), soft_core_after,
         soft_core_after - pa.soft_core_size()
     );
     info!("Output: {}", args.output.display());
@@ -291,8 +269,8 @@ fn write_report(
         writeln!(
             w,
             "{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}",
-            pa.clusters[r.cluster_idx],
-            pa.genomes[r.genome_idx],
+            pa.cluster_name(r.cluster_idx),
+            pa.genome_name(r.genome_idx),
             r.rescue_type,
             r.identity,
             r.coverage,
@@ -315,7 +293,7 @@ fn write_report(
 
 fn write_corrected_csv(
     pa: &crate::parser::PresenceAbsence,
-    rescue_map: &HashMap<(usize, usize), &RescueEvent>,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     output_dir: &std::path::Path,
 ) -> Result<()> {
     let path = output_dir.join("gene_presence_absence_recore.csv");
@@ -323,36 +301,37 @@ fn write_corrected_csv(
     let writer = BufWriter::with_capacity(256 * 1024, file);
     let mut csv_writer = csv::Writer::from_writer(writer);
 
-    csv_writer.write_record(&pa.header)?;
+    csv_writer.write_record(pa.header())?;
 
-    let genome_idx_set: ahash::HashSet<usize> = pa.genome_col_indices.iter().copied().collect();
-    let meta_col_indices: Vec<usize> = (0..pa.header.len())
+    let genome_idx_set: ahash::HashSet<usize> =
+        pa.genome_col_indices().iter().copied().collect();
+    let meta_col_indices: Vec<usize> = (0..pa.header().len())
         .filter(|i| !genome_idx_set.contains(i))
         .collect();
 
-    let isolates_col = pa.header.iter().position(|h| h == "No. isolates");
-    let sequences_col = pa.header.iter().position(|h| h == "No. sequences");
-    let avg_seq_col = pa.header.iter().position(|h| h == "Avg sequences per isolate");
+    let isolates_col = pa.header().iter().position(|h| h == "No. isolates");
+    let sequences_col = pa.header().iter().position(|h| h == "No. sequences");
+    let avg_seq_col = pa.header().iter().position(|h| h == "Avg sequences per isolate");
 
-    // Pre-allocate row buffer (reuse across iterations to reduce allocations)
-    let n_cols = pa.header.len();
+    let n_cols = pa.header().len();
     let mut row: Vec<String> = vec![String::new(); n_cols];
-    // Pre-allocate a rescue format buffer
     let mut rescue_buf = String::new();
 
-    for ci in 0..pa.clusters.len() {
-        // Fill metadata columns (by reference where possible, clone only when needed)
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+
         for (mi, &col_idx) in meta_col_indices.iter().enumerate() {
-            if mi < pa.metadata[ci].len() {
-                row[col_idx].clone_from(&pa.metadata[ci][mi]);
+            let meta = pa.metadata(ci);
+            if mi < meta.len() {
+                row[col_idx].clone_from(&meta[mi]);
             } else {
                 row[col_idx].clear();
             }
         }
 
-        // Fill genome columns
         let mut rescue_count = 0usize;
-        for (gi, &col_idx) in pa.genome_col_indices.iter().enumerate() {
+        for (gi_val, &col_idx) in pa.genome_col_indices().iter().enumerate() {
+            let gi = GenomeIdx(gi_val);
             if let Some(r) = rescue_map.get(&(ci, gi)) {
                 rescue_buf.clear();
                 use std::fmt::Write as FmtWrite;
@@ -360,32 +339,27 @@ fn write_corrected_csv(
                 row[col_idx].clone_from(&rescue_buf);
                 rescue_count += 1;
             } else {
-                row[col_idx].clone_from(&pa.cell_values[ci][gi]);
+                row[col_idx].clone_from(&pa.cell(ci, gi).to_owned());
             }
         }
 
-        // Recalculate counts if rescues happened
         if rescue_count > 0 {
-            let new_count = pa.present[ci].len() + rescue_count;
+            let new_count = pa.present_count(ci) + rescue_count;
+            use std::fmt::Write as FmtWrite;
             if let Some(col) = isolates_col {
                 row[col].clear();
-                use std::fmt::Write as FmtWrite;
                 write!(row[col], "{}", new_count).unwrap();
             }
             if let Some(col) = sequences_col {
                 row[col].clear();
-                use std::fmt::Write as FmtWrite;
                 write!(row[col], "{}", new_count).unwrap();
             }
             if let Some(col) = avg_seq_col {
                 row[col].clear();
-                use std::fmt::Write as FmtWrite;
-                // After rescue, each isolate has exactly 1 sequence
                 write!(row[col], "1.00").unwrap();
             }
         }
 
-        // Write row as references (no clone into csv writer)
         csv_writer.write_record(row.iter().map(|s| s.as_str()))?;
     }
     csv_writer.flush()?;
@@ -394,48 +368,37 @@ fn write_corrected_csv(
 
 fn count_core_after(
     pa: &crate::parser::PresenceAbsence,
-    rescue_map: &HashMap<(usize, usize), &RescueEvent>,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
 ) -> usize {
-    let n = pa.genomes.len();
-    let mut count = 0;
-    for ci in 0..pa.clusters.len() {
-        let present = pa.present[ci].len();
-        if present == n {
-            count += 1;
-            continue;
-        }
-        // Only check rescue map if close to core
-        let rescued = (0..n)
-            .filter(|gi| !pa.present[ci].contains(gi) && rescue_map.contains_key(&(ci, *gi)))
-            .count();
-        if present + rescued == n {
-            count += 1;
-        }
-    }
-    count
+    let n = pa.n_genomes();
+    (0..pa.n_clusters()).filter(|&ci_val| {
+        let ci = ClusterIdx(ci_val);
+        let present = pa.present_count(ci);
+        if present == n { return true; }
+        let rescued = (0..n).filter(|&gi_val| {
+            let gi = GenomeIdx(gi_val);
+            !pa.is_present(ci, gi) && rescue_map.contains_key(&(ci, gi))
+        }).count();
+        present + rescued == n
+    }).count()
 }
 
 fn count_soft_core_after(
     pa: &crate::parser::PresenceAbsence,
-    rescue_map: &HashMap<(usize, usize), &RescueEvent>,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
 ) -> usize {
-    let n = pa.genomes.len();
+    let n = pa.n_genomes();
     let threshold = (n as f64 * 0.95).ceil() as usize;
-    let mut count = 0;
-    for ci in 0..pa.clusters.len() {
-        let present = pa.present[ci].len();
-        if present >= threshold {
-            count += 1;
-            continue;
-        }
-        let rescued = (0..n)
-            .filter(|gi| !pa.present[ci].contains(gi) && rescue_map.contains_key(&(ci, *gi)))
-            .count();
-        if present + rescued >= threshold {
-            count += 1;
-        }
-    }
-    count
+    (0..pa.n_clusters()).filter(|&ci_val| {
+        let ci = ClusterIdx(ci_val);
+        let present = pa.present_count(ci);
+        if present >= threshold { return true; }
+        let rescued = (0..n).filter(|&gi_val| {
+            let gi = GenomeIdx(gi_val);
+            !pa.is_present(ci, gi) && rescue_map.contains_key(&(ci, gi))
+        }).count();
+        present + rescued >= threshold
+    }).count()
 }
 
 struct SummaryStats {
@@ -453,7 +416,7 @@ struct SummaryStats {
 
 fn write_summary(
     pa: &crate::parser::PresenceAbsence,
-    rescue_map: &HashMap<(usize, usize), &RescueEvent>,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     rescues: &[RescueEvent],
     stats: &SummaryStats,
     output_dir: &std::path::Path,
@@ -467,8 +430,8 @@ fn write_summary(
     let mut w = BufWriter::new(file);
     writeln!(w, "Recore Summary")?;
     writeln!(w, "{}", "=".repeat(50))?;
-    writeln!(w, "Clusters:              {}", pa.clusters.len())?;
-    writeln!(w, "Genomes:               {}", pa.genomes.len())?;
+    writeln!(w, "Clusters:              {}", pa.n_clusters())?;
+    writeln!(w, "Genomes:               {}", pa.n_genomes())?;
     writeln!(w, "Total gaps:            {}", stats.total_gaps)?;
     writeln!(w, "Gaps searched:         {}", stats.filtered_gaps)?;
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;

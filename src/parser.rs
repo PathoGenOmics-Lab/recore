@@ -4,34 +4,104 @@ use log::info;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Presence/absence matrix.
+use crate::types::{ClusterIdx, GenomeIdx};
+
+// ── Presence/absence matrix (encapsulated) ──
+
+/// Presence/absence matrix from Panaroo/Roary output.
+///
+/// Fields are private to enforce consistent access and prevent
+/// accidental mutation of internal indices.
 pub struct PresenceAbsence {
-    /// All gene cluster names, in order.
-    pub clusters: Vec<String>,
-    /// All genome names (column headers), in order.
-    pub genomes: Vec<String>,
-    /// For each cluster index, set of genome indices where the gene is present.
-    pub present: Vec<HashSet<usize>>,
-    /// Original cell values: cell_values[cluster_idx][genome_idx] = gene_id string.
-    pub cell_values: Vec<Vec<String>>,
-    /// Full CSV header (all columns, including metadata).
-    pub header: Vec<String>,
-    /// Metadata columns per cluster: metadata[cluster_idx] = vec of metadata values.
-    /// These are the non-genome columns (Annotation, No. isolates, etc.) preserved
-    /// for faithful output.
-    pub metadata: Vec<Vec<String>>,
-    /// Indices of genome columns in the original header.
-    pub genome_col_indices: Vec<usize>,
+    clusters: Vec<String>,
+    genomes: Vec<String>,
+    present: Vec<HashSet<GenomeIdx>>,
+    cell_values: Vec<Vec<String>>,
+    header: Vec<String>,
+    metadata: Vec<Vec<String>>,
+    genome_col_indices: Vec<usize>,
 }
 
 impl PresenceAbsence {
-    /// Find all (cluster_idx, genome_idx) pairs where the gene is absent.
+    // ── Dimensions ──
+
+    #[inline]
+    pub fn n_clusters(&self) -> usize {
+        self.clusters.len()
+    }
+
+    #[inline]
+    pub fn n_genomes(&self) -> usize {
+        self.genomes.len()
+    }
+
+    // ── Name lookups ──
+
+    #[inline]
+    pub fn cluster_name(&self, ci: ClusterIdx) -> &str {
+        &self.clusters[ci.val()]
+    }
+
+    #[inline]
+    pub fn genome_name(&self, gi: GenomeIdx) -> &str {
+        &self.genomes[gi.val()]
+    }
+
+    pub fn cluster_names(&self) -> &[String] {
+        &self.clusters
+    }
+
+    pub fn genome_names(&self) -> &[String] {
+        &self.genomes
+    }
+
+    // ── Presence queries ──
+
+    #[inline]
+    pub fn is_present(&self, ci: ClusterIdx, gi: GenomeIdx) -> bool {
+        self.present[ci.val()].contains(&gi)
+    }
+
+    #[inline]
+    pub fn present_count(&self, ci: ClusterIdx) -> usize {
+        self.present[ci.val()].len()
+    }
+
+    pub fn present_genomes(&self, ci: ClusterIdx) -> &HashSet<GenomeIdx> {
+        &self.present[ci.val()]
+    }
+
+    // ── Cell values (for gene IDs and CSV reconstruction) ──
+
+    #[inline]
+    pub fn cell(&self, ci: ClusterIdx, gi: GenomeIdx) -> &str {
+        &self.cell_values[ci.val()][gi.val()]
+    }
+
+    // ── CSV structure (for output reconstruction) ──
+
+    pub fn header(&self) -> &[String] {
+        &self.header
+    }
+
+    pub fn metadata(&self, ci: ClusterIdx) -> &[String] {
+        &self.metadata[ci.val()]
+    }
+
+    pub fn genome_col_indices(&self) -> &[usize] {
+        &self.genome_col_indices
+    }
+
+    // ── Derived statistics ──
+
     #[allow(dead_code)]
-    pub fn gaps(&self) -> Vec<(usize, usize)> {
+    pub fn gaps(&self) -> Vec<(ClusterIdx, GenomeIdx)> {
         let mut gaps = Vec::new();
-        for (ci, present_set) in self.present.iter().enumerate() {
+        for ci in 0..self.clusters.len() {
+            let ci = ClusterIdx(ci);
             for gi in 0..self.genomes.len() {
-                if !present_set.contains(&gi) {
+                let gi = GenomeIdx(gi);
+                if !self.is_present(ci, gi) {
                     gaps.push((ci, gi));
                 }
             }
@@ -39,29 +109,66 @@ impl PresenceAbsence {
         gaps
     }
 
-    /// Cluster prevalence: fraction of genomes where cluster is present.
     #[allow(dead_code)]
-    pub fn prevalence(&self, ci: usize) -> f64 {
+    pub fn prevalence(&self, ci: ClusterIdx) -> f64 {
         if self.genomes.is_empty() {
             return 0.0;
         }
-        self.present[ci].len() as f64 / self.genomes.len() as f64
+        self.present_count(ci) as f64 / self.genomes.len() as f64
     }
 
-    /// Core size: clusters present in ALL genomes.
     pub fn core_size(&self) -> usize {
         let n = self.genomes.len();
         self.present.iter().filter(|p| p.len() == n).count()
     }
 
-    /// Soft-core size: clusters present in ≥95% of genomes.
     pub fn soft_core_size(&self) -> usize {
         let threshold = (self.genomes.len() as f64 * 0.95).ceil() as usize;
         self.present.iter().filter(|p| p.len() >= threshold).count()
     }
+
+    /// Constructor for tests only — minimal PA with all genes absent.
+    #[cfg(test)]
+    pub fn new_for_test(
+        clusters: Vec<String>,
+        genomes: Vec<String>,
+        cell_values: Vec<Vec<String>>,
+    ) -> Self {
+        use ahash::HashSetExt;
+        let n_cl = clusters.len();
+        let n_ge = genomes.len();
+        let present = (0..n_cl)
+            .map(|ci| {
+                let mut s = HashSet::new();
+                for (gi, v) in cell_values[ci].iter().enumerate() {
+                    if !v.is_empty() {
+                        s.insert(GenomeIdx(gi));
+                    }
+                }
+                s
+            })
+            .collect();
+        let metadata = vec![vec![]; n_cl];
+        let genome_col_indices: Vec<usize> = (0..n_ge).collect();
+        let mut header = vec!["Gene".to_string()];
+        header.extend(genomes.iter().cloned());
+        PresenceAbsence {
+            clusters, genomes, present, cell_values, header, metadata, genome_col_indices,
+        }
+    }
+
+    /// Build cluster_name → ClusterIdx index.
+    pub fn cluster_index(&self) -> HashMap<String, ClusterIdx> {
+        self.clusters
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.clone(), ClusterIdx(i)))
+            .collect()
+    }
 }
 
-/// Panaroo metadata columns to skip when identifying genome columns.
+// ── Panaroo CSV parsing ──
+
 const METADATA_COLS: &[&str] = &[
     "Gene",
     "Non-unique Gene name",
@@ -80,7 +187,6 @@ const METADATA_COLS: &[&str] = &[
     "Avg group size nuc",
 ];
 
-/// Parse Panaroo/Roary gene_presence_absence.csv.
 pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
     let mut reader = csv::Reader::from_path(path)
         .with_context(|| format!("Cannot open {}", path.display()))?;
@@ -105,7 +211,6 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         .map(|&i| headers[i].clone())
         .collect();
 
-    // Metadata column indices (everything that's not a genome column)
     let genome_idx_set: HashSet<usize> = genome_indices.iter().copied().collect();
     let meta_col_indices: Vec<usize> = (0..headers.len())
         .filter(|i| !genome_idx_set.contains(i))
@@ -126,12 +231,11 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         for (gi, &col_idx) in genome_indices.iter().enumerate() {
             let val = record.get(col_idx).unwrap_or("").trim().to_string();
             if !val.is_empty() {
-                present_set.insert(gi);
+                present_set.insert(GenomeIdx(gi));
             }
             row_values.push(val);
         }
 
-        // Store metadata columns
         let meta_values: Vec<String> = meta_col_indices
             .iter()
             .map(|&i| record.get(i).unwrap_or("").to_string())
@@ -168,10 +272,8 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
     })
 }
 
-/// Parse pan_genome_reference.fa → HashMap<cluster_name, Vec<sequence>>.
-/// In multi-allele mode, keeps ALL alleles per cluster.
-/// In single mode, keeps only the longest.
-/// Uses buffered line-by-line reading instead of read_to_string for large files.
+// ── FASTA / GFF parsing ──
+
 pub fn parse_pan_reference(
     path: &Path,
     multi_allele: bool,
@@ -186,7 +288,6 @@ pub fn parse_pan_reference(
     let mut current_name: Option<String> = None;
     let mut current_seq: Vec<u8> = Vec::new();
 
-    /// Helper: flush current record into the map.
     fn flush_record(
         name: String,
         seq: Vec<u8>,
@@ -228,7 +329,6 @@ pub fn parse_pan_reference(
         }
     }
 
-    // Last record
     if let Some(name) = current_name {
         flush_record(name, current_seq, &mut refs, multi_allele);
     }
@@ -243,7 +343,6 @@ pub fn parse_pan_reference(
     Ok(refs)
 }
 
-/// Find genome FASTA files in a directory.
 pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     let extensions = [".fasta", ".fa", ".fna", ".fasta.gz", ".fa.gz", ".fna.gz"];
     let mut files: HashMap<String, PathBuf> = HashMap::new();
@@ -276,11 +375,8 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     Ok(files)
 }
 
-/// (contig, start, end, strand, gene_id)
 pub type GffRecord = (String, u64, u64, char, String);
 
-/// Parse CDS features from a GFF file.
-/// Uses buffered line-by-line reading for memory efficiency.
 pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
     use std::io::{BufRead, BufReader};
 
@@ -344,8 +440,8 @@ mod tests {
             gB,gB,prod,2,2,1.0,0,0,0,,200,200,200,id4,,id5\n",
         );
         let pa = parse_presence_absence(csv.path()).unwrap();
-        assert_eq!(pa.clusters.len(), 2);
-        assert_eq!(pa.genomes.len(), 3);
+        assert_eq!(pa.n_clusters(), 2);
+        assert_eq!(pa.n_genomes(), 3);
         assert_eq!(pa.core_size(), 1);
         assert_eq!(pa.gaps().len(), 1);
     }
@@ -358,7 +454,7 @@ mod tests {
         let refs = parse_pan_reference(fa.path(), false).unwrap();
         assert_eq!(refs.len(), 2);
         assert_eq!(refs["clA"].len(), 1);
-        assert_eq!(refs["clA"][0].len(), 12); // kept the longest
+        assert_eq!(refs["clA"][0].len(), 12);
         assert_eq!(refs["clB"][0], b"GGGGAAAA");
     }
 
@@ -368,7 +464,7 @@ mod tests {
             ">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n",
         );
         let refs = parse_pan_reference(fa.path(), true).unwrap();
-        assert_eq!(refs["clA"].len(), 2); // both alleles
+        assert_eq!(refs["clA"].len(), 2);
     }
 
     #[test]
@@ -397,7 +493,7 @@ mod tests {
             gB,gB,p,1,1,1,0,0,0,,1,1,1,b,,,,,,,,,\n",
         );
         let pa = parse_presence_absence(csv.path()).unwrap();
-        assert!((pa.prevalence(0) - 1.0).abs() < 0.001); // gA: 100%
-        assert!((pa.prevalence(1) - 0.1).abs() < 0.001); // gB: 10%
+        assert!((pa.prevalence(ClusterIdx(0)) - 1.0).abs() < 0.001);
+        assert!((pa.prevalence(ClusterIdx(1)) - 0.1).abs() < 0.001);
     }
 }

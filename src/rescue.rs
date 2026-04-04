@@ -1,6 +1,7 @@
 use ahash::{HashMap, HashMapExt};
 use crate::parser::PresenceAbsence;
 use crate::search::Hit;
+use crate::types::{ClusterIdx, GenomeIdx};
 
 // ── Rescue types ──
 
@@ -13,7 +14,6 @@ pub enum RescueType {
     /// Gene is broken into multiple fragments (IS, frameshift, assembly break).
     Fragmented { n_fragments: usize, total_coverage: f64 },
     /// Start site variant: gene is there but with a different start annotation.
-    /// Detected via GFF: hit overlaps a CDS whose length differs from query.
     StartVariant { length_diff_bp: i64 },
     /// Gene hit overlaps a paralog from a different cluster.
     #[allow(dead_code)]
@@ -40,8 +40,8 @@ impl std::fmt::Display for RescueType {
 
 #[derive(Debug, Clone)]
 pub struct RescueEvent {
-    pub cluster_idx: usize,
-    pub genome_idx: usize,
+    pub cluster_idx: ClusterIdx,
+    pub genome_idx: GenomeIdx,
     pub rescue_type: RescueType,
     pub identity: f64,
     pub coverage: f64,
@@ -50,9 +50,7 @@ pub struct RescueEvent {
     pub end: u64,
     pub strand: char,
     pub annotation_match: Option<String>,
-    /// Confidence score: 0.0+. Used for conflict resolution.
     pub confidence: f64,
-    /// Synteny validated (if --synteny enabled and GFF provided).
     pub synteny_ok: Option<bool>,
 }
 
@@ -68,11 +66,9 @@ pub struct GffGene {
     pub gene_id: String,
 }
 
-/// Index for fast coordinate overlap queries.
 pub struct GffIndex {
     pub genes: Vec<GffGene>,
     contig_ranges: HashMap<String, (usize, usize)>,
-    /// gene_id → index in `genes` for O(1) lookup by ID.
     gene_id_index: HashMap<String, usize>,
 }
 
@@ -94,7 +90,6 @@ impl GffIndex {
             contig_ranges.insert(current_contig.clone(), (range_start, genes.len()));
         }
 
-        // Build gene_id → index map
         let mut gene_id_index = HashMap::new();
         for (i, g) in genes.iter().enumerate() {
             if !g.gene_id.is_empty() {
@@ -105,19 +100,15 @@ impl GffIndex {
         GffIndex { genes, contig_ranges, gene_id_index }
     }
 
-    /// Lookup a gene by ID. O(1).
     pub fn get_by_id(&self, gene_id: &str) -> Option<&GffGene> {
         self.gene_id_index.get(gene_id).map(|&i| &self.genes[i])
     }
 
-    /// Find all genes overlapping [query_start, query_end) on a contig.
     pub fn overlapping(&self, contig: &str, query_start: u64, query_end: u64) -> Vec<&GffGene> {
         let Some(&(range_start, range_end)) = self.contig_ranges.get(contig) else {
             return Vec::new();
         };
 
-        // Use bounded slice — partition_point requires monotonic predicate,
-        // which only holds within a single contig's sorted genes.
         let slice = &self.genes[range_start..range_end];
         let scan_start = slice.partition_point(|g| g.end <= query_start);
 
@@ -131,7 +122,6 @@ impl GffIndex {
         results
     }
 
-    /// Get the gene immediately before and after a position on a contig.
     pub fn flanking(&self, contig: &str, start: u64, end: u64) -> (Option<&GffGene>, Option<&GffGene>) {
         let Some(&(range_start, range_end)) = self.contig_ranges.get(contig) else {
             return (None, None);
@@ -152,15 +142,15 @@ impl GffIndex {
 
 // ── Gene-to-cluster index ──
 
-/// Build a lookup from gene_id → cluster_idx for a specific genome.
-/// Handles Panaroo's semicolon-separated multi-gene cells.
-pub fn build_gene_to_cluster(pa: &PresenceAbsence, genome_idx: usize) -> HashMap<String, usize> {
+/// Build a lookup from gene_id → ClusterIdx for a specific genome.
+pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<String, ClusterIdx> {
     let mut map = HashMap::new();
-    for (ci, present) in pa.present.iter().enumerate() {
-        if !present.contains(&genome_idx) {
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        if !pa.is_present(ci, gi) {
             continue;
         }
-        let cell = &pa.cell_values[ci][genome_idx];
+        let cell = pa.cell(ci, gi);
         for gene_id in cell.split(';') {
             let gene_id = gene_id.trim();
             if !gene_id.is_empty() {
@@ -173,18 +163,11 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, genome_idx: usize) -> HashMap
 
 // ── Fragment analysis ──
 
-/// Compute combined query coverage from multiple hits.
-/// Groups by actual query name (not just length) to avoid mixing alleles.
-/// Picks the allele whose hits give the best merged coverage.
-///
-/// Returns (coverage_pct, n_merged_intervals).
 fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
     if hits.is_empty() {
         return (0.0, 0);
     }
 
-    // Group hits by (query_length, query_name) to separate alleles correctly.
-    // Two alleles with the same length but different sequences must not be merged.
     let mut by_allele: HashMap<(&str, u64), Vec<(u64, u64)>> = HashMap::new();
     for h in hits {
         by_allele
@@ -202,7 +185,6 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
         }
         intervals.sort_by_key(|&(s, _)| s);
 
-        // Merge overlapping intervals
         let mut merged: Vec<(u64, u64)> = Vec::new();
         for (s, e) in intervals {
             if let Some(last) = merged.last_mut() {
@@ -228,14 +210,8 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
     (best_coverage, best_fragments)
 }
 
-// ── Start-site variant detection (GFF-based) ──
+// ── Start-site variant detection ──
 
-/// Detect if a hit represents a start-site variant by comparing the hit
-/// against the overlapping CDS from GFF. If the CDS has high reciprocal
-/// overlap but differs in length by <300bp, it's likely a start variant.
-///
-/// Returns the length difference (positive = CDS longer than query, negative = shorter).
-/// Returns (length_diff, gene_id) if a start variant is detected.
 fn detect_start_variant(
     hit: &Hit,
     gff_index: Option<&GffIndex>,
@@ -270,34 +246,22 @@ fn detect_start_variant(
 
 // ── Main classification ──
 
-/// Classify all hits for a single (cluster, genome) pair.
-///
-/// Decision tree:
-/// 1. Best single hit covers ≥min_coverage → classify as DROPPED/SPLIT/START_VARIANT
-/// 2. Multiple partial hits cover ≥min_coverage together → FRAGMENTED
-/// 3. Otherwise → no rescue (true absence or below thresholds)
 pub fn classify_hits(
     hits: &[Hit],
-    cluster_idx: usize,
-    genome_idx: usize,
+    ci: ClusterIdx,
+    gi: GenomeIdx,
     pa: &PresenceAbsence,
     gff_index: Option<&GffIndex>,
-    gene_to_cluster: &HashMap<String, usize>,
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
     min_coverage: f64,
 ) -> Option<RescueEvent> {
     if hits.is_empty() {
         return None;
     }
 
-    // Sort hits: prefer longer query (real gene, not paralog fragment),
-    // then by identity × coverage score as tiebreaker.
-    // This prevents a short paralog (300bp, 100% cov) from beating
-    // the real gene (1200bp, 85% cov).
     let mut sorted_hits: Vec<&Hit> = hits.iter().collect();
     sorted_hits.sort_by(|a, b| {
-        // Primary: longer query_length (favor the full-length allele)
         b.query_length.cmp(&a.query_length)
-            // Secondary: higher score (identity × coverage)
             .then_with(|| b.score().total_cmp(&a.score()))
     });
 
@@ -305,17 +269,10 @@ pub fn classify_hits(
 
     // ── Path 1: Single full-coverage hit ──
     if best.query_coverage() >= min_coverage {
-        // First classify via GFF (SPLIT vs DROPPED)
         let (rescue_type, annotation_match, confidence) = classify_single_hit(
-            best,
-            cluster_idx,
-            pa,
-            gff_index,
-            gene_to_cluster,
+            best, ci, pa, gff_index, gene_to_cluster,
         );
 
-        // Only check START_VARIANT if the gene was classified as DROPPED
-        // (not SPLIT — a split gene belongs to another cluster, the start doesn't matter)
         let (final_type, final_ann, final_conf) = if matches!(rescue_type, RescueType::Dropped) {
             if let Some((length_diff, matched_gene_id)) = detect_start_variant(best, gff_index) {
                 (
@@ -331,8 +288,8 @@ pub fn classify_hits(
         };
 
         return Some(RescueEvent {
-            cluster_idx,
-            genome_idx,
+            cluster_idx: ci,
+            genome_idx: gi,
             rescue_type: final_type,
             identity: best.identity(),
             coverage: best.query_coverage(),
@@ -347,8 +304,6 @@ pub fn classify_hits(
     }
 
     // ── Path 2: Fragment assembly (same contig only) ──
-    // Group hits by contig and try fragment assembly per contig.
-    // Mixing contigs would give nonsensical coordinates.
     let primary_contig = &best.target;
     let same_contig_hits: Vec<&Hit> = sorted_hits
         .iter()
@@ -366,12 +321,9 @@ pub fn classify_hits(
         let frag_end = same_contig_hits.iter().map(|h| h.target_end).max().unwrap();
 
         return Some(RescueEvent {
-            cluster_idx,
-            genome_idx,
-            rescue_type: RescueType::Fragmented {
-                n_fragments,
-                total_coverage,
-            },
+            cluster_idx: ci,
+            genome_idx: gi,
+            rescue_type: RescueType::Fragmented { n_fragments, total_coverage },
             identity: avg_identity,
             coverage: total_coverage,
             contig: primary_contig.clone(),
@@ -387,13 +339,12 @@ pub fn classify_hits(
     None
 }
 
-/// Classify a single full-coverage hit.
 fn classify_single_hit(
     hit: &Hit,
-    cluster_idx: usize,
+    ci: ClusterIdx,
     pa: &PresenceAbsence,
     gff_index: Option<&GffIndex>,
-    gene_to_cluster: &HashMap<String, usize>,
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
 ) -> (RescueType, Option<String>, f64) {
     let base_confidence = hit.identity() / 100.0 * hit.query_coverage() / 100.0;
 
@@ -407,7 +358,6 @@ fn classify_single_hit(
         return (RescueType::Dropped, None, base_confidence);
     }
 
-    // Find best reciprocal overlap
     let hit_len = (hit.target_end - hit.target_start) as f64;
     let mut best_gene: Option<(&GffGene, f64)> = None;
 
@@ -433,12 +383,11 @@ fn classify_single_hit(
         return (RescueType::Dropped, Some(overlapping[0].gene_id.clone()), base_confidence);
     };
 
-    // Is this gene assigned to another cluster? → SPLIT
     if let Some(&other_ci) = gene_to_cluster.get(&matched_gene.gene_id) {
-        if other_ci != cluster_idx {
+        if other_ci != ci {
             return (
                 RescueType::Split {
-                    other_cluster: pa.clusters[other_ci].clone(),
+                    other_cluster: pa.cluster_name(other_ci).to_string(),
                 },
                 Some(matched_gene.gene_id.clone()),
                 base_confidence * 1.1,
@@ -451,8 +400,6 @@ fn classify_single_hit(
 
 // ── Conflict resolution ──
 
-/// Resolve conflicts where multiple clusters claim the same genomic region.
-/// The cluster with the highest confidence wins; others are removed.
 pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
     if rescues.is_empty() {
         return;
@@ -478,26 +425,16 @@ pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
             let ri = &rescues[i];
             let rj = &rescues[j];
 
-            // Different genome → no more possible conflicts with i
             if ri.genome_idx != rj.genome_idx {
                 break;
             }
-
-            // Different contig → skip, there may be more on the same contig later
-            // (impossible due to sort, but be safe — continue, not break)
             if ri.contig != rj.contig {
-                // Sorted by contig, so all remaining same-contig entries for i are done.
-                // But there could still be entries on the same contig as j that conflict with j.
-                // For conflicts with i specifically: no more on this contig → break inner.
                 break;
             }
-
-            // Past the region → no more overlaps for i on this contig
             if rj.start >= ri.end {
                 break;
             }
 
-            // Overlapping → conflict. Higher confidence wins.
             if ri.confidence >= rj.confidence {
                 to_remove[j] = true;
             } else {
@@ -517,17 +454,11 @@ pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
 
 // ── Synteny validation ──
 
-/// Validate a rescue by checking flanking gene conservation.
-///
-/// Compares Panaroo CLUSTER assignments (not gene IDs) of flanking genes.
-/// Gene IDs are genome-specific and never match across genomes.
-/// Instead: look up each flanking gene_id → gene_to_cluster → cluster_idx,
-/// then compare cluster_idx between rescue genome and reference genome.
 pub fn validate_synteny(
     rescue: &mut RescueEvent,
     pa: &PresenceAbsence,
-    gff_indices: &HashMap<usize, GffIndex>,
-    gene_to_cluster_maps: &HashMap<usize, HashMap<String, usize>>,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
 ) {
     let ci = rescue.cluster_idx;
     let gi = rescue.genome_idx;
@@ -541,43 +472,37 @@ pub fn validate_synteny(
 
     let (target_up, target_down) = target_gff.flanking(&rescue.contig, rescue.start, rescue.end);
 
-    // Map flanking gene_ids to cluster indices
     let target_up_cluster = target_up.and_then(|g| target_g2c.get(&g.gene_id).copied());
     let target_down_cluster = target_down.and_then(|g| target_g2c.get(&g.gene_id).copied());
 
     if target_up_cluster.is_none() && target_down_cluster.is_none() {
-        return; // can't validate
+        return;
     }
 
-    // Check against reference genomes where this cluster IS present
     let mut synteny_match = false;
-    for ref_gi in pa.present[ci].iter().take(5) {
-        let Some(ref_gff) = gff_indices.get(ref_gi) else {
+    for &ref_gi in pa.present_genomes(ci).iter().take(5) {
+        let Some(ref_gff) = gff_indices.get(&ref_gi) else {
             continue;
         };
-        let Some(ref_g2c) = gene_to_cluster_maps.get(ref_gi) else {
+        let Some(ref_g2c) = gene_to_cluster_maps.get(&ref_gi) else {
             continue;
         };
 
-        // Find the gene's position in the reference genome
-        let ref_cell = &pa.cell_values[ci][*ref_gi];
+        let ref_cell = pa.cell(ci, ref_gi);
         if ref_cell.is_empty() {
             continue;
         }
         let ref_gene_id = ref_cell.split(';').next().unwrap_or(ref_cell).trim();
 
-        // Locate gene in reference GFF (O(1) via index)
         let Some(ref_gene) = ref_gff.get_by_id(ref_gene_id) else {
             continue;
         };
 
         let (ref_up, ref_down) = ref_gff.flanking(&ref_gene.contig, ref_gene.start, ref_gene.end);
 
-        // Map reference flanking genes to cluster indices
         let ref_up_cluster = ref_up.and_then(|g| ref_g2c.get(&g.gene_id).copied());
         let ref_down_cluster = ref_down.and_then(|g| ref_g2c.get(&g.gene_id).copied());
 
-        // Compare CLUSTER indices, not gene IDs
         let up_match = match (target_up_cluster, ref_up_cluster) {
             (Some(a), Some(b)) => a == b,
             (None, None) => true,
@@ -607,21 +532,15 @@ pub fn validate_synteny(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::PresenceAbsence;
 
     fn make_hit(query_start: u64, query_end: u64, query_length: u64) -> Hit {
         Hit {
-            query: "g".into(),
-            cluster: "g".into(),
-            query_length,
-            query_start,
-            query_end,
-            strand: '+',
-            target: "c".into(),
-            target_start: query_start,
-            target_end: query_end,
+            query: "g".into(), cluster: "g".into(), query_length,
+            query_start, query_end, strand: '+', target: "c".into(),
+            target_start: query_start, target_end: query_end,
             matches: query_end - query_start,
-            alignment_length: query_end - query_start,
-            mapq: 60,
+            alignment_length: query_end - query_start, mapq: 60,
         }
     }
 
@@ -645,7 +564,6 @@ mod tests {
 
     #[test]
     fn test_merged_coverage_multi_allele() {
-        // Two alleles: 800bp and 1200bp. Each has partial hits.
         let h1 = Hit {
             query: "g__0".into(), cluster: "g".into(), query_length: 800,
             query_start: 0, query_end: 600, strand: '+', target: "c".into(),
@@ -657,16 +575,12 @@ mod tests {
             target_start: 0, target_end: 1100, matches: 1100, alignment_length: 1100, mapq: 60,
         };
         let (cov, frags) = merged_query_coverage(&[&h1, &h2]);
-        // Should pick allele 1200bp (91.7% coverage, 1 fragment) over 800bp (75%, 1 fragment)
         assert!(cov > 90.0);
         assert_eq!(frags, 1);
     }
 
     #[test]
     fn test_merged_coverage_same_length_different_alleles() {
-        // Two alleles both 1000bp but different sequences (different query names).
-        // allele_A covers 0-400, allele_B covers 600-1000.
-        // They should NOT be merged — each allele independently covers <80%.
         let h1 = Hit {
             query: "cluster~~~ALLELE~0".into(), cluster: "cluster".into(), query_length: 1000,
             query_start: 0, query_end: 400, strand: '+', target: "c".into(),
@@ -678,7 +592,6 @@ mod tests {
             target_start: 5000, target_end: 5400, matches: 400, alignment_length: 400, mapq: 60,
         };
         let (cov, _frags) = merged_query_coverage(&[&h1, &h2]);
-        // Each allele independently: 40%. Should NOT be merged to 80%.
         assert!(cov < 50.0, "Coverage should be <50% (was {:.1}%), alleles must not be merged", cov);
     }
 
@@ -718,7 +631,6 @@ mod tests {
     #[test]
     fn test_detect_start_variant_with_gff() {
         let genes = vec![
-            // CDS is 1100bp, query is 1000bp → 100bp start variant
             GffGene { contig: "c".into(), start: 0, end: 1100, strand: '+', gene_id: "gene1".into() },
         ];
         let idx = GffIndex::build(genes);
@@ -726,11 +638,11 @@ mod tests {
         let hit = Hit {
             query: "g".into(), cluster: "g".into(), query_length: 1000,
             query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 100, target_end: 1100, // maps to end of CDS
+            target_start: 100, target_end: 1100,
             matches: 1000, alignment_length: 1000, mapq: 60,
         };
         let result = detect_start_variant(&hit, Some(&idx));
-        assert_eq!(result, Some((100, "gene1".to_string()))); // CDS is 100bp longer
+        assert_eq!(result, Some((100, "gene1".to_string())));
     }
 
     #[test]
@@ -743,13 +655,15 @@ mod tests {
     fn test_conflict_resolution() {
         let mut rescues = vec![
             RescueEvent {
-                cluster_idx: 0, genome_idx: 0, rescue_type: RescueType::Dropped,
+                cluster_idx: ClusterIdx(0), genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
                 identity: 99.0, coverage: 100.0, contig: "c1".into(),
                 start: 100, end: 500, strand: '+', annotation_match: None,
                 confidence: 0.99, synteny_ok: None,
             },
             RescueEvent {
-                cluster_idx: 1, genome_idx: 0, rescue_type: RescueType::Dropped,
+                cluster_idx: ClusterIdx(1), genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
                 identity: 95.0, coverage: 90.0, contig: "c1".into(),
                 start: 200, end: 600, strand: '+', annotation_match: None,
                 confidence: 0.85, synteny_ok: None,
@@ -757,32 +671,33 @@ mod tests {
         ];
         resolve_conflicts(&mut rescues);
         assert_eq!(rescues.len(), 1);
-        assert_eq!(rescues[0].cluster_idx, 0);
+        assert_eq!(rescues[0].cluster_idx, ClusterIdx(0));
     }
 
     #[test]
     fn test_conflict_resolution_no_overlap() {
         let mut rescues = vec![
             RescueEvent {
-                cluster_idx: 0, genome_idx: 0, rescue_type: RescueType::Dropped,
+                cluster_idx: ClusterIdx(0), genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
                 identity: 99.0, coverage: 100.0, contig: "c1".into(),
                 start: 100, end: 500, strand: '+', annotation_match: None,
                 confidence: 0.99, synteny_ok: None,
             },
             RescueEvent {
-                cluster_idx: 1, genome_idx: 0, rescue_type: RescueType::Dropped,
+                cluster_idx: ClusterIdx(1), genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
                 identity: 95.0, coverage: 90.0, contig: "c1".into(),
                 start: 600, end: 900, strand: '+', annotation_match: None,
                 confidence: 0.85, synteny_ok: None,
             },
         ];
         resolve_conflicts(&mut rescues);
-        assert_eq!(rescues.len(), 2); // no overlap → both kept
+        assert_eq!(rescues.len(), 2);
     }
 
     #[test]
     fn test_fragmented_span() {
-        // Two non-overlapping fragments should report min_start to max_end
         let h1 = Hit {
             query: "g".into(), cluster: "g".into(), query_length: 1000,
             query_start: 0, query_end: 400, strand: '+', target: "c".into(),
@@ -796,23 +711,18 @@ mod tests {
             matches: 400, alignment_length: 400, mapq: 60,
         };
 
-        use ahash::{HashSet, HashSetExt};
-        let pa = PresenceAbsence {
-            clusters: vec!["g".into()],
-            genomes: vec!["genome1".into()],
-            present: vec![HashSet::new()], // g absent in genome1
-            cell_values: vec![vec!["".into()]],
-            header: vec!["Gene".into(), "genome1".into()],
-            metadata: vec![vec!["g".into()]],
-            genome_col_indices: vec![1],
-        };
-        let g2c: HashMap<String, usize> = HashMap::new();
+        let pa = PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
 
-        let result = classify_hits(&[h1, h2], 0, 0, &pa, None, &g2c, 80.0);
+        let result = classify_hits(&[h1, h2], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
         assert!(result.is_some());
         let r = result.unwrap();
-        assert_eq!(r.start, 1000); // min of all fragment starts
-        assert_eq!(r.end, 2400);   // max of all fragment ends
+        assert_eq!(r.start, 1000);
+        assert_eq!(r.end, 2400);
         match r.rescue_type {
             RescueType::Fragmented { n_fragments, .. } => assert_eq!(n_fragments, 2),
             _ => panic!("Expected Fragmented"),

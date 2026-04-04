@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 
 /// Separator between genome name and original contig name in concatenated targets.
-/// Chosen to be extremely unlikely in real contig names.
 const CONTIG_SEP: &str = "|||";
 
 /// A single minimap2 hit (PAF format).

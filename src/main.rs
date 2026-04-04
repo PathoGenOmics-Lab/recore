@@ -1,4 +1,5 @@
 mod cli;
+mod types;
 mod parser;
 mod search;
 mod rescue;
