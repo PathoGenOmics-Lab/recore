@@ -2,31 +2,46 @@
 
 **Post-hoc rescue of falsely absent genes in pangenome matrices.**
 
-Pangenome tools (Panaroo, Roary, PPanGGOLiN) sometimes report genes as absent in a genome when they are actually present — inflating the accessory genome and shrinking the core. Recore detects and corrects these false negatives by searching each "absent" gene against the genome assembly with minimap2.
+Pangenome tools (Panaroo, Roary, PPanGGOLiN) sometimes report genes as absent when they are actually present — inflating the accessory genome and shrinking the core. Recore detects and corrects these false negatives by searching each "absent" gene against the genome assembly with minimap2.
 
-Written in Rust for speed and low memory. Parallelised across genomes with rayon.
+Written in Rust for speed and low memory. Single-invocation batch minimap2 with pre-indexing and streamed PAF parsing.
 
 ## How it works
 
 ```
-Panaroo output                    Genome assemblies
-(gene_presence_absence.csv)       (FASTA files)
-         │                                │
-         └──────────┬─────────────────────┘
-                    ▼
-           For each gap (gene × genome):
-           minimap2 representative seq → genome
-                    │
-            ┌───────┼───────┐
-            ▼       ▼       ▼
-         No hit   Hit in    Hit not in
-         (true    another   any cluster
-         absence) cluster   (dropped)
-                  (SPLIT)   (RESCUE)
-                    │
-                    ▼
-           Corrected presence/absence matrix
-           + rescue report + statistics
+Panaroo output                    Genome assemblies       GFF annotations
+(gene_presence_absence.csv        (FASTA directory)       (optional)
+ + pan_genome_reference.fa)
+         │                                │                      │
+         └────────────────┬───────────────┘                      │
+                          ▼                                      │
+              Prevalence filter (skip truly                      │
+              accessory genes, default ≥10%)                     │
+                          │                                      │
+                          ▼                                      │
+              Batch minimap2 (all queries ×         ◄────────────┘
+              all genomes in ONE invocation)         GFF-based classification
+                          │
+           ┌──────────┬───┼──────────┬──────────┐
+           ▼          ▼   ▼          ▼          ▼
+        DROPPED    SPLIT  FRAGMENTED START_     No hit
+        (gene      (gene  (IS/frame- VARIANT   (true
+        removed    in a   shift,     (alt.     absence)
+        by graph   diff.  multiple   start
+        cleaning)  clust) fragments) codon)
+           │          │       │          │
+           └──────────┴───────┴──────────┘
+                          │
+                    Conflict resolution
+                   (overlapping rescues
+                    → highest confidence wins)
+                          │
+                   Synteny validation
+                   (optional, --synteny)
+                          │
+                          ▼
+              Corrected presence/absence matrix
+              + rescue report + summary statistics
 ```
 
 ## Installation
@@ -48,6 +63,8 @@ See [Releases](https://github.com/PathoGenOmics-Lab/recore/releases).
 
 ## Usage
 
+### Basic
+
 ```bash
 recore \
   -p gene_presence_absence.csv \
@@ -56,15 +73,7 @@ recore \
   -o recore_output/
 ```
 
-### Key parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--min-identity` | 90.0 | Minimum % identity for a hit |
-| `--min-coverage` | 80.0 | Minimum % query coverage |
-| `-t, --threads` | 4 | Parallelism (one minimap2 per genome) |
-
-### With curated annotations (optional validation)
+### With annotations and synteny validation
 
 ```bash
 recore \
@@ -72,16 +81,43 @@ recore \
   -r pan_genome_reference.fa \
   -g genomes/ \
   -a annotations/ \
+  --synteny \
+  --multi-allele \
+  -t 8 \
   -o recore_output/
 ```
 
-When `-a` is provided (directory of GFF files), Recore validates each rescue against curated annotations: does the rescued region overlap a known CDS?
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-p, --presence-absence` | — | Panaroo `gene_presence_absence.csv` |
+| `-r, --pan-reference` | — | Panaroo `pan_genome_reference.fa` |
+| `-g, --genomes` | — | Directory of genome FASTA files |
+| `-a, --annotations` | — | Directory of GFF files (enables rescue classification) |
+| `-o, --output` | `recore_output/` | Output directory |
+| `--min-identity` | 90.0 | Minimum % identity for a hit |
+| `--min-coverage` | 80.0 | Minimum % query coverage (single hit or merged fragments) |
+| `-t, --threads` | 4 | Number of threads |
+| `--preset` | `asm5` | minimap2 preset (`asm5` for ≤5% divergence, `asm20` for ≤20%) |
+| `--min-prevalence` | 0.1 | Skip clusters present in fewer genomes (truly accessory) |
+| `--multi-allele` | off | Query with ALL alleles per cluster (slower, more sensitive) |
+| `--synteny` | off | Validate rescues by flanking gene conservation (requires `-a`) |
+
+## Rescue types
+
+| Type | Description | Confidence |
+|------|-------------|------------|
+| **DROPPED** | Gene is present but was removed by Panaroo graph cleaning | Base |
+| **SPLIT** | Gene locus is assigned to a different Panaroo cluster | Base × 1.1 |
+| **FRAGMENTED** | Gene broken into ≥2 fragments (IS insertion, frameshift, assembly break) | Base × 0.8 |
+| **START_VARIANT** | CDS present but with different start codon (length differs <300bp) | Identity × 0.95 |
 
 ## Output
 
 ```
 recore_output/
-├── gene_presence_absence_recore.csv   # Corrected matrix
+├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
 ├── rescue_report.tsv                  # Per-rescue details
 └── summary.txt                        # Statistics
 ```
@@ -92,49 +128,52 @@ recore_output/
 |--------|-------------|
 | `gene_cluster` | Panaroo cluster name |
 | `genome` | Genome where the gene was rescued |
-| `rescue_type` | DROPPED or SPLIT:cluster_name |
-| `identity` | % identity of the hit |
-| `coverage` | % query coverage |
-| `contig` | Target contig name |
-| `start` | Start position on contig |
-| `end` | End position on contig |
-| `strand` | Strand (+/-) |
-| `annotation_match` | Overlapping CDS from GFF (if -a provided) |
+| `rescue_type` | DROPPED, SPLIT:cluster, FRAGMENTED:Nfrags:cov%, START_VARIANT:±Nbp |
+| `identity` | % identity of the minimap2 hit |
+| `coverage` | % query coverage (merged for fragments) |
+| `contig` | Target contig |
+| `start` / `end` | Coordinates on contig |
+| `strand` | +/- |
+| `confidence` | Score for conflict resolution (0–1+) |
+| `synteny` | PASS/FAIL (if `--synteny` enabled) |
+| `annotation_match` | Overlapping CDS gene ID from GFF (if `-a` provided) |
 
-### summary.txt
+### gene_presence_absence_recore.csv
 
-```
-Recore Summary
-========================================
-Clusters:           4200
-Genomes:            480
-Total gaps:         12450
-Rescued:            312
-Remaining gaps:     12138
-Core size (before): 3421
-Core size (after):  3587 (+166)
+Drop-in replacement for Panaroo's output. Rescued cells contain `RESCUED:contig:start-end`. Metadata columns (`No. isolates`, `No. sequences`, `Avg sequences per isolate`) are recalculated.
 
-Rescue types:
-  DROPPED: 245
-  SPLIT:   67
-```
+## Performance
+
+Recore uses a single-invocation batch search strategy:
+
+1. All genome FASTAs are concatenated with prefixed contig names
+2. A minimap2 index (`.mmi`) is built once
+3. All queries are searched in one minimap2 run with streamed PAF output
+4. Hit classification is parallelised with rayon
+
+This avoids spawning N separate minimap2 processes (one per genome), which would dominate runtime with process overhead and repeated indexing.
 
 ## How does this differ from Panaroo's `--refind_prop_match`?
 
-Panaroo has a built-in refind step, but:
-- It uses a fixed proportion threshold, not coverage+identity
-- It does not classify *why* a gene was missed (SPLIT vs DROPPED)
-- It runs during the graph cleaning phase, where aggressive settings may re-remove refound genes
-- It uses BLAST internally — slow for large datasets
-- Recore runs **post-hoc**: it takes the final output and corrects it
-- Recore uses minimap2 — orders of magnitude faster than BLAST
-- Recore parallelises across genomes with rayon
+| Feature | Panaroo refind | Recore |
+|---------|---------------|--------|
+| Timing | During graph cleaning | Post-hoc (on final output) |
+| Aligner | BLAST | minimap2 (batch) |
+| Classification | Binary (found/not found) | 4 types (DROPPED, SPLIT, FRAGMENTED, START_VARIANT) |
+| Thresholds | Fixed proportion | Identity + coverage |
+| Validation | None | Synteny + conflict resolution |
+| Multi-allele | No | Yes (`--multi-allele`) |
+| Speed | Slow (BLAST per genome) | Fast (single minimap2, streamed, parallel) |
 
 ## Citation
 
 If you use Recore, please cite:
 
 > Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue of falsely absent genes in pangenome matrices. *In preparation.*
+
+## Contact
+
+Paula Ruiz-Rodriguez — paula.ruiz.rodriguez@csic.es
 
 ## License
 
