@@ -213,9 +213,11 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     Ok(files)
 }
 
+/// (contig, start, end, strand, gene_id)
+pub type GffRecord = (String, u64, u64, char, String);
+
 /// Parse CDS features from a GFF file.
-/// Returns Vec<(contig, start, end, gene_id)>.
-pub fn parse_gff_genes(path: &Path) -> Result<Vec<(String, u64, u64, String)>> {
+pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Cannot read GFF {}", path.display()))?;
 
@@ -232,6 +234,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<(String, u64, u64, String)>> {
         let contig = fields[0].to_string();
         let start: u64 = fields[3].parse().unwrap_or(0);
         let end: u64 = fields[4].parse().unwrap_or(0);
+        let strand = fields[6].chars().next().unwrap_or('+');
 
         // Extract ID or locus_tag from attributes
         let mut gene_id = String::new();
@@ -244,7 +247,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<(String, u64, u64, String)>> {
             }
         }
 
-        genes.push((contig, start, end, gene_id));
+        genes.push((contig, start, end, strand, gene_id));
     }
 
     Ok(genes)

@@ -41,17 +41,17 @@ impl Hit {
     }
 }
 
-/// Run minimap2 on a set of query sequences against a genome.
-/// Returns the best hit per query that passes thresholds.
+/// Run minimap2 and return ALL hits per query that pass identity threshold.
+/// Coverage filtering happens downstream (we need partial hits for fragment detection).
 pub fn search_genome(
-    queries: &HashMap<String, Vec<u8>>,
+    queries: &HashMap<String, &[u8]>,
     genome_fasta: &Path,
     threads: usize,
     min_identity: f64,
-    min_coverage: f64,
-) -> Result<Vec<Hit>> {
+    preset: &str,
+) -> Result<HashMap<String, Vec<Hit>>> {
     if queries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(HashMap::default());
     }
 
     // Write queries to temp FASTA
@@ -66,10 +66,11 @@ pub fn search_genome(
     // Run minimap2
     let output = Command::new("minimap2")
         .args([
-            "-x", "asm20",
+            "-x", preset,
             "-t", &threads.to_string(),
             "--secondary=yes",
-            "-N", "5",
+            "-N", "50",  // generous: catch paralogs and fragments
+            "-p", "0.5", // report secondary if score >= 50% of primary
             genome_fasta.to_str().unwrap(),
             query_file.path().to_str().unwrap(),
         ])
@@ -81,9 +82,9 @@ pub fn search_genome(
         anyhow::bail!("minimap2 failed: {}", stderr);
     }
 
-    // Parse PAF output
+    // Parse PAF output — collect ALL hits per query
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut best_per_query: HashMap<String, (Hit, f64)> = HashMap::default();
+    let mut hits_per_query: HashMap<String, Vec<Hit>> = HashMap::default();
 
     for line in stdout.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -105,26 +106,22 @@ pub fn search_genome(
             mapq: fields[11].parse().unwrap_or(0),
         };
 
-        let ident = hit.identity();
-        let cov = hit.query_coverage();
-
-        if ident < min_identity || cov < min_coverage {
+        // Only filter by identity; coverage filtering is context-dependent
+        if hit.identity() < min_identity {
             continue;
         }
 
-        let score = ident * cov;
-        let entry = best_per_query.get(&hit.query);
-        if entry.is_none() || score > entry.unwrap().1 {
-            best_per_query.insert(hit.query.clone(), (hit, score));
-        }
+        hits_per_query
+            .entry(hit.query.clone())
+            .or_default()
+            .push(hit);
     }
 
-    let hits: Vec<Hit> = best_per_query.into_values().map(|(h, _)| h).collect();
     debug!(
-        "minimap2: {} queries → {} hits passing filters",
+        "minimap2: {} queries → {} with hits",
         queries.len(),
-        hits.len()
+        hits_per_query.len()
     );
 
-    Ok(hits)
+    Ok(hits_per_query)
 }

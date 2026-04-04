@@ -3,12 +3,17 @@ use anyhow::Result;
 use log::{info, warn};
 use rayon::prelude::*;
 use std::fs;
-use std::io::Write;
+use std::io::{BufWriter, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::cli::Args;
-use crate::parser::{find_genome_files, parse_gff_genes, parse_pan_reference, parse_presence_absence};
-use crate::rescue::{classify_hit, RescueEvent, RescueType};
+use crate::parser::{
+    find_genome_files, parse_gff_genes, parse_pan_reference, parse_presence_absence,
+};
+use crate::rescue::{
+    build_gene_to_cluster, classify_hits, GffGene, GffIndex, RescueEvent, RescueType,
+};
 use crate::search::search_genome;
 
 pub fn run(args: &Args) -> Result<()> {
@@ -17,6 +22,14 @@ pub fn run(args: &Args) -> Result<()> {
     let pan_ref = parse_pan_reference(&args.pan_reference)?;
     let genome_files = find_genome_files(&args.genomes)?;
 
+    // Cluster name → index for O(1) lookup
+    let cluster_to_idx: HashMap<String, usize> = pa
+        .clusters
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.clone(), i))
+        .collect();
+
     // Find gaps grouped by genome
     let gaps = pa.gaps();
     let mut gaps_by_genome: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -24,26 +37,34 @@ pub fn run(args: &Args) -> Result<()> {
         gaps_by_genome.entry(gi).or_default().push(ci);
     }
 
+    let core_before = pa.core_size();
     info!(
         "Total gaps: {} across {} genomes (core before: {})",
         gaps.len(),
         gaps_by_genome.len(),
-        pa.core_size()
+        core_before
     );
 
     // Check genome file availability
     let mut searchable_genomes: Vec<(usize, Vec<usize>)> = Vec::new();
+    let mut missing_genomes = 0usize;
     for (gi, cluster_indices) in &gaps_by_genome {
         let genome_name = &pa.genomes[*gi];
         if genome_files.contains_key(genome_name) {
             searchable_genomes.push((*gi, cluster_indices.clone()));
         } else {
-            warn!("No FASTA file for genome '{}', skipping", genome_name);
+            missing_genomes += 1;
         }
     }
+    if missing_genomes > 0 {
+        warn!(
+            "{} genomes with gaps have no FASTA file (skipped)",
+            missing_genomes
+        );
+    }
 
-    // Load GFF annotations if provided
-    let gff_data: Option<HashMap<usize, Vec<(String, u64, u64, String)>>> =
+    // Load GFF annotations if provided → build GffIndex per genome
+    let gff_indices: Option<HashMap<usize, GffIndex>> =
         if let Some(ref ann_dir) = args.annotations {
             let mut data = HashMap::new();
             for &(gi, _) in &searchable_genomes {
@@ -58,8 +79,18 @@ pub fn run(args: &Args) -> Result<()> {
                     continue;
                 };
                 match parse_gff_genes(&path) {
-                    Ok(genes) => {
-                        data.insert(gi, genes);
+                    Ok(raw_genes) => {
+                        let genes: Vec<GffGene> = raw_genes
+                            .into_iter()
+                            .map(|(contig, start, end, strand, gene_id)| GffGene {
+                                contig,
+                                start,
+                                end,
+                                strand,
+                                gene_id,
+                            })
+                            .collect();
+                        data.insert(gi, GffIndex::build(genes));
                     }
                     Err(e) => {
                         warn!("Cannot parse GFF for {}: {}", genome_name, e);
@@ -74,13 +105,13 @@ pub fn run(args: &Args) -> Result<()> {
 
     // ── Search and rescue (parallel per genome) ──
     let all_rescues: Mutex<Vec<RescueEvent>> = Mutex::new(Vec::new());
-    let progress: Mutex<usize> = Mutex::new(0);
+    let progress = AtomicUsize::new(0);
     let total = searchable_genomes.len();
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(args.threads)
         .build_global()
-        .ok(); // ignore if already set
+        .ok();
 
     searchable_genomes
         .par_iter()
@@ -88,12 +119,12 @@ pub fn run(args: &Args) -> Result<()> {
             let genome_name = &pa.genomes[*gi];
             let genome_fasta = &genome_files[genome_name];
 
-            // Build query set for this genome
-            let mut queries: HashMap<String, Vec<u8>> = HashMap::new();
+            // Build query set (borrow, don't clone)
+            let mut queries: HashMap<String, &[u8]> = HashMap::new();
             for &ci in cluster_indices {
                 let cluster_name = &pa.clusters[ci];
                 if let Some(seq) = pan_ref.get(cluster_name) {
-                    queries.insert(cluster_name.clone(), seq.clone());
+                    queries.insert(cluster_name.clone(), seq.as_slice());
                 }
             }
 
@@ -101,8 +132,14 @@ pub fn run(args: &Args) -> Result<()> {
                 return;
             }
 
-            // Search with minimap2 (1 thread per genome, parallelism at genome level)
-            let hits = match search_genome(&queries, genome_fasta, 1, args.min_identity, args.min_coverage) {
+            // Search with minimap2 (1 thread per call; parallelism at genome level)
+            let hits_per_query = match search_genome(
+                &queries,
+                genome_fasta,
+                1,
+                args.min_identity,
+                &args.preset,
+            ) {
                 Ok(h) => h,
                 Err(e) => {
                     warn!("minimap2 failed for {}: {}", genome_name, e);
@@ -110,28 +147,36 @@ pub fn run(args: &Args) -> Result<()> {
                 }
             };
 
-            // Classify hits
-            let gff_genes = gff_data.as_ref().and_then(|d| d.get(gi));
+            // Build gene_id → cluster index map for this genome
+            let gene_to_cluster = build_gene_to_cluster(&pa, *gi);
+            let gff_index = gff_indices.as_ref().and_then(|d| d.get(gi));
+
+            // Classify hits per cluster
             let mut rescues = Vec::new();
-            for hit in &hits {
-                let ci = pa
-                    .clusters
-                    .iter()
-                    .position(|c| c == &hit.query)
-                    .unwrap();
-                let rescue = classify_hit(hit, ci, *gi, &pa, gff_genes.map(|v| v.as_slice()));
-                rescues.push(rescue);
+            for (query_name, hits) in &hits_per_query {
+                let Some(&ci) = cluster_to_idx.get(query_name.as_str()) else {
+                    continue;
+                };
+                if let Some(rescue) = classify_hits(
+                    hits,
+                    ci,
+                    *gi,
+                    &pa,
+                    gff_index,
+                    &gene_to_cluster,
+                    args.min_coverage,
+                ) {
+                    rescues.push(rescue);
+                }
             }
 
             if !rescues.is_empty() {
                 all_rescues.lock().unwrap().extend(rescues);
             }
 
-            // Progress
-            let mut count = progress.lock().unwrap();
-            *count += 1;
-            if *count % 50 == 0 || *count == total {
-                info!("Processed {}/{} genomes", *count, total);
+            let count = progress.fetch_add(1, Ordering::Relaxed) + 1;
+            if count.is_multiple_of(50) || count == total {
+                info!("Processed {}/{} genomes", count, total);
             }
         });
 
@@ -141,22 +186,34 @@ pub fn run(args: &Args) -> Result<()> {
     // ── Count rescue types ──
     let mut dropped = 0usize;
     let mut split = 0usize;
-    let mut overlap = 0usize;
+    let mut fragmented = 0usize;
+    let mut paralog = 0usize;
     for r in &rescues {
         match &r.rescue_type {
             RescueType::Dropped => dropped += 1,
             RescueType::Split { .. } => split += 1,
-            RescueType::Overlap { .. } => overlap += 1,
+            RescueType::Fragmented { .. } => fragmented += 1,
+            RescueType::Paralog { .. } => paralog += 1,
         }
     }
-    info!("  DROPPED: {}, SPLIT: {}, OVERLAP: {}", dropped, split, overlap);
+    info!(
+        "  DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, PARALOG: {}",
+        dropped, split, fragmented, paralog
+    );
 
     // ── Generate outputs ──
     fs::create_dir_all(&args.output)?;
 
+    // Build rescue lookup
+    let mut rescue_map: HashMap<(usize, usize), &RescueEvent> = HashMap::new();
+    for r in &rescues {
+        rescue_map.insert((r.cluster_idx, r.genome_idx), r);
+    }
+
     // 1. Rescue report TSV
     let report_path = args.output.join("rescue_report.tsv");
-    let mut report = fs::File::create(&report_path)?;
+    let report_file = fs::File::create(&report_path)?;
+    let mut report = BufWriter::new(report_file);
     writeln!(
         report,
         "gene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tannotation_match"
@@ -177,10 +234,12 @@ pub fn run(args: &Args) -> Result<()> {
             r.annotation_match.as_deref().unwrap_or(""),
         )?;
     }
+    report.flush()?;
 
     // 2. Corrected presence/absence CSV
     let corrected_path = args.output.join("gene_presence_absence_recore.csv");
-    let mut corrected = fs::File::create(&corrected_path)?;
+    let corrected_file = fs::File::create(&corrected_path)?;
+    let mut corrected = BufWriter::new(corrected_file);
 
     // Header
     write!(corrected, "Gene")?;
@@ -189,27 +248,22 @@ pub fn run(args: &Args) -> Result<()> {
     }
     writeln!(corrected)?;
 
-    // Build rescue lookup: (cluster_idx, genome_idx) -> rescue info
-    let mut rescue_map: HashMap<(usize, usize), String> = HashMap::new();
-    for r in &rescues {
-        rescue_map.insert(
-            (r.cluster_idx, r.genome_idx),
-            format!("RESCUED:{}:{}-{}", r.contig, r.start, r.end),
-        );
-    }
-
     for (ci, cluster_name) in pa.clusters.iter().enumerate() {
         write!(corrected, "{}", cluster_name)?;
         for gi in 0..pa.genomes.len() {
-            let val = if let Some(rescued) = rescue_map.get(&(ci, gi)) {
-                rescued.as_str()
+            if let Some(r) = rescue_map.get(&(ci, gi)) {
+                write!(
+                    corrected,
+                    ",RESCUED:{}:{}-{}",
+                    r.contig, r.start, r.end
+                )?;
             } else {
-                pa.cell_values[ci][gi].as_str()
-            };
-            write!(corrected, ",{}", val)?;
+                write!(corrected, ",{}", pa.cell_values[ci][gi])?;
+            }
         }
         writeln!(corrected)?;
     }
+    corrected.flush()?;
 
     // 3. Summary
     let core_after = {
@@ -231,23 +285,40 @@ pub fn run(args: &Args) -> Result<()> {
     };
 
     let summary_path = args.output.join("summary.txt");
-    let mut summary = fs::File::create(&summary_path)?;
+    let summary_file = fs::File::create(&summary_path)?;
+    let mut summary = BufWriter::new(summary_file);
     writeln!(summary, "Recore Summary")?;
     writeln!(summary, "{}", "=".repeat(40))?;
     writeln!(summary, "Clusters:           {}", pa.clusters.len())?;
     writeln!(summary, "Genomes:            {}", pa.genomes.len())?;
     writeln!(summary, "Total gaps:         {}", gaps.len())?;
     writeln!(summary, "Rescued:            {}", rescues.len())?;
-    writeln!(summary, "Remaining gaps:     {}", gaps.len() - rescues.len())?;
-    writeln!(summary, "Core size (before): {}", pa.core_size())?;
-    writeln!(summary, "Core size (after):  {} (+{})", core_after, core_after - pa.core_size())?;
+    writeln!(
+        summary,
+        "Remaining gaps:     {}",
+        gaps.len() - rescues.len()
+    )?;
+    writeln!(summary, "Core size (before): {}", core_before)?;
+    writeln!(
+        summary,
+        "Core size (after):  {} (+{})",
+        core_after,
+        core_after - core_before
+    )?;
     writeln!(summary)?;
     writeln!(summary, "Rescue types:")?;
-    writeln!(summary, "  DROPPED: {}", dropped)?;
-    writeln!(summary, "  SPLIT:   {}", split)?;
-    writeln!(summary, "  OVERLAP: {}", overlap)?;
+    writeln!(summary, "  DROPPED:     {}", dropped)?;
+    writeln!(summary, "  SPLIT:       {}", split)?;
+    writeln!(summary, "  FRAGMENTED:  {}", fragmented)?;
+    writeln!(summary, "  PARALOG:     {}", paralog)?;
+    summary.flush()?;
 
-    info!("Core genome: {} → {} (+{})", pa.core_size(), core_after, core_after - pa.core_size());
+    info!(
+        "Core genome: {} → {} (+{})",
+        core_before,
+        core_after,
+        core_after - core_before
+    );
     info!("Output: {}", args.output.display());
 
     Ok(())

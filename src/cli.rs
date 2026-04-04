@@ -17,7 +17,7 @@ pub struct Args {
     #[arg(short = 'g', long)]
     pub genomes: PathBuf,
 
-    /// Directory of GFF files for validation (optional)
+    /// Directory of GFF files for annotation-based classification (optional)
     #[arg(short = 'a', long)]
     pub annotations: Option<PathBuf>,
 
@@ -29,11 +29,15 @@ pub struct Args {
     #[arg(long, default_value_t = 90.0)]
     pub min_identity: f64,
 
-    /// Minimum % query coverage for a hit
+    /// Minimum % query coverage for a hit (single hit or merged fragments)
     #[arg(long, default_value_t = 80.0)]
     pub min_coverage: f64,
 
-    /// Number of threads
+    /// Number of threads for parallel genome processing
     #[arg(short = 't', long, default_value_t = 4)]
     pub threads: usize,
+
+    /// minimap2 preset: asm5 (≤5% divergence, faster), asm20 (≤20%, safer)
+    #[arg(long, default_value = "asm5")]
+    pub preset: String,
 }
