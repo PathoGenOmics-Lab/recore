@@ -377,12 +377,24 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
 
 pub type GffRecord = (String, u64, u64, char, String);
 
-pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
-    use std::io::{BufRead, BufReader};
-
+/// Open a file with transparent gzip decompression.
+/// If the path ends with `.gz`, decompresses on-the-fly via flate2.
+fn open_maybe_gzip(path: &Path) -> Result<Box<dyn std::io::BufRead>> {
+    use std::io::BufReader;
     let file = fs::File::open(path)
-        .with_context(|| format!("Cannot open GFF {}", path.display()))?;
-    let reader = BufReader::new(file);
+        .with_context(|| format!("Cannot open {}", path.display()))?;
+    if path.extension().is_some_and(|e| e == "gz") {
+        let decoder = flate2::read::GzDecoder::new(file);
+        Ok(Box::new(BufReader::new(decoder)))
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
+pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
+    use std::io::BufRead;
+
+    let reader = open_maybe_gzip(path)?;
 
     let mut genes = Vec::new();
     for line_result in reader.lines() {
@@ -415,6 +427,57 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
     }
 
     Ok(genes)
+}
+
+/// Cross-validate inputs: warn about mismatches between CSV clusters and pan-reference.
+pub fn validate_inputs(
+    pa: &PresenceAbsence,
+    pan_ref: &HashMap<String, Vec<Vec<u8>>>,
+    genome_files: &HashMap<String, PathBuf>,
+) {
+    use log::warn;
+
+    // Clusters in CSV but not in pan-reference
+    let mut csv_only = 0usize;
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        if !pan_ref.contains_key(pa.cluster_name(ci)) {
+            csv_only += 1;
+        }
+    }
+    if csv_only > 0 {
+        warn!(
+            "{} clusters in presence/absence CSV have no sequence in pan_genome_reference.fa (will be skipped)",
+            csv_only
+        );
+    }
+
+    // Clusters in pan-reference but not in CSV
+    let cluster_idx = pa.cluster_index();
+    let ref_only: usize = pan_ref.keys()
+        .filter(|k| !cluster_idx.contains_key(k.as_str()))
+        .count();
+    if ref_only > 0 {
+        warn!(
+            "{} clusters in pan_genome_reference.fa are not in presence/absence CSV (will be ignored)",
+            ref_only
+        );
+    }
+
+    // Genomes in CSV with no FASTA
+    let mut no_fasta = 0usize;
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        if !genome_files.contains_key(pa.genome_name(gi)) {
+            no_fasta += 1;
+        }
+    }
+    if no_fasta > 0 {
+        warn!(
+            "{} genomes in CSV have no matching FASTA file in the genomes directory",
+            no_fasta
+        );
+    }
 }
 
 #[cfg(test)]

@@ -191,6 +191,19 @@ pub fn batch_search(
     let stdout = child.stdout.take().context("No stdout from minimap2")?;
     let paf_reader = BufReader::with_capacity(256 * 1024, stdout);
 
+    // Capture stderr in a background thread so it doesn't block/deadlock
+    let stderr = child.stderr.take();
+    let stderr_handle = std::thread::spawn(move || -> String {
+        let Some(stderr) = stderr else { return String::new() };
+        let reader = BufReader::new(stderr);
+        let mut buf = String::new();
+        for line in reader.lines().map_while(Result::ok) {
+            buf.push_str(&line);
+            buf.push('\n');
+        }
+        buf
+    });
+
     // ── 6. Build gap lookup ──
     let mut gap_set: ahash::HashSet<(usize, usize)> = ahash::HashSet::default();
     for (gi, cluster_indices) in searchable_genomes {
@@ -278,23 +291,21 @@ pub fn batch_search(
             .push(hit);
     }
 
-    // Wait for minimap2 to finish and check exit code
+    // Wait for minimap2 to finish and collect stderr
     let status = child.wait().context("minimap2 process failed")?;
-    if !status.success() {
-        // Try to read stderr for diagnostics
-        if let Some(mut stderr) = child.stderr.take() {
-            let mut err_buf = String::new();
-            use std::io::Read;
-            stderr.read_to_string(&mut err_buf).ok();
-            if !err_buf.is_empty() {
-                for line in err_buf.lines() {
-                    if line.contains("[WARNING]") || line.contains("[W::") {
-                        log::warn!("minimap2: {}", line);
-                    }
-                }
-            }
+    let stderr_output = stderr_handle.join().unwrap_or_default();
+
+    // Log warnings from stderr regardless of exit code
+    for line in stderr_output.lines() {
+        if line.contains("[WARNING]") || line.contains("[W::") {
+            log::warn!("minimap2: {}", line);
         }
-        anyhow::bail!("minimap2 alignment exited with {}", status);
+    }
+
+    if !status.success() {
+        // Include first 5 stderr lines in error message for diagnostics
+        let context: String = stderr_output.lines().take(5).collect::<Vec<_>>().join("\n");
+        anyhow::bail!("minimap2 alignment exited with {}\n{}", status, context);
     }
 
     debug!(

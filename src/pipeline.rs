@@ -7,6 +7,7 @@ use std::io::{BufWriter, Write};
 use crate::cli::Args;
 use crate::parser::{
     find_genome_files, parse_gff_genes, parse_pan_reference, parse_presence_absence,
+    validate_inputs,
 };
 use crate::rescue::{
     build_gene_to_cluster, classify_hits, resolve_conflicts, validate_synteny,
@@ -22,6 +23,9 @@ pub fn run(args: &Args) -> Result<()> {
     let genome_files = find_genome_files(&args.genomes)?;
 
     let cluster_to_idx = pa.cluster_index();
+
+    // ── 1b. Cross-validate inputs ──
+    validate_inputs(&pa, &pan_ref, &genome_files);
 
     // ── 2. Filter gaps by prevalence (streaming, no intermediate Vec) ──
     let min_prevalence = args.min_prevalence;
@@ -78,13 +82,14 @@ pub fn run(args: &Args) -> Result<()> {
         for gi_val in 0..n_genomes {
             let gi = GenomeIdx(gi_val);
             let genome_name = pa.genome_name(gi);
-            let gff_path = ann_dir.join(format!("{}.gff", genome_name));
-            let alt_path = ann_dir.join(format!("{}.gff3", genome_name));
-            let path = if gff_path.exists() {
-                gff_path
-            } else if alt_path.exists() {
-                alt_path
-            } else {
+            // Try: .gff, .gff3, .gff.gz, .gff3.gz
+            let candidates = [
+                ann_dir.join(format!("{}.gff", genome_name)),
+                ann_dir.join(format!("{}.gff3", genome_name)),
+                ann_dir.join(format!("{}.gff.gz", genome_name)),
+                ann_dir.join(format!("{}.gff3.gz", genome_name)),
+            ];
+            let Some(path) = candidates.into_iter().find(|p| p.exists()) else {
                 continue;
             };
             match parse_gff_genes(&path) {
