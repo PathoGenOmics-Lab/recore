@@ -81,17 +81,11 @@ See [Releases](https://github.com/PathoGenOmics-Lab/recore/releases).
 
 ## Usage
 
-### Basic rescue
+### Recommended (gold standard)
 
-```bash
-recore \
-  -p gene_presence_absence.csv \
-  -r pan_genome_reference.fa \
-  -g genomes/ \
-  -o recore_output/
-```
-
-### Full pipeline (rescue + annotations + NSC)
+The recommended command enables all correction layers: annotation-aware rescue
+with synteny validation, multi-allele sensitivity, pseudogene detection, and
+nucleotide similarity clustering.
 
 ```bash
 recore \
@@ -102,19 +96,46 @@ recore \
   --synteny \
   --multi-allele \
   --nscluster \
+  --preset asm5 \
+  --min-prevalence 0.05 \
   -t 8 \
   -o recore_output/
 ```
 
-### With MMseqs2 for exact nucleotide clustering
+| Flag | Why |
+|------|-----|
+| `-a annotations/` | GFF directory — enables SPLIT, START_VARIANT, PARALOG, and PSEUDOGENE classification (not just DROPPED) |
+| `--synteny` | Validates rescues by comparing flanking gene context — rejects spurious paralog rescues |
+| `--multi-allele` | Queries all allelic variants per cluster instead of just the longest — more sensitive for diverse datasets |
+| `--nscluster` | Merges Panaroo clusters that are identical at the DNA level but were split at the amino-acid level — reduces inflated accessory genome |
+| `--preset asm5` | minimap2 preset for ≤5% sequence divergence — appropriate for most bacterial species |
+| `--min-prevalence 0.05` | Only rescue clusters present in ≥5% of genomes — truly rare genes are likely genuine accessory |
+| `-t 8` | Number of threads — adjust to available cores |
+
+### Basic (rescue only, no annotations)
 
 ```bash
 recore \
   -p gene_presence_absence.csv \
   -r pan_genome_reference.fa \
   -g genomes/ \
+  -o recore_output/
+```
+
+### With MMseqs2 for exact nucleotide clustering
+
+Requires [MMseqs2](https://github.com/soedinglab/MMseqs2) in PATH. Uses alignment-based identity instead of MinHash approximation.
+
+```bash
+recore \
+  -p gene_presence_absence.csv \
+  -r pan_genome_reference.fa \
+  -g genomes/ \
+  -a annotations/ \
+  --synteny --multi-allele \
   --nscluster --nsc-engine mmseqs2 \
   --nsc-min-seq-id 0.9 --nsc-coverage 0.8 \
+  --preset asm5 --min-prevalence 0.05 \
   -t 8 \
   -o recore_output/
 ```
