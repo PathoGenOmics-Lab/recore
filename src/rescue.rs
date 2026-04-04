@@ -819,4 +819,151 @@ mod tests {
         }
         assert!(r.confidence < 0.7, "Paralog should have reduced confidence");
     }
+
+    #[test]
+    fn test_classify_dropped_no_gff() {
+        // Full-coverage hit with no GFF → DROPPED
+        let hit = Hit {
+            query: "q".into(), cluster: "cluster1".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 1000,
+            matches: 990, alignment_length: 1000, mapq: 60,
+        };
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+        let r = result.unwrap();
+        assert!(matches!(r.rescue_type, RescueType::Dropped));
+        assert!(r.confidence > 0.9);
+    }
+
+    #[test]
+    fn test_classify_dropped_no_overlapping_genes() {
+        // Full-coverage hit, GFF exists but no gene overlaps the hit region → DROPPED
+        let gff_genes = vec![
+            GffGene { contig: "c".into(), start: 5000, end: 6000, strand: '+', gene_id: "far_gene".into() },
+        ];
+        let gff = GffIndex::build(gff_genes);
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let hit = Hit {
+            query: "q".into(), cluster: "cluster1".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 1000,
+            matches: 990, alignment_length: 1000, mapq: 60,
+        };
+        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let r = result.unwrap();
+        assert!(matches!(r.rescue_type, RescueType::Dropped));
+    }
+
+    #[test]
+    fn test_classify_start_variant_with_gff() {
+        // Hit with high identity overlapping a similar-length GFF gene → START_VARIANT
+        let gff_genes = vec![
+            GffGene { contig: "c".into(), start: 0, end: 1100, strand: '+', gene_id: "gene1".into() },
+        ];
+        let gff = GffIndex::build(gff_genes);
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        // gene1 is NOT in g2c → no cluster assignment → classify_single_hit returns DROPPED
+        // Then detect_start_variant kicks in: gene_len(1100) - target_aln(1000) = +100bp
+        let hit = Hit {
+            query: "q".into(), cluster: "cluster1".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 100, target_end: 1100,
+            matches: 1000, alignment_length: 1000, mapq: 60,
+        };
+        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let r = result.unwrap();
+        match &r.rescue_type {
+            RescueType::StartVariant { length_diff_bp } => assert_eq!(*length_diff_bp, 100),
+            other => panic!("Expected StartVariant, got {:?}", other),
+        }
+        assert_eq!(r.annotation_match, Some("gene1".to_string()));
+    }
+
+    #[test]
+    fn test_classify_returns_none_for_empty_hits() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["c1".into()],
+            vec!["g1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(&[], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_classify_returns_none_below_coverage() {
+        // Single hit with only 50% coverage, no fragments → None
+        let hit = Hit {
+            query: "q".into(), cluster: "c1".into(), query_length: 1000,
+            query_start: 0, query_end: 500, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 500,
+            matches: 500, alignment_length: 500, mapq: 60,
+        };
+        let pa = PresenceAbsence::new_for_test(
+            vec!["c1".into()],
+            vec!["g1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_gene_to_cluster() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["clusterA".into(), "clusterB".into()],
+            vec!["g1".into(), "g2".into()],
+            vec![
+                vec!["gene1;gene2".into(), "gene3".into()],
+                vec!["".into(), "gene4".into()],
+            ],
+        );
+        let g2c = build_gene_to_cluster(&pa, GenomeIdx(0));
+        assert_eq!(g2c.get("gene1"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("gene2"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("gene4"), None); // gene4 is in genome1 (GenomeIdx(1)), not genome0
+
+        let g2c_1 = build_gene_to_cluster(&pa, GenomeIdx(1));
+        assert_eq!(g2c_1.get("gene3"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c_1.get("gene4"), Some(&ClusterIdx(1)));
+    }
+
+    #[test]
+    fn test_rescue_type_display() {
+        assert_eq!(RescueType::Dropped.to_string(), "DROPPED");
+        assert_eq!(
+            RescueType::Split { other_cluster: "cl2".into() }.to_string(),
+            "SPLIT:cl2"
+        );
+        assert_eq!(
+            RescueType::Fragmented { n_fragments: 3, total_coverage: 95.5 }.to_string(),
+            "FRAGMENTED:3frags:96%cov"
+        );
+        assert_eq!(
+            RescueType::StartVariant { length_diff_bp: -42 }.to_string(),
+            "START_VARIANT:-42bp"
+        );
+        assert_eq!(
+            RescueType::Paralog { other_cluster: "cl3".into() }.to_string(),
+            "PARALOG:cl3"
+        );
+    }
 }

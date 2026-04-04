@@ -317,3 +317,200 @@ pub fn batch_search(
 
     Ok(hits)
 }
+
+/// Parse a single PAF line into a Hit, resolving genome prefix and cluster name.
+/// Returns None if the line is malformed, has no contig separator, or the genome is unknown.
+/// Exposed for unit testing.
+#[cfg(test)]
+fn parse_paf_line(
+    line: &str,
+    genome_name_to_idx: &HashMap<&str, usize>,
+    name_to_cluster: &HashMap<String, String>,
+) -> Option<(usize, Hit)> {
+    let fields: Vec<&str> = line.split('\t').collect();
+    if fields.len() < 12 {
+        return None;
+    }
+
+    let target_field = fields[5];
+    let sep_pos = target_field.find(CONTIG_SEP)?;
+    let genome_name = &target_field[..sep_pos];
+    let original_header = &target_field[sep_pos + CONTIG_SEP.len()..];
+    let original_contig = original_header.split_whitespace().next().unwrap_or(original_header);
+
+    let &gi = genome_name_to_idx.get(genome_name)?;
+
+    let query_name = fields[0];
+    let cluster_name = name_to_cluster
+        .get(query_name)
+        .map(|s| s.as_str())
+        .unwrap_or(query_name);
+
+    let hit = Hit {
+        query: query_name.to_string(),
+        cluster: cluster_name.to_string(),
+        query_length: fields[1].parse().unwrap_or(0),
+        query_start: fields[2].parse().unwrap_or(0),
+        query_end: fields[3].parse().unwrap_or(0),
+        strand: fields[4].chars().next().unwrap_or('+'),
+        target: original_contig.to_string(),
+        target_start: fields[7].parse().unwrap_or(0),
+        target_end: fields[8].parse().unwrap_or(0),
+        matches: fields[9].parse().unwrap_or(0),
+        alignment_length: fields[10].parse().unwrap_or(0),
+        mapq: fields[11].parse().unwrap_or(0),
+    };
+
+    Some((gi, hit))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ahash::HashMapExt;
+
+    // ── Hit method tests ──
+
+    #[test]
+    fn test_hit_identity() {
+        let h = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "t".into(),
+            target_start: 0, target_end: 1000,
+            matches: 950, alignment_length: 1000, mapq: 60,
+        };
+        assert!((h.identity() - 95.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_hit_identity_zero_alignment() {
+        let h = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 0, query_end: 0, strand: '+', target: "t".into(),
+            target_start: 0, target_end: 0,
+            matches: 0, alignment_length: 0, mapq: 0,
+        };
+        assert_eq!(h.identity(), 0.0);
+    }
+
+    #[test]
+    fn test_hit_query_coverage() {
+        let h = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 2000,
+            query_start: 0, query_end: 1000, strand: '+', target: "t".into(),
+            target_start: 0, target_end: 1000,
+            matches: 1000, alignment_length: 1000, mapq: 60,
+        };
+        assert!((h.query_coverage() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_hit_query_coverage_zero_length() {
+        let h = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 0,
+            query_start: 0, query_end: 0, strand: '+', target: "t".into(),
+            target_start: 0, target_end: 0,
+            matches: 0, alignment_length: 0, mapq: 0,
+        };
+        assert_eq!(h.query_coverage(), 0.0);
+    }
+
+    #[test]
+    fn test_hit_score() {
+        let h = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 0, query_end: 1000, strand: '+', target: "t".into(),
+            target_start: 0, target_end: 1000,
+            matches: 1000, alignment_length: 1000, mapq: 60,
+        };
+        assert!((h.score() - 1.0).abs() < 0.001); // 100% × 100% = 1.0
+    }
+
+    // ── PAF parsing tests ──
+
+    fn make_genome_idx() -> HashMap<&'static str, usize> {
+        let mut m = HashMap::new();
+        m.insert("genome1", 0);
+        m.insert("genome2", 1);
+        m
+    }
+
+    fn make_name_to_cluster() -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("clA~~~allele1".into(), "clA".into());
+        m
+    }
+
+    #[test]
+    fn test_parse_paf_line_valid() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        // Standard PAF: query, qlen, qstart, qend, strand, target, tlen, tstart, tend, matches, alnlen, mapq
+        let line = "clA\t1000\t0\t1000\t+\tgenome1|||contig_1\t5000000\t100\t1100\t990\t1000\t60";
+        let result = parse_paf_line(line, &g2i, &n2c);
+        assert!(result.is_some());
+        let (gi, hit) = result.unwrap();
+        assert_eq!(gi, 0);
+        assert_eq!(hit.target, "contig_1");
+        assert_eq!(hit.cluster, "clA");
+        assert_eq!(hit.target_start, 100);
+        assert_eq!(hit.target_end, 1100);
+    }
+
+    #[test]
+    fn test_parse_paf_line_with_allele_name() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        let line = "clA~~~allele1\t800\t0\t800\t-\tgenome2|||chr\t4000000\t500\t1300\t780\t800\t30";
+        let result = parse_paf_line(line, &g2i, &n2c);
+        let (gi, hit) = result.unwrap();
+        assert_eq!(gi, 1);
+        assert_eq!(hit.cluster, "clA"); // resolved from allele to cluster
+        assert_eq!(hit.query, "clA~~~allele1");
+        assert_eq!(hit.strand, '-');
+    }
+
+    #[test]
+    fn test_parse_paf_line_no_separator() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        // Target without ||| separator → should return None
+        let line = "clA\t1000\t0\t1000\t+\tplain_contig\t5000000\t100\t1100\t990\t1000\t60";
+        assert!(parse_paf_line(line, &g2i, &n2c).is_none());
+    }
+
+    #[test]
+    fn test_parse_paf_line_unknown_genome() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        let line = "clA\t1000\t0\t1000\t+\tunknown_genome|||contig_1\t5000000\t100\t1100\t990\t1000\t60";
+        assert!(parse_paf_line(line, &g2i, &n2c).is_none());
+    }
+
+    #[test]
+    fn test_parse_paf_line_too_few_fields() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        let line = "clA\t1000\t0\t1000\t+\tgenome1|||contig\t5000000";
+        assert!(parse_paf_line(line, &g2i, &n2c).is_none());
+    }
+
+    #[test]
+    fn test_parse_paf_line_contig_with_spaces() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        // Target header with extra description after space → only first token as contig name
+        let line = "clA\t1000\t0\t1000\t+\tgenome1|||ctg1 length=5000\t5000000\t100\t1100\t990\t1000\t60";
+        let (_, hit) = parse_paf_line(line, &g2i, &n2c).unwrap();
+        assert_eq!(hit.target, "ctg1");
+    }
+
+    // ── CONTIG_SEP constant test ──
+
+    #[test]
+    fn test_contig_sep_is_unlikely_in_real_names() {
+        assert_eq!(CONTIG_SEP, "|||");
+        assert!(!"normal_contig_name".contains(CONTIG_SEP));
+        assert!(!"NC_000962.3".contains(CONTIG_SEP));
+    }
+}
