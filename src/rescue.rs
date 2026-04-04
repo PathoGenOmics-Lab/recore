@@ -173,8 +173,9 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, genome_idx: usize) -> HashMap
 
 // ── Fragment analysis ──
 
-/// Compute combined query coverage from multiple hits,
-/// considering only the best allele (the one with the highest single-hit coverage).
+/// Compute combined query coverage from multiple hits.
+/// Groups by actual query name (not just length) to avoid mixing alleles.
+/// Picks the allele whose hits give the best merged coverage.
 ///
 /// Returns (coverage_pct, n_merged_intervals).
 fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
@@ -182,12 +183,12 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
         return (0.0, 0);
     }
 
-    // Group hits by query_length (proxy for allele identity).
-    // Pick the allele whose hits give the best merged coverage.
-    let mut by_length: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
+    // Group hits by (query_length, query_name) to separate alleles correctly.
+    // Two alleles with the same length but different sequences must not be merged.
+    let mut by_allele: HashMap<(&str, u64), Vec<(u64, u64)>> = HashMap::new();
     for h in hits {
-        by_length
-            .entry(h.query_length)
+        by_allele
+            .entry((&h.query, h.query_length))
             .or_default()
             .push((h.query_start, h.query_end));
     }
@@ -195,7 +196,7 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
     let mut best_coverage = 0.0f64;
     let mut best_fragments = 0usize;
 
-    for (qlen, mut intervals) in by_length {
+    for ((_qname, qlen), mut intervals) in by_allele {
         if qlen == 0 {
             continue;
         }
@@ -288,10 +289,16 @@ pub fn classify_hits(
         return None;
     }
 
-    // Sort hits by score (best first). Use total_cmp to handle NaN safely.
+    // Sort hits: prefer longer query (real gene, not paralog fragment),
+    // then by identity × coverage score as tiebreaker.
+    // This prevents a short paralog (300bp, 100% cov) from beating
+    // the real gene (1200bp, 85% cov).
     let mut sorted_hits: Vec<&Hit> = hits.iter().collect();
     sorted_hits.sort_by(|a, b| {
-        b.score().total_cmp(&a.score())
+        // Primary: longer query_length (favor the full-length allele)
+        b.query_length.cmp(&a.query_length)
+            // Secondary: higher score (identity × coverage)
+            .then_with(|| b.score().total_cmp(&a.score()))
     });
 
     let best = sorted_hits[0];
@@ -653,6 +660,26 @@ mod tests {
         // Should pick allele 1200bp (91.7% coverage, 1 fragment) over 800bp (75%, 1 fragment)
         assert!(cov > 90.0);
         assert_eq!(frags, 1);
+    }
+
+    #[test]
+    fn test_merged_coverage_same_length_different_alleles() {
+        // Two alleles both 1000bp but different sequences (different query names).
+        // allele_A covers 0-400, allele_B covers 600-1000.
+        // They should NOT be merged — each allele independently covers <80%.
+        let h1 = Hit {
+            query: "cluster~~~ALLELE~0".into(), cluster: "cluster".into(), query_length: 1000,
+            query_start: 0, query_end: 400, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 400, matches: 400, alignment_length: 400, mapq: 60,
+        };
+        let h2 = Hit {
+            query: "cluster~~~ALLELE~1".into(), cluster: "cluster".into(), query_length: 1000,
+            query_start: 600, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 5000, target_end: 5400, matches: 400, alignment_length: 400, mapq: 60,
+        };
+        let (cov, _frags) = merged_query_coverage(&[&h1, &h2]);
+        // Each allele independently: 40%. Should NOT be merged to 80%.
+        assert!(cov < 50.0, "Coverage should be <50% (was {:.1}%), alleles must not be merged", cov);
     }
 
     #[test]
