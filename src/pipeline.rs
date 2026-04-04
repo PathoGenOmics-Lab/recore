@@ -11,8 +11,9 @@ use crate::parser::{
     validate_inputs,
 };
 use crate::rescue::{
-    build_gene_to_cluster, classify_hits, resolve_conflicts, validate_synteny,
-    GffGene, GffIndex, RescueEvent, RescueType,
+    build_gene_to_cluster, check_internal_stops_in_hit, classify_hits,
+    resolve_conflicts, validate_synteny,
+    GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
 };
 use crate::search::batch_search;
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -178,6 +179,55 @@ pub fn run(args: &Args) -> Result<()> {
     let mut rescues = rescues;
     info!("Raw rescues before filtering: {}", rescues.len());
 
+    // ── 7b. Internal stop codon scanning for DROPPED rescues ──
+    // Load genome sequences on-demand for rescued genomes only
+    {
+        let rescued_genomes: ahash::HashSet<GenomeIdx> = rescues.iter()
+            .filter(|r| matches!(r.rescue_type, RescueType::Dropped))
+            .map(|r| r.genome_idx)
+            .collect();
+
+        if !rescued_genomes.is_empty() {
+            info!("Scanning {} genomes for internal stop codons in DROPPED rescues...",
+                  rescued_genomes.len());
+            let mut upgraded = 0usize;
+
+            for gi in &rescued_genomes {
+                let genome_name = pa.genome_name(*gi);
+                let Some(fasta_path) = genome_files.get(genome_name) else { continue };
+                let Ok(contigs) = crate::parser::load_genome_contigs(fasta_path) else { continue };
+
+                for rescue in rescues.iter_mut() {
+                    if rescue.genome_idx != *gi || !matches!(rescue.rescue_type, RescueType::Dropped) {
+                        continue;
+                    }
+                    if let Some(n_stops) = check_internal_stops_in_hit(
+                        // Build a minimal hit from rescue coords for the check
+                        &crate::search::Hit {
+                            query: String::new(), cluster: String::new(),
+                            query_length: 0, query_start: 0, query_end: 0,
+                            strand: rescue.strand,
+                            target: rescue.contig.clone(),
+                            target_start: rescue.start, target_end: rescue.end,
+                            matches: 0, alignment_length: 0, mapq: 0,
+                        },
+                        Some(&contigs),
+                    ) {
+                        rescue.rescue_type = RescueType::Pseudogene {
+                            reason: PseudogeneReason::InternalStop { n_stops },
+                        };
+                        rescue.confidence *= 0.5; // Pseudogenes get lower confidence
+                        upgraded += 1;
+                    }
+                }
+            }
+
+            if upgraded > 0 {
+                info!("Upgraded {} DROPPED rescues to PSEUDOGENE:internal_stop", upgraded);
+            }
+        }
+    }
+
     // ── 8. Synteny validation ──
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
@@ -205,6 +255,7 @@ pub fn run(args: &Args) -> Result<()> {
     let mut fragmented = 0usize;
     let mut start_variant = 0usize;
     let mut paralog = 0usize;
+    let mut pseudogene = 0usize;
     for r in &rescues {
         match &r.rescue_type {
             RescueType::Dropped => dropped += 1,
@@ -212,30 +263,46 @@ pub fn run(args: &Args) -> Result<()> {
             RescueType::Fragmented { .. } => fragmented += 1,
             RescueType::StartVariant { .. } => start_variant += 1,
             RescueType::Paralog { .. } => paralog += 1,
+            RescueType::Pseudogene { .. } => pseudogene += 1,
         }
     }
     info!(
-        "Final rescues: {} (DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, START_VARIANT: {}, PARALOG: {})",
-        rescues.len(), dropped, split, fragmented, start_variant, paralog
+        "Final rescues: {} (DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, START_VARIANT: {}, PARALOG: {}, PSEUDOGENE: {})",
+        rescues.len(), dropped, split, fragmented, start_variant, paralog, pseudogene
     );
 
     // ── 11. Nucleotide Similarity Clustering (optional) ──
     let nsc_result = if args.nscluster {
-        info!("Running nucleotide similarity clustering (k={}, threshold={:.2})...",
-              args.nsc_kmer_size, args.nsc_threshold);
-
         let prevalences: Vec<f64> = (0..n_clusters)
             .map(|ci_val| pa.present_count(ClusterIdx(ci_val)) as f64 / n_genomes as f64)
             .collect();
 
-        let result = nscluster::run_nscluster(
-            &pan_ref,
-            pa.cluster_names(),
-            &prevalences,
-            args.nsc_kmer_size,
-            args.nsc_threshold,
-            args.threads,
-        );
+        let result = match args.nsc_engine.as_str() {
+            "mmseqs2" => {
+                info!("Running NSC with mmseqs2 linclust (min_id={:.0}%, cov={:.0}%)...",
+                      args.nsc_min_seq_id * 100.0, args.nsc_coverage * 100.0);
+                nscluster::run_nscluster_mmseqs2(
+                    &pan_ref,
+                    pa.cluster_names(),
+                    &prevalences,
+                    args.nsc_min_seq_id,
+                    args.nsc_coverage,
+                    args.threads,
+                )?
+            }
+            _ => {
+                info!("Running NSC with MinHash (k={}, threshold={:.2})...",
+                      args.nsc_kmer_size, args.nsc_threshold);
+                nscluster::run_nscluster(
+                    &pan_ref,
+                    pa.cluster_names(),
+                    &prevalences,
+                    args.nsc_kmer_size,
+                    args.nsc_threshold,
+                    args.threads,
+                )
+            }
+        };
 
         if result.n_clusters > 0 {
             info!("NSC: {} clusters merged into {} NS groups ({} genes total)",
@@ -270,6 +337,7 @@ pub fn run(args: &Args) -> Result<()> {
         fragmented,
         start_variant,
         paralog,
+        pseudogene,
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result.as_ref().map(|r| r.total_merged_genes).unwrap_or(0),
@@ -523,6 +591,7 @@ struct SummaryStats {
     fragmented: usize,
     start_variant: usize,
     paralog: usize,
+    pseudogene: usize,
     synteny_enabled: bool,
     nsc_clusters: usize,
     nsc_merged_genes: usize,
@@ -583,6 +652,7 @@ fn write_summary(
     writeln!(w, "  FRAGMENTED:    {}", stats.fragmented)?;
     writeln!(w, "  START_VARIANT: {}", stats.start_variant)?;
     writeln!(w, "  PARALOG:       {}", stats.paralog)?;
+    writeln!(w, "  PSEUDOGENE:    {}", stats.pseudogene)?;
     if stats.synteny_enabled {
         let syn_pass = rescues.iter().filter(|r| r.synteny_ok == Some(true)).count();
         let syn_fail = rescues.iter().filter(|r| r.synteny_ok == Some(false)).count();

@@ -376,6 +376,34 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     Ok(files)
 }
 
+/// Load genome FASTA as contig_name → sequence map.
+/// Used for internal stop codon scanning in pseudogene detection.
+pub fn load_genome_contigs(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
+    use std::io::BufRead;
+    let reader = open_maybe_gzip(path)?;
+    let mut contigs: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut current_name: Option<String> = None;
+    let mut current_seq = Vec::new();
+
+    for line_result in reader.lines() {
+        let line = line_result?;
+        if let Some(header) = line.strip_prefix('>') {
+            if let Some(name) = current_name.take() {
+                contigs.insert(name, std::mem::take(&mut current_seq));
+            }
+            let id = header.split_whitespace().next().unwrap_or(header);
+            current_name = Some(id.to_string());
+            current_seq.clear();
+        } else {
+            current_seq.extend(line.trim().as_bytes());
+        }
+    }
+    if let Some(name) = current_name {
+        contigs.insert(name, current_seq);
+    }
+    Ok(contigs)
+}
+
 pub type GffRecord = (String, u64, u64, char, String);
 
 /// Open a file with transparent gzip decompression.

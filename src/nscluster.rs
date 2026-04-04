@@ -12,8 +12,11 @@
 //! - Integrated with Recore's PresenceAbsence for in-place matrix correction
 
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use anyhow::{Context, Result};
 use log::{debug, info};
 use rayon::prelude::*;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::process::Command;
 
 use crate::types::ClusterIdx;
 
@@ -476,6 +479,178 @@ pub fn apply_ns_merges(
     }
 
     (clusters_to_remove, presence_updates)
+}
+
+// ── MMseqs2 linclust engine ──
+
+/// Run nucleotide similarity clustering using MMseqs2 linclust.
+/// Requires `mmseqs` binary in PATH.
+///
+/// MMseqs2 linclust runs in linear time and uses alignment-based identity,
+/// giving exact results (not approximate like MinHash).
+pub fn run_nscluster_mmseqs2(
+    pan_ref: &HashMap<String, Vec<Vec<u8>>>,
+    cluster_names: &[String],
+    cluster_prevalences: &[f64],
+    min_seq_id: f64,
+    coverage: f64,
+    threads: usize,
+) -> Result<NsClusterResult> {
+    // Verify mmseqs2 is available
+    let version_check = Command::new("mmseqs").arg("version").output();
+    if version_check.is_err() {
+        anyhow::bail!(
+            "mmseqs2 not found in PATH. Install with: conda install -c bioconda mmseqs2\n\
+             Or use --nsc-engine minhash (built-in, no dependencies)"
+        );
+    }
+
+    let tmpdir = tempfile::tempdir().context("Cannot create temp dir for mmseqs2")?;
+    let input_fasta = tmpdir.path().join("input.fasta");
+    let db_path = tmpdir.path().join("db");
+    let cluster_db = tmpdir.path().join("cluster");
+    let mmseqs_tmp = tmpdir.path().join("tmp");
+    let tsv_path = tmpdir.path().join("cluster.tsv");
+
+    // ── 1. Write concatenated FASTA (longest allele per cluster) ──
+    {
+        let file = std::fs::File::create(&input_fasta)
+            .context("Cannot create input FASTA for mmseqs2")?;
+        let mut w = BufWriter::new(file);
+        for name in cluster_names {
+            if let Some(alleles) = pan_ref.get(name) {
+                // Use longest allele as representative
+                if let Some(longest) = alleles.iter().max_by_key(|a| a.len()) {
+                    writeln!(w, ">{}", name)?;
+                    w.write_all(longest)?;
+                    writeln!(w)?;
+                }
+            }
+        }
+        w.flush()?;
+    }
+
+    info!("NSC-mmseqs2: creating sequence database...");
+
+    // ── 2. createdb ──
+    let output = Command::new("mmseqs")
+        .args(["createdb", &input_fasta.to_string_lossy(), &db_path.to_string_lossy()])
+        .output()
+        .context("Failed to run mmseqs createdb")?;
+    if !output.status.success() {
+        anyhow::bail!("mmseqs createdb failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    info!("NSC-mmseqs2: running linclust (min_id={:.0}%, cov={:.0}%)...",
+          min_seq_id * 100.0, coverage * 100.0);
+
+    // ── 3. linclust ──
+    std::fs::create_dir_all(&mmseqs_tmp)?;
+    let output = Command::new("mmseqs")
+        .args([
+            "linclust",
+            &db_path.to_string_lossy(),
+            &cluster_db.to_string_lossy(),
+            &mmseqs_tmp.to_string_lossy(),
+            "--min-seq-id", &min_seq_id.to_string(),
+            "-c", &coverage.to_string(),
+            "--cov-mode", "0",         // bidirectional coverage
+            "--cluster-mode", "2",     // connected component clustering
+            "--threads", &threads.to_string(),
+            "--seq-id-mode", "0",      // alignment length based
+        ])
+        .output()
+        .context("Failed to run mmseqs linclust")?;
+    if !output.status.success() {
+        anyhow::bail!("mmseqs linclust failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // ── 4. createtsv ──
+    let output = Command::new("mmseqs")
+        .args([
+            "createtsv",
+            &db_path.to_string_lossy(),
+            &db_path.to_string_lossy(),
+            &cluster_db.to_string_lossy(),
+            &tsv_path.to_string_lossy(),
+        ])
+        .output()
+        .context("Failed to run mmseqs createtsv")?;
+    if !output.status.success() {
+        anyhow::bail!("mmseqs createtsv failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // ── 5. Parse TSV: representative\tmember ──
+    let name_to_idx: HashMap<&str, usize> = cluster_names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i))
+        .collect();
+
+    let mut uf = UnionFind::new(cluster_names.len());
+    let file = std::fs::File::open(&tsv_path)
+        .context("Cannot open mmseqs2 cluster TSV")?;
+    let reader = BufReader::new(file);
+
+    for line_result in reader.lines() {
+        let line = line_result?;
+        let mut fields = line.split('\t');
+        let Some(rep) = fields.next() else { continue };
+        let Some(member) = fields.next() else { continue };
+        if rep == member { continue; } // self-hit
+
+        if let (Some(&ri), Some(&mi)) = (name_to_idx.get(rep), name_to_idx.get(member)) {
+            uf.union(ri, mi);
+        }
+    }
+
+    // ── 6. Extract components ≥ 2 members ──
+    let components = uf.components();
+    let mut merged_clusters = Vec::new();
+    let mut merge_map: HashMap<ClusterIdx, ClusterIdx> = HashMap::new();
+    let mut total_merged_genes = 0usize;
+
+    for members in components.values() {
+        if members.len() < 2 { continue; }
+
+        let member_cis: Vec<ClusterIdx> = members.iter().map(|&i| ClusterIdx(i)).collect();
+
+        // Pick representative: highest prevalence
+        let rep_ci = *member_cis
+            .iter()
+            .max_by(|a, b| {
+                cluster_prevalences[a.val()]
+                    .partial_cmp(&cluster_prevalences[b.val()])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .expect("member_cis guaranteed non-empty");
+
+        let rep_name = cluster_names[rep_ci.val()].clone();
+
+        for &ci in &member_cis {
+            if ci != rep_ci {
+                merge_map.insert(ci, rep_ci);
+            }
+        }
+
+        total_merged_genes += member_cis.len();
+
+        merged_clusters.push(NsCluster {
+            members: member_cis,
+            representative: rep_name,
+        });
+    }
+
+    let n_clusters = merged_clusters.len();
+    info!("NSC-mmseqs2: {} NS clusters formed, {} total genes merged", n_clusters, total_merged_genes);
+
+    // Cleanup is automatic (tmpdir drops)
+    Ok(NsClusterResult {
+        merged_clusters,
+        total_merged_genes,
+        n_clusters,
+        merge_map,
+    })
 }
 
 #[cfg(test)]

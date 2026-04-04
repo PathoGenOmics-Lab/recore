@@ -72,4 +72,18 @@ pub struct Args {
     /// Higher = stricter (fewer merges). PanQC default: 0.8.
     #[arg(long, default_value_t = 0.8)]
     pub nsc_threshold: f64,
+
+    /// NSC engine: "minhash" (built-in, no deps) or "mmseqs2" (exact, requires mmseqs2 in PATH).
+    /// mmseqs2 linclust runs in linear time with alignment-based identity.
+    #[arg(long, default_value = "minhash")]
+    pub nsc_engine: String,
+
+    /// Minimum sequence identity for mmseqs2 linclust clustering (0.0-1.0).
+    #[arg(long, default_value_t = 0.9)]
+    pub nsc_min_seq_id: f64,
+
+    /// Minimum coverage for mmseqs2 linclust (0.0-1.0).
+    /// Coverage mode: bidirectional (shorter sequence must be covered).
+    #[arg(long, default_value_t = 0.8)]
+    pub nsc_coverage: f64,
 }

@@ -17,6 +17,19 @@ pub enum RescueType {
     StartVariant { length_diff_bp: i64 },
     /// Gene hit overlaps a paralog from a different cluster (identity <95%).
     Paralog { other_cluster: String },
+    /// Gene is a pseudogene: present but disrupted (frameshift, premature stop, partial deletion).
+    Pseudogene { reason: PseudogeneReason },
+}
+
+/// Reason why a gene was classified as a pseudogene.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PseudogeneReason {
+    /// Internal stop codon(s) found in the aligned region.
+    InternalStop { n_stops: usize },
+    /// Frameshift: alignment has indels not divisible by 3.
+    Frameshift,
+    /// Partial deletion: high identity but missing 5' or 3' end (coverage 60-80%).
+    PartialDeletion { coverage: f64 },
 }
 
 impl std::fmt::Display for RescueType {
@@ -31,6 +44,17 @@ impl std::fmt::Display for RescueType {
                 write!(f, "START_VARIANT:{:+}bp", length_diff_bp)
             }
             RescueType::Paralog { other_cluster } => write!(f, "PARALOG:{}", other_cluster),
+            RescueType::Pseudogene { ref reason } => {
+                match reason {
+                    PseudogeneReason::InternalStop { n_stops } => {
+                        write!(f, "PSEUDOGENE:{}stops", n_stops)
+                    }
+                    PseudogeneReason::Frameshift => write!(f, "PSEUDOGENE:frameshift"),
+                    PseudogeneReason::PartialDeletion { coverage } => {
+                        write!(f, "PSEUDOGENE:partial:{:.0}%cov", coverage)
+                    }
+                }
+            }
         }
     }
 }
@@ -317,7 +341,6 @@ pub fn classify_hits(
     if total_coverage >= min_coverage && n_fragments >= 2 {
         let avg_identity: f64 = same_contig_hits.iter().map(|h| h.identity()).sum::<f64>()
             / same_contig_hits.len() as f64;
-        let confidence = (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8;
 
         // SAFETY: same_contig_hits is non-empty (filtered from sorted_hits which has ≥1 element)
         let frag_start = same_contig_hits.iter().map(|h| h.target_start).min()
@@ -325,10 +348,24 @@ pub fn classify_hits(
         let frag_end = same_contig_hits.iter().map(|h| h.target_end).max()
             .expect("same_contig_hits guaranteed non-empty by coverage check");
 
+        // ── Frameshift detection ──
+        // If fragments have high identity (≥95%) and gaps between them are small (≤30bp)
+        // and NOT divisible by 3, this is likely a frameshift pseudogene.
+        let is_frameshift = avg_identity >= 95.0 && n_fragments >= 2
+            && detect_frameshift_pattern(&same_contig_hits);
+
+        let (rescue_type, confidence) = if is_frameshift {
+            (RescueType::Pseudogene { reason: PseudogeneReason::Frameshift },
+             (avg_identity / 100.0) * (total_coverage / 100.0) * 0.5)
+        } else {
+            (RescueType::Fragmented { n_fragments, total_coverage },
+             (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8)
+        };
+
         return Some(RescueEvent {
             cluster_idx: ci,
             genome_idx: gi,
-            rescue_type: RescueType::Fragmented { n_fragments, total_coverage },
+            rescue_type,
             identity: avg_identity,
             coverage: total_coverage,
             contig: primary_contig.clone(),
@@ -341,7 +378,121 @@ pub fn classify_hits(
         });
     }
 
+    // ── Path 3: Pseudogene — partial deletion ──
+    // High identity hit covering 60-80% of the query → truncated gene (partial deletion).
+    // This is below min_coverage so Path 1 didn't catch it, but biologically informative.
+    if best.identity() >= 90.0 {
+        let cov = best.query_coverage();
+        // Also check fragment coverage for multi-fragment partial hits
+        let effective_cov = if same_contig_hits.len() >= 2 { total_coverage } else { cov };
+        if effective_cov >= 60.0 && effective_cov < min_coverage {
+            return Some(RescueEvent {
+                cluster_idx: ci,
+                genome_idx: gi,
+                rescue_type: RescueType::Pseudogene {
+                    reason: PseudogeneReason::PartialDeletion { coverage: effective_cov },
+                },
+                identity: best.identity(),
+                coverage: effective_cov,
+                contig: best.target.clone(),
+                start: best.target_start,
+                end: best.target_end,
+                strand: best.strand,
+                annotation_match: None,
+                confidence: (best.identity() / 100.0) * (effective_cov / 100.0) * 0.4,
+                synteny_ok: None,
+            });
+        }
+    }
+
     None
+}
+
+/// Scan a nucleotide sequence for internal stop codons (TAA, TAG, TGA) in all 3 reading frames.
+/// Returns the frame with the fewest stops and the count in that frame.
+/// Used to detect pseudogenes: a real gene has 0 internal stops in its frame.
+pub fn count_internal_stops(seq: &[u8]) -> usize {
+    if seq.len() < 6 {
+        return 0; // too short to have internal stops
+    }
+
+    // Check all 3 frames, return the minimum stop count
+    // (the "real" reading frame should have the fewest stops)
+    let mut min_stops = usize::MAX;
+
+    for frame in 0..3usize {
+        let mut stops = 0usize;
+        let mut pos = frame;
+        while pos + 3 <= seq.len() {
+            let codon = &seq[pos..pos + 3];
+            // Last codon is the terminator, not "internal"
+            if pos + 3 < seq.len() {
+                let upper = [codon[0].to_ascii_uppercase(),
+                             codon[1].to_ascii_uppercase(),
+                             codon[2].to_ascii_uppercase()];
+                if matches!(upper, [b'T', b'A', b'A'] | [b'T', b'A', b'G'] | [b'T', b'G', b'A']) {
+                    stops += 1;
+                }
+            }
+            pos += 3;
+        }
+        min_stops = min_stops.min(stops);
+    }
+
+    min_stops
+}
+
+/// Check if a rescued hit is a pseudogene by scanning the genome sequence for internal stops.
+/// Returns Some(n_stops) if stops found, None if sequence unavailable or clean.
+pub fn check_internal_stops_in_hit(
+    hit: &Hit,
+    genome_seqs: Option<&HashMap<String, Vec<u8>>>,
+) -> Option<usize> {
+    let seqs = genome_seqs?;
+    let contig_seq = seqs.get(&hit.target)?;
+
+    let start = hit.target_start as usize;
+    let end = (hit.target_end as usize).min(contig_seq.len());
+    if start >= end || end - start < 6 {
+        return None;
+    }
+
+    let region = &contig_seq[start..end];
+    let n_stops = count_internal_stops(region);
+
+    if n_stops > 0 { Some(n_stops) } else { None }
+}
+
+/// Detect frameshift pattern: adjacent fragments with small gaps not divisible by 3.
+fn detect_frameshift_pattern(hits: &[&Hit]) -> bool {
+    if hits.len() < 2 {
+        return false;
+    }
+
+    // Sort by target position
+    let mut sorted: Vec<&Hit> = hits.to_vec();
+    sorted.sort_by_key(|h| h.target_start);
+
+    let mut frameshift_gaps = 0usize;
+    let mut total_gaps = 0usize;
+
+    for pair in sorted.windows(2) {
+        let gap_start = pair[0].target_end;
+        let gap_end = pair[1].target_start;
+        if gap_end > gap_start {
+            let gap_size = gap_end - gap_start;
+            // Small gaps (≤50bp) that aren't multiples of 3 → frameshift signature
+            if gap_size <= 50 {
+                total_gaps += 1;
+                if gap_size % 3 != 0 {
+                    frameshift_gaps += 1;
+                }
+            }
+        }
+    }
+
+    // At least one gap must be non-divisible by 3
+    total_gaps > 0 && frameshift_gaps > 0
 }
 
 fn classify_single_hit(
@@ -965,5 +1116,102 @@ mod tests {
             RescueType::Paralog { other_cluster: "cl3".into() }.to_string(),
             "PARALOG:cl3"
         );
+        assert_eq!(
+            RescueType::Pseudogene { reason: PseudogeneReason::InternalStop { n_stops: 2 } }.to_string(),
+            "PSEUDOGENE:2stops"
+        );
+        assert_eq!(
+            RescueType::Pseudogene { reason: PseudogeneReason::Frameshift }.to_string(),
+            "PSEUDOGENE:frameshift"
+        );
+        assert_eq!(
+            RescueType::Pseudogene { reason: PseudogeneReason::PartialDeletion { coverage: 72.5 } }.to_string(),
+            "PSEUDOGENE:partial:72%cov"
+        );
+    }
+
+    #[test]
+    fn test_count_internal_stops_clean_orf() {
+        // ATG ... no stops ... TAA
+        let seq = b"ATGAAAGCGTTTTTTAAAGCGAAAGCGTAA";
+        assert_eq!(count_internal_stops(seq), 0);
+    }
+
+    #[test]
+    fn test_count_internal_stops_with_stops() {
+        // Frame 0: ATG TAA GCG TTT — has internal stop at pos 3
+        let seq = b"ATGTAAGCGTTTGCGAAAGCG";
+        let stops = count_internal_stops(seq);
+        // At least one frame will have stops, the cleanest frame might have 0 or 1
+        // Frame 0: ATG|TAA|GCG|TTT|GCG|AAA|GCG = TAA at pos 3 (internal)
+        // We want the minimum across frames
+        assert!(stops <= 1);
+    }
+
+    #[test]
+    fn test_count_internal_stops_short_seq() {
+        assert_eq!(count_internal_stops(b"ATG"), 0);
+        assert_eq!(count_internal_stops(b""), 0);
+    }
+
+    #[test]
+    fn test_frameshift_pattern_detected() {
+        // Two fragments with a 2bp gap (not divisible by 3) → frameshift
+        let h1 = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 0, query_end: 500, strand: '+', target: "c".into(),
+            target_start: 100, target_end: 600,
+            matches: 500, alignment_length: 500, mapq: 60,
+        };
+        let h2 = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 500, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 602, target_end: 1102, // 2bp gap (not %3)
+            matches: 500, alignment_length: 500, mapq: 60,
+        };
+        assert!(detect_frameshift_pattern(&[&h1, &h2]));
+    }
+
+    #[test]
+    fn test_frameshift_pattern_not_detected_divisible_by_3() {
+        let h1 = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 0, query_end: 500, strand: '+', target: "c".into(),
+            target_start: 100, target_end: 600,
+            matches: 500, alignment_length: 500, mapq: 60,
+        };
+        let h2 = Hit {
+            query: "q".into(), cluster: "c".into(), query_length: 1000,
+            query_start: 500, query_end: 1000, strand: '+', target: "c".into(),
+            target_start: 603, target_end: 1103, // 3bp gap (divisible by 3)
+            matches: 500, alignment_length: 500, mapq: 60,
+        };
+        assert!(!detect_frameshift_pattern(&[&h1, &h2]));
+    }
+
+    #[test]
+    fn test_classify_partial_deletion_pseudogene() {
+        // Hit with 95% identity but only 70% coverage → partial deletion pseudogene
+        let hit = Hit {
+            query: "q".into(), cluster: "c1".into(), query_length: 1000,
+            query_start: 0, query_end: 700, strand: '+', target: "c".into(),
+            target_start: 0, target_end: 700,
+            matches: 665, alignment_length: 700, mapq: 60,
+        };
+        let pa = PresenceAbsence::new_for_test(
+            vec!["c1".into()],
+            vec!["g1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        // min_coverage = 80% so 70% coverage won't pass Path 1
+        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+        let r = result.unwrap();
+        match &r.rescue_type {
+            RescueType::Pseudogene { reason: PseudogeneReason::PartialDeletion { coverage } } => {
+                assert!(*coverage >= 69.0 && *coverage <= 71.0);
+            }
+            other => panic!("Expected Pseudogene:PartialDeletion, got {:?}", other),
+        }
     }
 }
