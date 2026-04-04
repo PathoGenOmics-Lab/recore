@@ -1,0 +1,25 @@
+[package]
+name = "recore"
+version = "0.1.0"
+edition = "2021"
+authors = ["Paula Ruiz-Rodriguez <paula.ruiz@uv.es>"]
+description = "Post-hoc rescue of falsely absent genes in pangenome matrices"
+license = "GPL-3.0-only"
+repository = "https://github.com/PathoGenOmics-Lab/recore"
+keywords = ["pangenome", "panaroo", "core-genome", "rescue", "bioinformatics"]
+categories = ["science", "command-line-utilities"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+csv = "1"
+rayon = "1"
+ahash = "0.8"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
