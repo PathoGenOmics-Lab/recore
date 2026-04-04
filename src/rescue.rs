@@ -72,6 +72,8 @@ pub struct GffGene {
 pub struct GffIndex {
     pub genes: Vec<GffGene>,
     contig_ranges: HashMap<String, (usize, usize)>,
+    /// gene_id → index in `genes` for O(1) lookup by ID.
+    gene_id_index: HashMap<String, usize>,
 }
 
 impl GffIndex {
@@ -92,7 +94,20 @@ impl GffIndex {
             contig_ranges.insert(current_contig.clone(), (range_start, genes.len()));
         }
 
-        GffIndex { genes, contig_ranges }
+        // Build gene_id → index map
+        let mut gene_id_index = HashMap::new();
+        for (i, g) in genes.iter().enumerate() {
+            if !g.gene_id.is_empty() {
+                gene_id_index.insert(g.gene_id.clone(), i);
+            }
+        }
+
+        GffIndex { genes, contig_ranges, gene_id_index }
+    }
+
+    /// Lookup a gene by ID. O(1).
+    pub fn get_by_id(&self, gene_id: &str) -> Option<&GffGene> {
+        self.gene_id_index.get(gene_id).map(|&i| &self.genes[i])
     }
 
     /// Find all genes overlapping [query_start, query_end) on a contig.
@@ -283,25 +298,7 @@ pub fn classify_hits(
 
     // ── Path 1: Single full-coverage hit ──
     if best.query_coverage() >= min_coverage {
-        // Check for start-site variant (GFF-based)
-        if let Some((length_diff, matched_gene_id)) = detect_start_variant(best, gff_index) {
-            let confidence = best.identity() / 100.0 * 0.95;
-            return Some(RescueEvent {
-                cluster_idx,
-                genome_idx,
-                rescue_type: RescueType::StartVariant { length_diff_bp: length_diff },
-                identity: best.identity(),
-                coverage: best.query_coverage(),
-                contig: best.target.clone(),
-                start: best.target_start,
-                end: best.target_end,
-                strand: best.strand,
-                annotation_match: Some(matched_gene_id),
-                confidence,
-                synteny_ok: None,
-            });
-        }
-
+        // First classify via GFF (SPLIT vs DROPPED)
         let (rescue_type, annotation_match, confidence) = classify_single_hit(
             best,
             cluster_idx,
@@ -310,18 +307,34 @@ pub fn classify_hits(
             gene_to_cluster,
         );
 
+        // Only check START_VARIANT if the gene was classified as DROPPED
+        // (not SPLIT — a split gene belongs to another cluster, the start doesn't matter)
+        let (final_type, final_ann, final_conf) = if matches!(rescue_type, RescueType::Dropped) {
+            if let Some((length_diff, matched_gene_id)) = detect_start_variant(best, gff_index) {
+                (
+                    RescueType::StartVariant { length_diff_bp: length_diff },
+                    Some(matched_gene_id),
+                    best.identity() / 100.0 * 0.95,
+                )
+            } else {
+                (rescue_type, annotation_match, confidence)
+            }
+        } else {
+            (rescue_type, annotation_match, confidence)
+        };
+
         return Some(RescueEvent {
             cluster_idx,
             genome_idx,
-            rescue_type,
+            rescue_type: final_type,
             identity: best.identity(),
             coverage: best.query_coverage(),
             contig: best.target.clone(),
             start: best.target_start,
             end: best.target_end,
             strand: best.strand,
-            annotation_match,
-            confidence,
+            annotation_match: final_ann,
+            confidence: final_conf,
             synteny_ok: None,
         });
     }
@@ -546,9 +559,8 @@ pub fn validate_synteny(
         }
         let ref_gene_id = ref_cell.split(';').next().unwrap_or(ref_cell).trim();
 
-        // Locate gene in reference GFF
-        let ref_gene = ref_gff.genes.iter().find(|g| g.gene_id == ref_gene_id);
-        let Some(ref_gene) = ref_gene else {
+        // Locate gene in reference GFF (O(1) via index)
+        let Some(ref_gene) = ref_gff.get_by_id(ref_gene_id) else {
             continue;
         };
 

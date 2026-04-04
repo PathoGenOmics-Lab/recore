@@ -308,6 +308,10 @@ pub fn run(args: &Args) -> Result<()> {
         .filter(|i| !genome_idx_set.contains(i))
         .collect();
 
+    // Find indices of columns that need recalculation after rescue
+    let isolates_col = pa.header.iter().position(|h| h == "No. isolates");
+    let sequences_col = pa.header.iter().position(|h| h == "No. sequences");
+
     for ci in 0..pa.clusters.len() {
         let mut row = vec![String::new(); pa.header.len()];
 
@@ -319,11 +323,24 @@ pub fn run(args: &Args) -> Result<()> {
         }
 
         // Fill genome columns (with rescue if applicable)
+        let mut rescue_count = 0usize;
         for (gi, &col_idx) in pa.genome_col_indices.iter().enumerate() {
             if let Some(r) = rescue_map.get(&(ci, gi)) {
                 row[col_idx] = format!("RESCUED:{}:{}-{}", r.contig, r.start, r.end);
+                rescue_count += 1;
             } else {
                 row[col_idx] = pa.cell_values[ci][gi].clone();
+            }
+        }
+
+        // Recalculate "No. isolates" and "No. sequences" if rescues happened
+        if rescue_count > 0 {
+            let new_count = pa.present[ci].len() + rescue_count;
+            if let Some(col) = isolates_col {
+                row[col] = new_count.to_string();
+            }
+            if let Some(col) = sequences_col {
+                row[col] = new_count.to_string();
             }
         }
 
