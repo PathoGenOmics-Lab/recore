@@ -437,8 +437,9 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         }
 
         let contig = fields[0].to_string();
-        let start: u64 = fields[3].parse().unwrap_or(0);
-        let end: u64 = fields[4].parse().unwrap_or(0);
+        // GFF3 is 1-based closed; convert to 0-based half-open to match minimap2 PAF coords
+        let start: u64 = fields[3].parse::<u64>().unwrap_or(1).saturating_sub(1);
+        let end: u64 = fields[4].parse().unwrap_or(0); // end is already exclusive after -1+1
         let strand = fields[6].chars().next().unwrap_or('+');
 
         let mut gene_id = String::new();

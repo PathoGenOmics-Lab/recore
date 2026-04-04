@@ -399,7 +399,7 @@ pub fn run(args: &Args) -> Result<()> {
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result.as_ref().map(|r| r.total_merged_genes).unwrap_or(0),
     };
-    write_summary(&pa, &rescue_map, &rescues, &stats, &args.output)?;
+    write_summary(&pa, &rescue_map, &rescues, &stats, &nsc_result, &args.output)?;
 
     // Write NSC report if clusters were merged
     if let Some(ref nsc) = nsc_result {
@@ -444,7 +444,7 @@ fn write_report(
             r.identity,
             r.coverage,
             r.contig,
-            r.start,
+            r.start + 1,  // convert 0-based to 1-based for TSV output
             r.end,
             r.strand,
             r.confidence,
@@ -529,7 +529,8 @@ fn write_corrected_csv(
             if let Some(r) = rescue_map.get(&(ci, gi)) {
                 rescue_buf.clear();
                 use std::fmt::Write as FmtWrite;
-                write!(rescue_buf, "RESCUED:{}:{}-{}", r.contig, r.start, r.end)
+                // 1-based coords for the corrected CSV (biologist-friendly)
+                write!(rescue_buf, "RESCUED:{}:{}-{}", r.contig, r.start + 1, r.end)
                     .expect("write to String is infallible");
                 row[col_idx].clone_from(&rescue_buf);
                 rescue_count += 1;
@@ -680,11 +681,12 @@ fn write_summary(
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     rescues: &[RescueEvent],
     stats: &SummaryStats,
+    nsc_result: &Option<nscluster::NsClusterResult>,
     output_dir: &std::path::Path,
 ) -> Result<()> {
-    let core_after = count_core_after(pa, rescue_map, &None);
+    let core_after = count_core_after(pa, rescue_map, nsc_result);
     let soft_core_before = pa.soft_core_size();
-    let soft_core_after = count_soft_core_after(pa, rescue_map, &None);
+    let soft_core_after = count_soft_core_after(pa, rescue_map, nsc_result);
 
     let path = output_dir.join("summary.txt");
     let file = fs::File::create(&path)?;
