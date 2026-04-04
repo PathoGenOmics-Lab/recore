@@ -24,8 +24,8 @@ pub fn run(args: &Args) -> Result<()> {
 
     let cluster_to_idx = pa.cluster_index();
 
-    // ── 1b. Cross-validate inputs ──
-    validate_inputs(&pa, &pan_ref, &genome_files);
+    // ── 1b. Cross-validate inputs (includes path traversal checks) ──
+    validate_inputs(&pa, &pan_ref, &genome_files)?;
 
     // ── 2. Filter gaps by prevalence (streaming, no intermediate Vec) ──
     let min_prevalence = args.min_prevalence;
@@ -340,7 +340,8 @@ fn write_corrected_csv(
             if let Some(r) = rescue_map.get(&(ci, gi)) {
                 rescue_buf.clear();
                 use std::fmt::Write as FmtWrite;
-                write!(rescue_buf, "RESCUED:{}:{}-{}", r.contig, r.start, r.end).unwrap();
+                write!(rescue_buf, "RESCUED:{}:{}-{}", r.contig, r.start, r.end)
+                    .expect("write to String is infallible");
                 row[col_idx].clone_from(&rescue_buf);
                 rescue_count += 1;
             } else {
@@ -353,15 +354,18 @@ fn write_corrected_csv(
             use std::fmt::Write as FmtWrite;
             if let Some(col) = isolates_col {
                 row[col].clear();
-                write!(row[col], "{}", new_count).unwrap();
+                write!(row[col], "{}", new_count)
+                    .expect("write to String is infallible");
             }
             if let Some(col) = sequences_col {
                 row[col].clear();
-                write!(row[col], "{}", new_count).unwrap();
+                write!(row[col], "{}", new_count)
+                    .expect("write to String is infallible");
             }
             if let Some(col) = avg_seq_col {
                 row[col].clear();
-                write!(row[col], "1.00").unwrap();
+                write!(row[col], "1.00")
+                    .expect("write to String is infallible");
             }
         }
 

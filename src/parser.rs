@@ -356,7 +356,8 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
             continue;
         }
 
-        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+        let Some(fname) = path.file_name() else { continue };
+        let filename = fname.to_string_lossy().to_string();
 
         let mut name = filename.clone();
         for ext in &extensions {
@@ -429,13 +430,52 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
     Ok(genes)
 }
 
+/// Check if a name is safe to use in file path construction.
+/// Rejects names containing path separators, parent directory references, or null bytes.
+fn is_safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+        && name != "."
+        && name != ".."
+        && !name.starts_with("..") // e.g. "../etc/passwd"
+        && !name.contains("/../")
+        && !name.contains("\\..\\")
+}
+
 /// Cross-validate inputs: warn about mismatches between CSV clusters and pan-reference.
+/// Also validates that genome/cluster names are safe for path construction.
 pub fn validate_inputs(
     pa: &PresenceAbsence,
     pan_ref: &HashMap<String, Vec<Vec<u8>>>,
     genome_files: &HashMap<String, PathBuf>,
-) {
+) -> Result<()> {
     use log::warn;
+
+    // ── Security: validate genome names for path traversal ──
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        let name = pa.genome_name(gi);
+        if !is_safe_name(name) {
+            anyhow::bail!(
+                "Unsafe genome name in CSV column header: {:?} (contains path separators or traversal patterns)",
+                name
+            );
+        }
+    }
+
+    // ── Security: validate cluster names ──
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        let name = pa.cluster_name(ci);
+        if !is_safe_name(name) {
+            anyhow::bail!(
+                "Unsafe cluster name in CSV: {:?} (contains path separators or traversal patterns)",
+                name
+            );
+        }
+    }
 
     // Clusters in CSV but not in pan-reference
     let mut csv_only = 0usize;
@@ -478,6 +518,7 @@ pub fn validate_inputs(
             no_fasta
         );
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -558,5 +599,38 @@ mod tests {
         let pa = parse_presence_absence(csv.path()).unwrap();
         assert!((pa.prevalence(ClusterIdx(0)) - 1.0).abs() < 0.001);
         assert!((pa.prevalence(ClusterIdx(1)) - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_safe_name() {
+        assert!(is_safe_name("AS00001"));
+        assert!(is_safe_name("genome_123"));
+        assert!(is_safe_name("my-genome.v2"));
+        assert!(!is_safe_name(""));
+        assert!(!is_safe_name("."));
+        assert!(!is_safe_name(".."));
+        assert!(!is_safe_name("../etc/passwd"));
+        assert!(!is_safe_name("foo/bar"));
+        assert!(!is_safe_name("foo\\bar"));
+        assert!(!is_safe_name("foo\0bar"));
+        assert!(!is_safe_name("..\\Windows\\System32"));
+    }
+
+    #[test]
+    fn test_validate_inputs_rejects_traversal() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into()],
+            vec!["../etc/passwd".into()],
+            vec![vec!["gene1".into()]],
+        );
+        let pan_ref: HashMap<String, Vec<Vec<u8>>> = {
+            let mut m = HashMap::new();
+            m.insert("cluster1".into(), vec![b"ATGC".to_vec()]);
+            m
+        };
+        let genome_files: HashMap<String, PathBuf> = HashMap::new();
+        let result = validate_inputs(&pa, &pan_ref, &genome_files);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsafe genome name"));
     }
 }

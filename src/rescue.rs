@@ -317,8 +317,11 @@ pub fn classify_hits(
             / same_contig_hits.len() as f64;
         let confidence = (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8;
 
-        let frag_start = same_contig_hits.iter().map(|h| h.target_start).min().unwrap();
-        let frag_end = same_contig_hits.iter().map(|h| h.target_end).max().unwrap();
+        // SAFETY: same_contig_hits is non-empty (filtered from sorted_hits which has ≥1 element)
+        let frag_start = same_contig_hits.iter().map(|h| h.target_start).min()
+            .expect("same_contig_hits guaranteed non-empty by coverage check");
+        let frag_end = same_contig_hits.iter().map(|h| h.target_end).max()
+            .expect("same_contig_hits guaranteed non-empty by coverage check");
 
         return Some(RescueEvent {
             cluster_idx: ci,
@@ -374,7 +377,7 @@ fn classify_single_hit(
         };
 
         if recip > 0.5
-            && (best_gene.is_none() || recip > best_gene.unwrap().1) {
+            && best_gene.is_none_or(|(_, prev)| recip > prev) {
                 best_gene = Some((gene, recip));
             }
     }
