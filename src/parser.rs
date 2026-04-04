@@ -270,6 +270,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
 
         let mut gene_id = String::new();
         for attr in fields[8].split(';') {
+            let attr = attr.trim();
             if let Some(val) = attr.strip_prefix("ID=") {
                 gene_id = val.to_string();
                 break;

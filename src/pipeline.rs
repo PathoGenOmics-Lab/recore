@@ -295,30 +295,28 @@ pub fn run(args: &Args) -> Result<()> {
     // 8b. Corrected presence/absence CSV
     let corrected_path = args.output.join("gene_presence_absence_recore.csv");
     let corrected_file = fs::File::create(&corrected_path)?;
-    let mut corrected = BufWriter::new(corrected_file);
+    let corrected = BufWriter::new(corrected_file);
 
-    write!(corrected, "Gene")?;
-    for g in &pa.genomes {
-        write!(corrected, ",{}", g)?;
+    // Use csv::Writer for proper quoting of values with commas
+    let mut csv_writer = csv::Writer::from_writer(corrected);
+    {
+        let mut header = vec!["Gene".to_string()];
+        header.extend(pa.genomes.iter().cloned());
+        csv_writer.write_record(&header)?;
     }
-    writeln!(corrected)?;
-
     for (ci, cluster_name) in pa.clusters.iter().enumerate() {
-        write!(corrected, "{}", cluster_name)?;
+        let mut row = Vec::with_capacity(pa.genomes.len() + 1);
+        row.push(cluster_name.clone());
         for gi in 0..pa.genomes.len() {
             if let Some(r) = rescue_map.get(&(ci, gi)) {
-                write!(
-                    corrected,
-                    ",RESCUED:{}:{}-{}",
-                    r.contig, r.start, r.end
-                )?;
+                row.push(format!("RESCUED:{}:{}-{}", r.contig, r.start, r.end));
             } else {
-                write!(corrected, ",{}", pa.cell_values[ci][gi])?;
+                row.push(pa.cell_values[ci][gi].clone());
             }
         }
-        writeln!(corrected)?;
+        csv_writer.write_record(&row)?;
     }
-    corrected.flush()?;
+    csv_writer.flush()?;
 
     // 8c. Summary
     let core_after = {

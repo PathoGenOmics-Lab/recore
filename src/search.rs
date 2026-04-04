@@ -98,6 +98,16 @@ pub fn search_genome(
         anyhow::bail!("minimap2 failed: {}", stderr);
     }
 
+    // Log minimap2 warnings even on success
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for line in stderr.lines() {
+            if line.contains("[WARNING]") || line.contains("[W::") {
+                log::warn!("minimap2: {}", line);
+            }
+        }
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut hits_per_cluster: HashMap<String, Vec<Hit>> = HashMap::default();
 

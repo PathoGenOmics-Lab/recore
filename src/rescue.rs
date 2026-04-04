@@ -97,16 +97,18 @@ impl GffIndex {
 
     /// Find all genes overlapping [query_start, query_end) on a contig.
     pub fn overlapping(&self, contig: &str, query_start: u64, query_end: u64) -> Vec<&GffGene> {
-        let Some(&(range_start, _)) = self.contig_ranges.get(contig) else {
+        let Some(&(range_start, range_end)) = self.contig_ranges.get(contig) else {
             return Vec::new();
         };
 
-        let slice = &self.genes[range_start..];
+        // Use bounded slice — partition_point requires monotonic predicate,
+        // which only holds within a single contig's sorted genes.
+        let slice = &self.genes[range_start..range_end];
         let scan_start = slice.partition_point(|g| g.end <= query_start);
 
         let mut results = Vec::new();
         for g in &slice[scan_start..] {
-            if g.contig != contig || g.start >= query_end {
+            if g.start >= query_end {
                 break;
             }
             results.push(g);
@@ -273,10 +275,10 @@ pub fn classify_hits(
         return None;
     }
 
-    // Sort hits by score (best first)
+    // Sort hits by score (best first). Use total_cmp to handle NaN safely.
     let mut sorted_hits: Vec<&Hit> = hits.iter().collect();
     sorted_hits.sort_by(|a, b| {
-        b.score().partial_cmp(&a.score()).unwrap()
+        b.score().total_cmp(&a.score())
     });
 
     let best = sorted_hits[0];
@@ -326,16 +328,24 @@ pub fn classify_hits(
         });
     }
 
-    // ── Path 2: Fragment assembly ──
-    let (total_coverage, n_fragments) = merged_query_coverage(&sorted_hits);
+    // ── Path 2: Fragment assembly (same contig only) ──
+    // Group hits by contig and try fragment assembly per contig.
+    // Mixing contigs would give nonsensical coordinates.
+    let primary_contig = &best.target;
+    let same_contig_hits: Vec<&Hit> = sorted_hits
+        .iter()
+        .filter(|h| h.target == *primary_contig)
+        .copied()
+        .collect();
+
+    let (total_coverage, n_fragments) = merged_query_coverage(&same_contig_hits);
     if total_coverage >= min_coverage && n_fragments >= 2 {
-        let avg_identity: f64 = sorted_hits.iter().map(|h| h.identity()).sum::<f64>()
-            / sorted_hits.len() as f64;
+        let avg_identity: f64 = same_contig_hits.iter().map(|h| h.identity()).sum::<f64>()
+            / same_contig_hits.len() as f64;
         let confidence = (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8;
 
-        // Report span covering all fragments (min start, max end)
-        let frag_start = sorted_hits.iter().map(|h| h.target_start).min().unwrap();
-        let frag_end = sorted_hits.iter().map(|h| h.target_end).max().unwrap();
+        let frag_start = same_contig_hits.iter().map(|h| h.target_start).min().unwrap();
+        let frag_end = same_contig_hits.iter().map(|h| h.target_end).max().unwrap();
 
         return Some(RescueEvent {
             cluster_idx,
@@ -346,7 +356,7 @@ pub fn classify_hits(
             },
             identity: avg_identity,
             coverage: total_coverage,
-            contig: best.target.clone(),
+            contig: primary_contig.clone(),
             start: frag_start,
             end: frag_end,
             strand: best.strand,
