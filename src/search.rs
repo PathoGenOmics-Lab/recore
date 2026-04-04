@@ -70,7 +70,8 @@ pub fn search_genome(
             let query_name = if alleles.len() == 1 {
                 cluster_name.clone()
             } else {
-                format!("{}__{}", cluster_name, ai)
+                // Use separator unlikely in Panaroo names to avoid collisions
+                format!("{}~~~ALLELE~{}", cluster_name, ai)
             };
             name_to_cluster.insert(query_name.clone(), cluster_name.clone());
             writeln!(query_file, ">{}", query_name)?;

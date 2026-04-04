@@ -219,10 +219,11 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
 /// overlap but differs in length by <300bp, it's likely a start variant.
 ///
 /// Returns the length difference (positive = CDS longer than query, negative = shorter).
+/// Returns (length_diff, gene_id) if a start variant is detected.
 fn detect_start_variant(
     hit: &Hit,
     gff_index: Option<&GffIndex>,
-) -> Option<i64> {
+) -> Option<(i64, String)> {
     let gff = gff_index?;
 
     if hit.identity() < 98.0 || hit.query_coverage() < 90.0 {
@@ -237,16 +238,13 @@ fn detect_start_variant(
         let query_len = hit.query_length as i64;
         let diff = gene_len - query_len;
 
-        // Only flag as start variant if the CDS exists but differs in length
-        // by a small amount (<300bp) — typical start variation range
         if diff.unsigned_abs() < 300 && diff != 0 {
-            // Confirm high overlap
             let overlap_start = hit.target_start.max(gene.start);
             let overlap_end = hit.target_end.min(gene.end);
             let overlap = overlap_end.saturating_sub(overlap_start) as f64;
 
             if hit_len > 0.0 && overlap / hit_len > 0.8 {
-                return Some(diff);
+                return Some((diff, gene.gene_id.clone()));
             }
         }
     }
@@ -286,7 +284,7 @@ pub fn classify_hits(
     // ── Path 1: Single full-coverage hit ──
     if best.query_coverage() >= min_coverage {
         // Check for start-site variant (GFF-based)
-        if let Some(length_diff) = detect_start_variant(best, gff_index) {
+        if let Some((length_diff, matched_gene_id)) = detect_start_variant(best, gff_index) {
             let confidence = best.identity() / 100.0 * 0.95;
             return Some(RescueEvent {
                 cluster_idx,
@@ -298,7 +296,7 @@ pub fn classify_hits(
                 start: best.target_start,
                 end: best.target_end,
                 strand: best.strand,
-                annotation_match: None,
+                annotation_match: Some(matched_gene_id),
                 confidence,
                 synteny_ok: None,
             });
@@ -693,7 +691,7 @@ mod tests {
             matches: 1000, alignment_length: 1000, mapq: 60,
         };
         let result = detect_start_variant(&hit, Some(&idx));
-        assert_eq!(result, Some(100)); // CDS is 100bp longer
+        assert_eq!(result, Some((100, "gene1".to_string()))); // CDS is 100bp longer
     }
 
     #[test]
@@ -765,6 +763,9 @@ mod tests {
             genomes: vec!["genome1".into()],
             present: vec![HashSet::new()], // g absent in genome1
             cell_values: vec![vec!["".into()]],
+            header: vec!["Gene".into(), "genome1".into()],
+            metadata: vec![vec!["g".into()]],
+            genome_col_indices: vec![1],
         };
         let g2c: HashMap<String, usize> = HashMap::new();
 

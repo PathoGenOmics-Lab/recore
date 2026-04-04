@@ -14,6 +14,14 @@ pub struct PresenceAbsence {
     pub present: Vec<HashSet<usize>>,
     /// Original cell values: cell_values[cluster_idx][genome_idx] = gene_id string.
     pub cell_values: Vec<Vec<String>>,
+    /// Full CSV header (all columns, including metadata).
+    pub header: Vec<String>,
+    /// Metadata columns per cluster: metadata[cluster_idx] = vec of metadata values.
+    /// These are the non-genome columns (Annotation, No. isolates, etc.) preserved
+    /// for faithful output.
+    pub metadata: Vec<Vec<String>>,
+    /// Indices of genome columns in the original header.
+    pub genome_col_indices: Vec<usize>,
 }
 
 impl PresenceAbsence {
@@ -95,9 +103,16 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         .map(|&i| headers[i].clone())
         .collect();
 
+    // Metadata column indices (everything that's not a genome column)
+    let genome_idx_set: HashSet<usize> = genome_indices.iter().copied().collect();
+    let meta_col_indices: Vec<usize> = (0..headers.len())
+        .filter(|i| !genome_idx_set.contains(i))
+        .collect();
+
     let mut clusters = Vec::new();
     let mut present = Vec::new();
     let mut cell_values = Vec::new();
+    let mut metadata = Vec::new();
 
     for result in reader.records() {
         let record = result?;
@@ -114,9 +129,16 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
             row_values.push(val);
         }
 
+        // Store metadata columns
+        let meta_values: Vec<String> = meta_col_indices
+            .iter()
+            .map(|&i| record.get(i).unwrap_or("").to_string())
+            .collect();
+
         clusters.push(cluster_name);
         present.push(present_set);
         cell_values.push(row_values);
+        metadata.push(meta_values);
     }
 
     info!(
@@ -138,6 +160,9 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         genomes,
         present,
         cell_values,
+        header: headers,
+        metadata,
+        genome_col_indices: genome_indices,
     })
 }
 

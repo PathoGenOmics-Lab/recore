@@ -82,10 +82,11 @@ pub fn run(args: &Args) -> Result<()> {
     }
 
     // ── 3. Load GFF annotations ──
+    // Load GFFs for ALL genomes (not just those with gaps) because synteny
+    // validation needs flanking genes from reference genomes where the gene IS present.
     let gff_indices: HashMap<usize, GffIndex> = if let Some(ref ann_dir) = args.annotations {
         let mut data = HashMap::new();
-        for &(gi, _) in &searchable_genomes {
-            let genome_name = &pa.genomes[gi];
+        for (gi, genome_name) in pa.genomes.iter().enumerate() {
             let gff_path = ann_dir.join(format!("{}.gff", genome_name));
             let alt_path = ann_dir.join(format!("{}.gff3", genome_name));
             let path = if gff_path.exists() {
@@ -297,23 +298,35 @@ pub fn run(args: &Args) -> Result<()> {
     let corrected_file = fs::File::create(&corrected_path)?;
     let corrected = BufWriter::new(corrected_file);
 
-    // Use csv::Writer for proper quoting of values with commas
+    // Write full CSV preserving ALL original columns (metadata + genome columns).
+    // Rebuild each row from metadata + (possibly rescued) genome values.
     let mut csv_writer = csv::Writer::from_writer(corrected);
-    {
-        let mut header = vec!["Gene".to_string()];
-        header.extend(pa.genomes.iter().cloned());
-        csv_writer.write_record(&header)?;
-    }
-    for (ci, cluster_name) in pa.clusters.iter().enumerate() {
-        let mut row = Vec::with_capacity(pa.genomes.len() + 1);
-        row.push(cluster_name.clone());
-        for gi in 0..pa.genomes.len() {
-            if let Some(r) = rescue_map.get(&(ci, gi)) {
-                row.push(format!("RESCUED:{}:{}-{}", r.contig, r.start, r.end));
-            } else {
-                row.push(pa.cell_values[ci][gi].clone());
+    csv_writer.write_record(&pa.header)?;
+
+    let genome_idx_set: ahash::HashSet<usize> = pa.genome_col_indices.iter().copied().collect();
+    let meta_col_indices: Vec<usize> = (0..pa.header.len())
+        .filter(|i| !genome_idx_set.contains(i))
+        .collect();
+
+    for ci in 0..pa.clusters.len() {
+        let mut row = vec![String::new(); pa.header.len()];
+
+        // Fill metadata columns
+        for (mi, &col_idx) in meta_col_indices.iter().enumerate() {
+            if mi < pa.metadata[ci].len() {
+                row[col_idx] = pa.metadata[ci][mi].clone();
             }
         }
+
+        // Fill genome columns (with rescue if applicable)
+        for (gi, &col_idx) in pa.genome_col_indices.iter().enumerate() {
+            if let Some(r) = rescue_map.get(&(ci, gi)) {
+                row[col_idx] = format!("RESCUED:{}:{}-{}", r.contig, r.start, r.end);
+            } else {
+                row[col_idx] = pa.cell_values[ci][gi].clone();
+            }
+        }
+
         csv_writer.write_record(&row)?;
     }
     csv_writer.flush()?;
