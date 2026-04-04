@@ -317,7 +317,7 @@ pub fn run(args: &Args) -> Result<()> {
             debug!(
                 "  {} in {} → {:?} (id={:.1}%, cov={:.1}%, conf={:.2}, synteny={:?})",
                 cluster_name, genome_name, r.rescue_type,
-                r.identity * 100.0, r.coverage * 100.0, r.confidence, r.synteny_ok
+                r.identity, r.coverage, r.confidence, r.synteny_ok
             );
         }
     }

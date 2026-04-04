@@ -178,6 +178,13 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
             let gene_id = gene_id.trim();
             if !gene_id.is_empty() {
                 map.insert(gene_id.to_string(), ci);
+                // Also index without _pseudo / _dup_N suffixes for GFF matching
+                if let Some(stripped) = gene_id.strip_suffix("_pseudo") {
+                    map.entry(stripped.to_string()).or_insert(ci);
+                }
+                if let Some(pos) = gene_id.rfind("_dup_") {
+                    map.entry(gene_id[..pos].to_string()).or_insert(ci);
+                }
             }
         }
     }
@@ -700,7 +707,18 @@ pub fn validate_synteny(
         }
         let ref_gene_id = ref_cell.split(';').next().unwrap_or(ref_cell).trim();
 
-        let Some(ref_gene) = ref_gff.get_by_id(ref_gene_id) else {
+        // Try exact ID first, then strip common suffixes (_pseudo, _dup_N)
+        let ref_gene = ref_gff.get_by_id(ref_gene_id)
+            .or_else(|| {
+                let stripped = ref_gene_id
+                    .strip_suffix("_pseudo")
+                    .or_else(|| {
+                        // Strip _dup_N suffix
+                        ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i])
+                    });
+                stripped.and_then(|s| ref_gff.get_by_id(s))
+            });
+        let Some(ref_gene) = ref_gene else {
             if verbose {
                 log::debug!(
                     "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
