@@ -9,7 +9,7 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 ## Features
 
 - **False absence rescue** — Recovers genes missed by pangenome graph cleaning, split across clusters, or fragmented by IS elements
-- **Diagnostic classification** — Every rescue is typed (DROPPED, SPLIT, FRAGMENTED, START_VARIANT, PARALOG, PSEUDOGENE) with confidence scoring
+- **Diagnostic classification** — Every rescue is typed (DROPPED, SPLIT, FRAGMENTED, ALIGNMENT_SPLIT, START_VARIANT, PARALOG, PSEUDOGENE) with confidence scoring
 - **Pseudogene detection** — Identifies disrupted genes: internal stop codons, frameshifts, partial deletions
 - **Nucleotide similarity clustering** — Merges Panaroo clusters that are redundant at the DNA level (split at AA but identical at nucleotide)
 - **Cluster relationship report** — Summarizes SPLIT/PARALOG/annotation-match/NSC evidence between clusters with reproducible collapse/review recommendations
@@ -199,7 +199,8 @@ contig `AS00146`. Original GFF files are not modified.
 |------|-------------|------|
 | **DROPPED** | Gene present but removed by graph cleaning | Full coverage hit, no annotation conflict |
 | **SPLIT** | Gene locus assigned to a different Panaroo cluster | Hit overlaps CDS from another cluster (≥95% id) |
-| **FRAGMENTED** | Gene broken into ≥2 fragments | Multiple hits, merged coverage ≥ threshold |
+| **FRAGMENTED** | Gene broken into ≥2 biological fragments | Co-linear multi-hit chain with a large query/target gap |
+| **ALIGNMENT_SPLIT** | Gene reconstructed by ≥2 alignments without biological break evidence | Small co-linear split alignments, reported separately from FRAGMENTED |
 | **START_VARIANT** | CDS present with different start codon | Length differs <300bp from overlapping CDS |
 | **PARALOG** | Hit overlaps a similar but distinct gene | Hit on CDS from another cluster (<95% id) |
 | **PSEUDOGENE** | Gene disrupted: no longer functional | Three sub-types (see below) |
@@ -239,6 +240,7 @@ recore_output/
 | `confidence` | Score for conflict resolution (0–1+) |
 | `synteny` | PASS/FAIL (if `--synteny`) |
 | `annotation_match` | Overlapping CDS gene ID (if `-a`) |
+| `fragment_*` | Fragment-chain evidence for multi-hit rescues: count, query/target gaps, colinearity, same-CDS support, and note |
 
 ### gene_presence_absence_recore.csv
 
@@ -295,7 +297,7 @@ Newtype wrappers (`ClusterIdx`, `GenomeIdx`) prevent index confusion at compile 
 |---------|---------------|--------|
 | Timing | During graph cleaning | Post-hoc (on final output) |
 | Aligner | BLAST | minimap2 (batch) |
-| Classification | Binary (found/not found) | 7 types with sub-classification |
+| Classification | Binary (found/not found) | 8 types with sub-classification |
 | Pseudogene detection | No | Yes (stops, frameshifts, deletions) |
 | Redundancy correction | No | NSC merges DNA-redundant clusters |
 | Validation | None | Synteny + conflict resolution |

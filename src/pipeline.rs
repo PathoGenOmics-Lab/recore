@@ -389,6 +389,7 @@ pub fn run(args: &Args) -> Result<()> {
     let mut dropped = 0usize;
     let mut split = 0usize;
     let mut fragmented = 0usize;
+    let mut alignment_split = 0usize;
     let mut start_variant = 0usize;
     let mut paralog = 0usize;
     let mut pseudogene = 0usize;
@@ -397,14 +398,15 @@ pub fn run(args: &Args) -> Result<()> {
             RescueType::Dropped => dropped += 1,
             RescueType::Split { .. } => split += 1,
             RescueType::Fragmented { .. } => fragmented += 1,
+            RescueType::AlignmentSplit { .. } => alignment_split += 1,
             RescueType::StartVariant { .. } => start_variant += 1,
             RescueType::Paralog { .. } => paralog += 1,
             RescueType::Pseudogene { .. } => pseudogene += 1,
         }
     }
     info!(
-        "Final rescues: {} (DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, START_VARIANT: {}, PARALOG: {}, PSEUDOGENE: {})",
-        rescues.len(), dropped, split, fragmented, start_variant, paralog, pseudogene
+        "Final rescues: {} (DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, ALIGNMENT_SPLIT: {}, START_VARIANT: {}, PARALOG: {}, PSEUDOGENE: {})",
+        rescues.len(), dropped, split, fragmented, alignment_split, start_variant, paralog, pseudogene
     );
 
     if args.verbose && !rescues.is_empty() {
@@ -509,6 +511,7 @@ pub fn run(args: &Args) -> Result<()> {
         dropped,
         split,
         fragmented,
+        alignment_split,
         start_variant,
         paralog,
         pseudogene,
@@ -565,12 +568,38 @@ fn write_report(
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match"
+        "gene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tfragment_n\tfragment_query_gap_bp\tfragment_target_gap_bp\tfragment_colinear\tfragment_same_cds\tfragment_note"
     )?;
     for r in rescues {
+        let frag = &r.fragment_evidence;
+        let fragment_n = if frag.n_fragments > 0 {
+            frag.n_fragments.to_string()
+        } else {
+            String::new()
+        };
+        let query_gap = if frag.n_fragments > 0 {
+            frag.total_query_gap_bp.to_string()
+        } else {
+            String::new()
+        };
+        let target_gap = if frag.n_fragments > 0 {
+            frag.total_target_gap_bp.to_string()
+        } else {
+            String::new()
+        };
+        let colinear = match frag.colinear {
+            Some(true) => "TRUE",
+            Some(false) => "FALSE",
+            None => "",
+        };
+        let same_cds = match frag.same_cds {
+            Some(true) => "TRUE",
+            Some(false) => "FALSE",
+            None => "",
+        };
         writeln!(
             w,
-            "{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}",
+            "{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             pa.cluster_name(r.cluster_idx),
             pa.genome_name(r.genome_idx),
             r.rescue_type,
@@ -587,6 +616,12 @@ fn write_report(
                 None => "",
             },
             r.annotation_match.as_deref().unwrap_or(""),
+            fragment_n,
+            query_gap,
+            target_gap,
+            colinear,
+            same_cds,
+            r.fragment_evidence.note.as_deref().unwrap_or(""),
         )?;
     }
     w.flush()?;
@@ -830,6 +865,23 @@ fn write_corrected_gffs(
             if let Some(annotation_match) = rescue.annotation_match.as_deref() {
                 attrs.push(format!("annotation_match={}", gff_escape(annotation_match)));
             }
+            if rescue.fragment_evidence.n_fragments > 0 {
+                attrs.push(format!(
+                    "fragment_n={}",
+                    rescue.fragment_evidence.n_fragments
+                ));
+                attrs.push(format!(
+                    "fragment_query_gap_bp={}",
+                    rescue.fragment_evidence.total_query_gap_bp
+                ));
+                attrs.push(format!(
+                    "fragment_target_gap_bp={}",
+                    rescue.fragment_evidence.total_target_gap_bp
+                ));
+                if let Some(note) = rescue.fragment_evidence.note.as_deref() {
+                    attrs.push(format!("fragment_note={}", gff_escape(note)));
+                }
+            }
             attrs.push("Note=Recore_rescue_feature".to_string());
 
             writeln!(
@@ -948,6 +1000,7 @@ struct SummaryStats {
     dropped: usize,
     split: usize,
     fragmented: usize,
+    alignment_split: usize,
     start_variant: usize,
     paralog: usize,
     pseudogene: usize,
@@ -1030,6 +1083,7 @@ fn write_summary(
     writeln!(w, "  DROPPED:       {}", stats.dropped)?;
     writeln!(w, "  SPLIT:         {}", stats.split)?;
     writeln!(w, "  FRAGMENTED:    {}", stats.fragmented)?;
+    writeln!(w, "  ALIGNMENT_SPLIT: {}", stats.alignment_split)?;
     writeln!(w, "  START_VARIANT: {}", stats.start_variant)?;
     writeln!(w, "  PARALOG:       {}", stats.paralog)?;
     writeln!(w, "  PSEUDOGENE:    {}", stats.pseudogene)?;

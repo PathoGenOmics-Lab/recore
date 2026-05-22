@@ -328,7 +328,7 @@ fn build_gene_cluster_map(
 mod tests {
     use super::*;
     use crate::parser::PresenceAbsence;
-    use crate::rescue::RescueType;
+    use crate::rescue::{FragmentEvidence, RescueType};
     use crate::types::{ClusterIdx, GenomeIdx};
     use tempfile::tempdir;
 
@@ -354,6 +354,7 @@ mod tests {
             annotation_match: Some("gene_b".into()),
             confidence: 1.1,
             synteny_ok: Some(true),
+            fragment_evidence: FragmentEvidence::default(),
         }];
         let dir = tempdir().unwrap();
         let n = write_cluster_relationships(&pa, &rescues, &None, dir.path()).unwrap();
@@ -383,6 +384,7 @@ mod tests {
             annotation_match: Some("gene_b".into()),
             confidence: 1.0,
             synteny_ok: None,
+            fragment_evidence: FragmentEvidence::default(),
         }];
         let dir = tempdir().unwrap();
         let n = write_cluster_relationships(&pa, &rescues, &None, dir.path()).unwrap();

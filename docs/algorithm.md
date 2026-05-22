@@ -114,7 +114,7 @@ Result: a HashMap from `(genome_idx, cluster_name)` → `Vec<Hit>`.
 
 ## Phase 6: Hit Classification
 
-Each (cluster, genome) gap with hits is classified into one of 7 rescue types. Classification follows three paths:
+Each (cluster, genome) gap with hits is classified into one of 8 rescue types. Classification follows three paths:
 
 ### Path 1: Single full-coverage hit (≥ min_coverage)
 
@@ -130,13 +130,18 @@ The best hit (by query length, then score) covers ≥80% of the reference sequen
 
 After initial classification, DROPPED hits undergo **start variant detection**: if the hit has ≥98% identity and a GFF gene within 300bp length difference overlaps ≥80% of the hit, it's reclassified as START_VARIANT.
 
-### Path 2: Fragment assembly (same contig, ≥2 fragments)
+### Path 2: Conservative fragment-chain assembly (same allele, contig, and strand)
 
-If no single hit has sufficient coverage, hits on the same contig are merged. Query intervals are sorted, overlaps are merged, and total coverage is computed per allele (the best allele is used).
+If no single hit has sufficient coverage, hits are first grouped by query allele, query length, target contig, and strand. Recore builds the best co-linear chain within each group and uses only the best chain. This prevents independent alleles or paralogous hits from being merged into a false fragmented gene.
 
-If merged coverage ≥ min_coverage with ≥2 fragments:
-- **Frameshift detection**: if average identity ≥ 95% and gaps between fragments are ≤50bp and NOT divisible by 3 → PSEUDOGENE:Frameshift
-- Otherwise → FRAGMENTED
+If the best chain reaches `--min-coverage` with ≥2 fragments:
+- Non-co-linear chains are not rescued as fragments.
+- If the whole chain lies inside one compatible CDS, Recore classifies it through the single-CDS annotation logic (DROPPED, START_VARIANT, SPLIT, or PARALOG) instead of calling FRAGMENTED.
+- If average identity is ≥95% and a small gap is not divisible by 3, the event is classified as PSEUDOGENE:Frameshift.
+- If the chain has a large query or target gap (≥50 bp), the event is classified as FRAGMENTED.
+- Otherwise, the event is classified as ALIGNMENT_SPLIT: the gene is reconstructed by multiple alignments, but the evidence does not support a biological break.
+
+Fragment-chain evidence is written to `rescue_report.tsv` for auditability.
 
 ### Path 3: Partial deletion pseudogene
 
@@ -223,7 +228,7 @@ Uses MMseqs2 `linclust` for linear-time clustering with alignment-based identity
 
 ### rescue_report.tsv
 
-One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, annotation_match.
+One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, annotation_match, plus fragment-chain evidence columns for multi-hit rescues.
 
 ### gene_presence_absence_recore.csv
 
@@ -260,7 +265,8 @@ NSC-merged clusters are excluded from the count (their presences are absorbed in
 |------|------|-------------------|
 | DROPPED | Gene present in genome but cleaned by Panaroo graph cleaning | 1.0× (base) |
 | SPLIT | Gene assigned to wrong Panaroo cluster (≥95% identity to another cluster's gene) | 1.1× |
-| FRAGMENTED | Gene broken into ≥2 fragments with combined coverage ≥80% | 0.8× |
+| FRAGMENTED | Gene broken into ≥2 fragments with combined coverage ≥80% and a large biological gap | 0.8× |
+| ALIGNMENT_SPLIT | Gene reconstructed by ≥2 small co-linear alignments without biological break evidence | 0.9× |
 | START_VARIANT | Same gene with different start codon (≤300bp length difference) | 0.95× |
 | PARALOG | Cross-match to a related gene family (<95% identity) | 0.7× |
 | PSEUDOGENE:InternalStop | Internal stop codon(s) in the best reading frame | 0.5× |

@@ -16,6 +16,11 @@ pub enum RescueType {
         n_fragments: usize,
         total_coverage: f64,
     },
+    /// Multiple minimap2 hits reconstruct the gene but lack evidence of biological disruption.
+    AlignmentSplit {
+        n_fragments: usize,
+        total_coverage: f64,
+    },
     /// Start site variant: gene is there but with a different start annotation.
     StartVariant { length_diff_bp: i64 },
     /// Gene hit overlaps a paralog from a different cluster (identity <95%).
@@ -47,6 +52,16 @@ impl std::fmt::Display for RescueType {
                 write!(
                     f,
                     "FRAGMENTED:{}frags:{:.0}%cov",
+                    n_fragments, total_coverage
+                )
+            }
+            RescueType::AlignmentSplit {
+                n_fragments,
+                total_coverage,
+            } => {
+                write!(
+                    f,
+                    "ALIGNMENT_SPLIT:{}frags:{:.0}%cov",
                     n_fragments, total_coverage
                 )
             }
@@ -83,6 +98,19 @@ pub struct RescueEvent {
     pub annotation_match: Option<String>,
     pub confidence: f64,
     pub synteny_ok: Option<bool>,
+    pub fragment_evidence: FragmentEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FragmentEvidence {
+    pub n_fragments: usize,
+    pub total_query_gap_bp: u64,
+    pub max_query_gap_bp: u64,
+    pub total_target_gap_bp: u64,
+    pub max_target_gap_bp: u64,
+    pub colinear: Option<bool>,
+    pub same_cds: Option<bool>,
+    pub note: Option<String>,
 }
 
 // ── GFF index ──
@@ -208,6 +236,30 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
 
 // ── Fragment analysis ──
 
+const BIOLOGICAL_FRAGMENT_MIN_GAP_BP: u64 = 50;
+
+#[derive(Debug, Clone)]
+struct FragmentChain {
+    hits: Vec<Hit>,
+    coverage: f64,
+    avg_identity: f64,
+    n_fragments: usize,
+    contig: String,
+    strand: char,
+    start: u64,
+    end: u64,
+    evidence: FragmentEvidence,
+}
+
+#[derive(Debug, Clone)]
+struct ChainSegment {
+    query_start: u64,
+    query_end: u64,
+    target_start: u64,
+    target_end: u64,
+}
+
+#[cfg(test)]
 fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
     if hits.is_empty() {
         return (0.0, 0);
@@ -255,29 +307,230 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
     (best_coverage, best_fragments)
 }
 
-// ── Start-site variant detection ──
-
-fn detect_start_variant(hit: &Hit, gff_index: Option<&GffIndex>) -> Option<(i64, String)> {
-    let gff = gff_index?;
-
-    if hit.identity() < 98.0 || hit.query_coverage() < 90.0 {
+fn build_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
+    let first = *hits.first()?;
+    if first.query_length == 0 {
         return None;
     }
 
-    let overlapping = gff.overlapping(&hit.target, hit.target_start, hit.target_end);
-    let hit_len = (hit.target_end - hit.target_start) as f64;
+    let mut sorted: Vec<&Hit> = hits.to_vec();
+    sorted.sort_by(|a, b| {
+        a.query_start
+            .cmp(&b.query_start)
+            .then(a.query_end.cmp(&b.query_end))
+            .then(a.target_start.cmp(&b.target_start))
+            .then(a.target_end.cmp(&b.target_end))
+    });
 
-    let target_aln_len = (hit.target_end - hit.target_start) as i64;
+    let mut segments: Vec<ChainSegment> = Vec::new();
+    for hit in &sorted {
+        if let Some(last) = segments.last_mut() {
+            if hit.query_start <= last.query_end {
+                last.query_end = last.query_end.max(hit.query_end);
+                last.target_start = last.target_start.min(hit.target_start);
+                last.target_end = last.target_end.max(hit.target_end);
+                continue;
+            }
+        }
+        segments.push(ChainSegment {
+            query_start: hit.query_start,
+            query_end: hit.query_end,
+            target_start: hit.target_start,
+            target_end: hit.target_end,
+        });
+    }
+
+    let covered: u64 = segments.iter().map(|s| s.query_end - s.query_start).sum();
+    let coverage = (covered as f64 / first.query_length as f64) * 100.0;
+    let n_fragments = segments.len();
+
+    let mut total_query_gap_bp = 0u64;
+    let mut max_query_gap_bp = 0u64;
+    let mut total_target_gap_bp = 0u64;
+    let mut max_target_gap_bp = 0u64;
+    let mut colinear = true;
+
+    for pair in segments.windows(2) {
+        let prev = &pair[0];
+        let next = &pair[1];
+        let query_gap = next.query_start.saturating_sub(prev.query_end);
+        total_query_gap_bp += query_gap;
+        max_query_gap_bp = max_query_gap_bp.max(query_gap);
+
+        let target_gap = if first.strand == '-' {
+            if next.target_end <= prev.target_start {
+                prev.target_start - next.target_end
+            } else {
+                colinear = false;
+                0
+            }
+        } else if next.target_start >= prev.target_end {
+            next.target_start - prev.target_end
+        } else {
+            colinear = false;
+            0
+        };
+        total_target_gap_bp += target_gap;
+        max_target_gap_bp = max_target_gap_bp.max(target_gap);
+    }
+
+    let total_matches: u64 = sorted.iter().map(|h| h.matches).sum();
+    let total_aln: u64 = sorted.iter().map(|h| h.alignment_length).sum();
+    let avg_identity = if total_aln > 0 {
+        (total_matches as f64 / total_aln as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let start = sorted.iter().map(|h| h.target_start).min().unwrap_or(0);
+    let end = sorted.iter().map(|h| h.target_end).max().unwrap_or(0);
+
+    Some(FragmentChain {
+        hits: sorted.into_iter().cloned().collect(),
+        coverage,
+        avg_identity,
+        n_fragments,
+        contig: first.target.clone(),
+        strand: first.strand,
+        start,
+        end,
+        evidence: FragmentEvidence {
+            n_fragments,
+            total_query_gap_bp,
+            max_query_gap_bp,
+            total_target_gap_bp,
+            max_target_gap_bp,
+            colinear: Some(colinear),
+            same_cds: None,
+            note: None,
+        },
+    })
+}
+
+fn best_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
+    let mut groups: HashMap<(String, u64, String, char), Vec<&Hit>> = HashMap::new();
+    for hit in hits {
+        groups
+            .entry((
+                hit.query.clone(),
+                hit.query_length,
+                hit.target.clone(),
+                hit.strand,
+            ))
+            .or_default()
+            .push(*hit);
+    }
+
+    groups
+        .into_values()
+        .filter_map(|group_hits| build_fragment_chain(&group_hits))
+        .max_by(|a, b| {
+            a.coverage
+                .total_cmp(&b.coverage)
+                .then_with(|| a.avg_identity.total_cmp(&b.avg_identity))
+                .then_with(|| b.n_fragments.cmp(&a.n_fragments))
+                .then_with(|| {
+                    b.evidence
+                        .max_target_gap_bp
+                        .cmp(&a.evidence.max_target_gap_bp)
+                })
+        })
+}
+
+fn compatible_single_cds<'a>(
+    chain: &FragmentChain,
+    gff_index: Option<&'a GffIndex>,
+) -> Option<&'a GffGene> {
+    let gff = gff_index?;
+    let overlapping = gff.overlapping(&chain.contig, chain.start, chain.end);
+    let span_len = chain.end.saturating_sub(chain.start) as f64;
+
+    for gene in overlapping {
+        let gene_len = gene.end.saturating_sub(gene.start) as i64;
+        let span_len_i = chain.end.saturating_sub(chain.start) as i64;
+        if (gene_len - span_len_i).unsigned_abs() >= 300 {
+            continue;
+        }
+
+        let span_overlap = chain
+            .end
+            .min(gene.end)
+            .saturating_sub(chain.start.max(gene.start));
+        if span_len > 0.0 && (span_overlap as f64 / span_len) < 0.8 {
+            continue;
+        }
+
+        let all_hits_in_gene = chain.hits.iter().all(|hit| {
+            let hit_len = hit.target_end.saturating_sub(hit.target_start) as f64;
+            let overlap = hit
+                .target_end
+                .min(gene.end)
+                .saturating_sub(hit.target_start.max(gene.start)) as f64;
+            hit_len > 0.0 && overlap / hit_len >= 0.8
+        });
+        if all_hits_in_gene {
+            return Some(gene);
+        }
+    }
+
+    None
+}
+
+fn classify_matched_gene(
+    matched_gene_id: &str,
+    identity: f64,
+    coverage: f64,
+    ci: ClusterIdx,
+    pa: &PresenceAbsence,
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
+) -> (RescueType, f64) {
+    let base_confidence = identity / 100.0 * coverage / 100.0;
+    if let Some(&other_ci) = gene_to_cluster.get(matched_gene_id) {
+        if other_ci != ci {
+            if identity >= 95.0 {
+                return (
+                    RescueType::Split {
+                        other_cluster: pa.cluster_name(other_ci).to_string(),
+                    },
+                    base_confidence * 1.1,
+                );
+            }
+            return (
+                RescueType::Paralog {
+                    other_cluster: pa.cluster_name(other_ci).to_string(),
+                },
+                base_confidence * 0.7,
+            );
+        }
+    }
+    (RescueType::Dropped, base_confidence)
+}
+
+fn detect_start_variant_from_span(
+    identity: f64,
+    coverage: f64,
+    contig: &str,
+    start: u64,
+    end: u64,
+    gff_index: Option<&GffIndex>,
+) -> Option<(i64, String)> {
+    let gff = gff_index?;
+
+    if identity < 98.0 || coverage < 90.0 {
+        return None;
+    }
+
+    let overlapping = gff.overlapping(contig, start, end);
+    let hit_len = end.saturating_sub(start) as f64;
+    let target_aln_len = end.saturating_sub(start) as i64;
 
     for gene in &overlapping {
         let gene_len = (gene.end - gene.start) as i64;
-        // Compare GFF gene length vs actual alignment footprint on the genome,
-        // NOT the full query length (which may differ due to soft-clipping, partial alignment).
         let diff = gene_len - target_aln_len;
 
         if diff.unsigned_abs() < 300 && diff != 0 {
-            let overlap_start = hit.target_start.max(gene.start);
-            let overlap_end = hit.target_end.min(gene.end);
+            let overlap_start = start.max(gene.start);
+            let overlap_end = end.min(gene.end);
             let overlap = overlap_end.saturating_sub(overlap_start) as f64;
 
             if hit_len > 0.0 && overlap / hit_len > 0.8 {
@@ -287,6 +540,19 @@ fn detect_start_variant(hit: &Hit, gff_index: Option<&GffIndex>) -> Option<(i64,
     }
 
     None
+}
+
+// ── Start-site variant detection ──
+
+fn detect_start_variant(hit: &Hit, gff_index: Option<&GffIndex>) -> Option<(i64, String)> {
+    detect_start_variant_from_span(
+        hit.identity(),
+        hit.query_coverage(),
+        &hit.target,
+        hit.target_start,
+        hit.target_end,
+        gff_index,
+    )
 }
 
 // ── Main classification ──
@@ -351,72 +617,133 @@ pub fn classify_hits(
             annotation_match: final_ann,
             confidence: final_conf,
             synteny_ok: None,
+            fragment_evidence: FragmentEvidence::default(),
         });
     }
 
-    // ── Path 2: Fragment assembly (same contig only) ──
-    let primary_contig = &best.target;
-    let same_contig_hits: Vec<&Hit> = sorted_hits
-        .iter()
-        .filter(|h| h.target == *primary_contig)
-        .copied()
-        .collect();
+    // ── Path 2: Conservative fragment chain (same allele, contig and strand) ──
+    let best_chain = best_fragment_chain(&sorted_hits);
+    if let Some(mut chain) = best_chain.clone() {
+        if chain.coverage >= min_coverage && chain.n_fragments >= 2 {
+            if chain.evidence.colinear != Some(true) {
+                return None;
+            }
 
-    let (total_coverage, n_fragments) = merged_query_coverage(&same_contig_hits);
-    if total_coverage >= min_coverage && n_fragments >= 2 {
-        let avg_identity: f64 = same_contig_hits.iter().map(|h| h.identity()).sum::<f64>()
-            / same_contig_hits.len() as f64;
+            if let Some(gene) = compatible_single_cds(&chain, gff_index) {
+                chain.evidence.same_cds = Some(true);
+                chain.evidence.note = Some("same_cds_alignment_split".to_string());
+                let (rescue_type, annotation_match, confidence) = {
+                    let (rescue_type, confidence) = classify_matched_gene(
+                        &gene.gene_id,
+                        chain.avg_identity,
+                        chain.coverage,
+                        ci,
+                        pa,
+                        gene_to_cluster,
+                    );
+                    (rescue_type, Some(gene.gene_id.clone()), confidence)
+                };
 
-        // SAFETY: same_contig_hits is non-empty (filtered from sorted_hits which has ≥1 element)
-        let frag_start = same_contig_hits
-            .iter()
-            .map(|h| h.target_start)
-            .min()
-            .expect("same_contig_hits guaranteed non-empty by coverage check");
-        let frag_end = same_contig_hits
-            .iter()
-            .map(|h| h.target_end)
-            .max()
-            .expect("same_contig_hits guaranteed non-empty by coverage check");
+                let (final_type, final_ann, final_conf) = if matches!(
+                    rescue_type,
+                    RescueType::Dropped
+                ) {
+                    if let Some((length_diff, matched_gene_id)) = detect_start_variant_from_span(
+                        chain.avg_identity,
+                        chain.coverage,
+                        &chain.contig,
+                        chain.start,
+                        chain.end,
+                        gff_index,
+                    ) {
+                        (
+                            RescueType::StartVariant {
+                                length_diff_bp: length_diff,
+                            },
+                            Some(matched_gene_id),
+                            chain.avg_identity / 100.0 * 0.95,
+                        )
+                    } else {
+                        (rescue_type, annotation_match, confidence)
+                    }
+                } else {
+                    (rescue_type, annotation_match, confidence)
+                };
 
-        // ── Frameshift detection ──
-        // If fragments have high identity (≥95%) and gaps between them are small (≤30bp)
-        // and NOT divisible by 3, this is likely a frameshift pseudogene.
-        let is_frameshift = avg_identity >= 95.0
-            && n_fragments >= 2
-            && detect_frameshift_pattern(&same_contig_hits);
+                return Some(RescueEvent {
+                    cluster_idx: ci,
+                    genome_idx: gi,
+                    rescue_type: final_type,
+                    identity: chain.avg_identity,
+                    coverage: chain.coverage,
+                    contig: chain.contig,
+                    start: chain.start,
+                    end: chain.end,
+                    strand: chain.strand,
+                    annotation_match: final_ann,
+                    confidence: final_conf,
+                    synteny_ok: None,
+                    fragment_evidence: chain.evidence,
+                });
+            }
 
-        let (rescue_type, confidence) = if is_frameshift {
-            (
-                RescueType::Pseudogene {
-                    reason: PseudogeneReason::Frameshift,
-                },
-                (avg_identity / 100.0) * (total_coverage / 100.0) * 0.5,
-            )
-        } else {
-            (
-                RescueType::Fragmented {
-                    n_fragments,
-                    total_coverage,
-                },
-                (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8,
-            )
-        };
+            chain.evidence.same_cds = Some(false);
 
-        return Some(RescueEvent {
-            cluster_idx: ci,
-            genome_idx: gi,
-            rescue_type,
-            identity: avg_identity,
-            coverage: total_coverage,
-            contig: primary_contig.clone(),
-            start: frag_start,
-            end: frag_end,
-            strand: best.strand,
-            annotation_match: None,
-            confidence,
-            synteny_ok: None,
-        });
+            // If fragments have high identity and small target gaps not divisible by 3,
+            // this is stronger evidence for pseudogenization than generic fragmentation.
+            let chain_refs: Vec<&Hit> = chain.hits.iter().collect();
+            let is_frameshift = chain.avg_identity >= 95.0
+                && chain.n_fragments >= 2
+                && detect_frameshift_pattern(&chain_refs);
+
+            let has_large_gap = chain.evidence.max_target_gap_bp >= BIOLOGICAL_FRAGMENT_MIN_GAP_BP
+                || chain.evidence.max_query_gap_bp >= BIOLOGICAL_FRAGMENT_MIN_GAP_BP;
+
+            let (rescue_type, confidence, note) = if is_frameshift {
+                (
+                    RescueType::Pseudogene {
+                        reason: PseudogeneReason::Frameshift,
+                    },
+                    (chain.avg_identity / 100.0) * (chain.coverage / 100.0) * 0.5,
+                    "frameshift_gap",
+                )
+            } else if has_large_gap {
+                (
+                    RescueType::Fragmented {
+                        n_fragments: chain.n_fragments,
+                        total_coverage: chain.coverage,
+                    },
+                    (chain.avg_identity / 100.0) * (chain.coverage / 100.0) * 0.8,
+                    "biological_gap",
+                )
+            } else {
+                (
+                    RescueType::AlignmentSplit {
+                        n_fragments: chain.n_fragments,
+                        total_coverage: chain.coverage,
+                    },
+                    (chain.avg_identity / 100.0) * (chain.coverage / 100.0) * 0.9,
+                    "alignment_split",
+                )
+            };
+            chain.evidence.note = Some(note.to_string());
+
+            return Some(RescueEvent {
+                cluster_idx: ci,
+                genome_idx: gi,
+                rescue_type,
+                identity: chain.avg_identity,
+                coverage: chain.coverage,
+                contig: chain.contig,
+                start: chain.start,
+                end: chain.end,
+                strand: chain.strand,
+                annotation_match: None,
+                confidence,
+                synteny_ok: None,
+                fragment_evidence: chain.evidence,
+            });
+        }
     }
 
     // ── Path 3: Pseudogene — partial deletion ──
@@ -424,13 +751,33 @@ pub fn classify_hits(
     // This is below min_coverage so Path 1 didn't catch it, but biologically informative.
     if best.identity() >= 90.0 {
         let cov = best.query_coverage();
-        // Also check fragment coverage for multi-fragment partial hits
-        let effective_cov = if same_contig_hits.len() >= 2 {
-            total_coverage
+        let effective_cov = if let Some(chain) = &best_chain {
+            if chain.evidence.colinear == Some(true) {
+                chain.coverage
+            } else {
+                cov
+            }
         } else {
             cov
         };
         if effective_cov >= 60.0 && effective_cov < min_coverage {
+            let (contig, start, end, strand, fragment_evidence) = if let Some(chain) = best_chain {
+                (
+                    chain.contig,
+                    chain.start,
+                    chain.end,
+                    chain.strand,
+                    chain.evidence,
+                )
+            } else {
+                (
+                    best.target.clone(),
+                    best.target_start,
+                    best.target_end,
+                    best.strand,
+                    FragmentEvidence::default(),
+                )
+            };
             return Some(RescueEvent {
                 cluster_idx: ci,
                 genome_idx: gi,
@@ -441,13 +788,14 @@ pub fn classify_hits(
                 },
                 identity: best.identity(),
                 coverage: effective_cov,
-                contig: best.target.clone(),
-                start: best.target_start,
-                end: best.target_end,
-                strand: best.strand,
+                contig,
+                start,
+                end,
+                strand,
                 annotation_match: None,
                 confidence: (best.identity() / 100.0) * (effective_cov / 100.0) * 0.4,
                 synteny_ok: None,
+                fragment_evidence,
             });
         }
     }
@@ -1098,6 +1446,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.99,
                 synteny_ok: None,
+                fragment_evidence: FragmentEvidence::default(),
             },
             RescueEvent {
                 cluster_idx: ClusterIdx(1),
@@ -1112,6 +1461,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.85,
                 synteny_ok: None,
+                fragment_evidence: FragmentEvidence::default(),
             },
         ];
         resolve_conflicts(&mut rescues);
@@ -1135,6 +1485,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.99,
                 synteny_ok: None,
+                fragment_evidence: FragmentEvidence::default(),
             },
             RescueEvent {
                 cluster_idx: ClusterIdx(1),
@@ -1149,6 +1500,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.85,
                 synteny_ok: None,
+                fragment_evidence: FragmentEvidence::default(),
             },
         ];
         resolve_conflicts(&mut rescues);
@@ -1497,6 +1849,14 @@ mod tests {
             "FRAGMENTED:3frags:96%cov"
         );
         assert_eq!(
+            RescueType::AlignmentSplit {
+                n_fragments: 2,
+                total_coverage: 98.8
+            }
+            .to_string(),
+            "ALIGNMENT_SPLIT:2frags:99%cov"
+        );
+        assert_eq!(
             RescueType::StartVariant {
                 length_diff_bp: -42
             }
@@ -1709,5 +2069,168 @@ mod tests {
             }
             other => panic!("Expected Pseudogene:PartialDeletion, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_alignment_split_for_small_colinear_gaps() {
+        let h1 = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 495,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 495,
+            matches: 495,
+            alignment_length: 495,
+            mapq: 60,
+        };
+        let h2 = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 504,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 504,
+            target_end: 1000,
+            matches: 495,
+            alignment_length: 495,
+            mapq: 60,
+        };
+        let pa = PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(
+            &[h1, h2],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            None,
+            &g2c,
+            80.0,
+        )
+        .unwrap();
+        match result.rescue_type {
+            RescueType::AlignmentSplit { n_fragments, .. } => assert_eq!(n_fragments, 2),
+            other => panic!("Expected AlignmentSplit, got {:?}", other),
+        }
+        assert_eq!(result.fragment_evidence.max_target_gap_bp, 9);
+        assert_eq!(
+            result.fragment_evidence.note.as_deref(),
+            Some("alignment_split")
+        );
+    }
+
+    #[test]
+    fn test_fragment_chain_inside_same_cds_is_not_fragmented() {
+        let h1 = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 400,
+            strand: '+',
+            target: "c".into(),
+            target_start: 100,
+            target_end: 500,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
+        };
+        let h2 = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 600,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 700,
+            target_end: 1100,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
+        };
+        let gff = GffIndex::build(vec![GffGene {
+            contig: "c".into(),
+            start: 100,
+            end: 1100,
+            strand: '+',
+            gene_id: "gene1".into(),
+        }]);
+        let pa = PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(
+            &[h1, h2],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            Some(&gff),
+            &g2c,
+            80.0,
+        )
+        .unwrap();
+        assert!(matches!(result.rescue_type, RescueType::Dropped));
+        assert_eq!(result.annotation_match.as_deref(), Some("gene1"));
+        assert_eq!(result.fragment_evidence.same_cds, Some(true));
+    }
+
+    #[test]
+    fn test_non_colinear_fragments_are_not_rescued() {
+        let h1 = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 400,
+            strand: '+',
+            target: "c".into(),
+            target_start: 1000,
+            target_end: 1400,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
+        };
+        let h2 = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 600,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 500,
+            target_end: 900,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
+        };
+        let pa = PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(
+            &[h1, h2],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            None,
+            &g2c,
+            80.0,
+        );
+        assert!(result.is_none());
     }
 }

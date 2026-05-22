@@ -24,14 +24,21 @@ Primary output. One row per rescued gene. Tab-separated.
 | `confidence` | float | Combined quality score (0–1.2+); see [algorithm](algorithm.md#confidence-score) |
 | `synteny` | string | `PASS`, `FAIL`, or empty (not assessed) |
 | `annotation_match` | string | GFF gene ID that overlapped the rescue region, if any |
+| `fragment_n` | int | Number of fragments in the selected multi-hit chain, if applicable |
+| `fragment_query_gap_bp` | int | Total query-space gap across the selected fragment chain |
+| `fragment_target_gap_bp` | int | Total target-space gap across the selected fragment chain |
+| `fragment_colinear` | bool | Whether fragments are co-linear on the target |
+| `fragment_same_cds` | bool | Whether the chain is contained in one compatible CDS |
+| `fragment_note` | string | Fragment interpretation, such as `alignment_split`, `biological_gap`, `frameshift_gap`, or `same_cds_alignment_split` |
 
 ### Example
 
 ```tsv
-gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	annotation_match
-group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	Rv0210c
-group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	Rv1099c
-group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	Rv2651c
+gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	annotation_match	fragment_n	fragment_query_gap_bp	fragment_target_gap_bp	fragment_colinear	fragment_same_cds	fragment_note
+group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	Rv0210c	NA	NA	NA	NA	NA	NA
+group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	Rv1099c	NA	NA	NA	NA	NA	NA
+group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	Rv2651c	NA	NA	NA	NA	NA	NA
+group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS		2	9	9	true	false	alignment_split
 ```
 
 ### Filtering suggestions
@@ -134,6 +141,7 @@ Rescue types:
   DROPPED:       378
   SPLIT:         206
   FRAGMENTED:    0
+  ALIGNMENT_SPLIT: 12
   START_VARIANT: 60
   PARALOG:       113
   PSEUDOGENE:    190
@@ -199,6 +207,10 @@ Appended rescue features use source `Recore`, type `CDS`, and include:
 | `confidence` | Recore confidence score |
 | `synteny` | `PASS`, `FAIL`, or `NA` |
 | `annotation_match` | Original GFF feature ID overlapped by the rescue, if any |
+| `fragment_n` | Number of fragments in the selected multi-hit chain, if applicable |
+| `fragment_query_gap_bp` | Total query-space gap across the fragment chain |
+| `fragment_target_gap_bp` | Total target-space gap across the fragment chain |
+| `fragment_note` | Fragment interpretation, if applicable |
 
 These GFFs are designed as auditable corrected annotations. If a rescue overlaps
 an existing feature, the original feature is preserved and the appended Recore

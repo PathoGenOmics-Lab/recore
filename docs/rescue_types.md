@@ -1,6 +1,8 @@
 # Rescue Types
 
-Recore classifies each rescued gene into one of 7 types based on the alignment evidence and GFF annotation context.
+Recore classifies each rescued gene into one of 8 types based on the alignment evidence and GFF annotation context.
+
+Examples below show the core `rescue_report.tsv` columns; see [output_files.md](output_files.md) for the full schema, including fragment evidence columns.
 
 ---
 
@@ -38,9 +40,9 @@ The value after `SPLIT:` is the cluster that actually contains the annotation.
 
 ## FRAGMENTED
 
-**What it means:** The gene is broken into multiple pieces in this genome. Common causes are assembly breaks (contig boundaries), IS element insertions, or large indels that split the reading frame.
+**What it means:** The gene is broken into multiple biological pieces in this genome. Common causes are assembly breaks (contig boundaries), IS element insertions, or large indels that split the reading frame.
 
-**Evidence:** ≥2 hits on the same contig whose merged coverage reaches ≥80% of the reference, but no single hit crosses the coverage threshold.
+**Evidence:** A co-linear chain of ≥2 hits from the same query allele, target contig, and strand whose merged coverage reaches ≥80% of the reference, with a large query or target gap (≥50 bp). Non-co-linear chains are not rescued as FRAGMENTED, and chains contained inside one compatible CDS are classified through the single-CDS annotation logic instead.
 
 **Confidence:** `avg_identity × total_coverage × 0.8`
 
@@ -50,6 +52,23 @@ geneZ   genome3   FRAGMENTED:2frags:87%cov   97.2   87.4   contig_3   112000   1
 ```
 
 The `start` and `end` coordinates span from the first to the last fragment.
+
+---
+
+## ALIGNMENT_SPLIT
+
+**What it means:** The gene is reconstructed by multiple minimap2 alignments, but the evidence does not support a biological gene break. This is usually an alignment or representation split rather than a functional disruption.
+
+**Evidence:** A co-linear multi-hit chain reaches the coverage threshold, but the query and target gaps are small (<50 bp), no frameshift-like gap is detected, and the chain is not better explained as a single-CDS annotation match.
+
+**Confidence:** `avg_identity × total_coverage × 0.9`
+
+**Example:**
+```
+geneZ   genome3   ALIGNMENT_SPLIT:2frags:98%cov   99.6   98.4   contig_3   112000   113400   +   0.882   PASS
+```
+
+These events are reported separately so downstream analyses can avoid treating technical split alignments as biological fragmentation.
 
 ---
 
@@ -155,7 +174,7 @@ A value close to 1.0 indicates a high-confidence rescue. Values below ~0.5 shoul
 When two rescues overlap on the genome, the one with higher confidence wins. Because of the type modifiers, the natural priority order is:
 
 ```
-SPLIT > DROPPED ≈ START_VARIANT > FRAGMENTED > PARALOG > PSEUDOGENE:InternalStop ≈ PSEUDOGENE:Frameshift > PSEUDOGENE:PartialDeletion
+SPLIT > DROPPED ≈ START_VARIANT > ALIGNMENT_SPLIT > FRAGMENTED > PARALOG > PSEUDOGENE:InternalStop ≈ PSEUDOGENE:Frameshift > PSEUDOGENE:PartialDeletion
 ```
 
 This prevents a PARALOG cross-match from overwriting a genuine DROPPED rescue at the same locus.
