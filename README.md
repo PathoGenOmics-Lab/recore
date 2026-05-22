@@ -12,7 +12,9 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 - **Diagnostic classification** — Every rescue is typed (DROPPED, SPLIT, FRAGMENTED, START_VARIANT, PARALOG, PSEUDOGENE) with confidence scoring
 - **Pseudogene detection** — Identifies disrupted genes: internal stop codons, frameshifts, partial deletions
 - **Nucleotide similarity clustering** — Merges Panaroo clusters that are redundant at the DNA level (split at AA but identical at nucleotide)
+- **Cluster relationship report** — Summarizes SPLIT/PARALOG/annotation-match/NSC evidence between clusters with reproducible collapse/review recommendations
 - **Synteny validation** — Optional flanking gene comparison to confirm orthology
+- **Corrected GFF export** — Optional per-genome GFF3 files with rescued CDS features appended
 - **Batch architecture** — One minimap2 invocation for all genomes, streamed PAF, rayon parallelism
 
 ## How it works
@@ -110,6 +112,7 @@ recore \
 | `-a annotations/` | GFF directory — enables SPLIT, START_VARIANT, PARALOG, and PSEUDOGENE classification (not just DROPPED) |
 | `--synteny` | Validates rescues by comparing flanking gene context — rejects spurious paralog rescues |
 | `--multi-allele` | Queries all allelic variants per cluster instead of just the longest — more sensitive for diverse datasets |
+| `--write-corrected-gff` | Writes per-genome GFF3 files with Recore rescue features appended |
 | `--nscluster` | Merges Panaroo clusters that are identical at the DNA level but were split at the amino-acid level — reduces inflated accessory genome |
 | `--nsc-engine mmseqs2` | Alignment-based clustering (exact) instead of MinHash (approximate) — requires [MMseqs2](https://github.com/soedinglab/MMseqs2) in PATH |
 | `--nsc-min-seq-id 0.9` | 90% nucleotide identity threshold for merging redundant clusters |
@@ -165,6 +168,7 @@ recore \
 | `--min-prevalence` | 0.1 | Skip clusters present in fewer genomes |
 | `--multi-allele` | off | Query all alleles per cluster (slower, more sensitive) |
 | `--synteny` | off | Validate rescues by flanking gene conservation |
+| `--write-corrected-gff` | off | Write `corrected_gff/*.recore.gff3` files with rescue features appended |
 
 ### Nucleotide similarity clustering
 
@@ -202,7 +206,9 @@ recore \
 recore_output/
 ├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
 ├── rescue_report.tsv                  # Per-rescue details
+├── cluster_relationships.tsv          # Inter-cluster rescue/NSC relationships
 ├── nscluster_report.tsv               # NS cluster memberships (if --nscluster)
+├── corrected_gff/                     # Per-genome GFF3s (if --write-corrected-gff)
 └── summary.txt                        # Statistics
 ```
 

@@ -4,6 +4,7 @@ mod parser;
 mod search;
 mod rescue;
 mod nscluster;
+mod relationships;
 mod pipeline;
 
 use anyhow::Result;

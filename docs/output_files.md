@@ -79,6 +79,39 @@ This file can be used directly as input to downstream tools that accept Panaroo'
 
 ---
 
+## cluster_relationships.tsv
+
+Written for every run. The file may contain only the header when no inter-cluster relationships are detected.
+
+This table summarizes reproducible evidence that one Panaroo cluster is related
+to another. It is intended as an audit layer: Recore reports relationships and
+recommendations, but only nucleotide similarity clustering (`--nscluster`) changes
+the output matrix automatically.
+
+### Columns
+
+| Column | Description |
+|--------|-------------|
+| `query_cluster` | Cluster being rescued or reviewed |
+| `related_cluster` | Cluster linked by SPLIT/PARALOG or NSC evidence |
+| `relationship_type` | `split`, `paralog`, `annotation_match_cluster`, or `nucleotide_similarity_cluster` |
+| `evidence_type` | Specific rescue type or `nscluster` |
+| `n_genomes_supporting` | Number of genomes supporting the relationship |
+| `synteny_support` | `pass`, `fail`, `mixed`, or `not_tested` |
+| `identity_*` | Minimum, median and maximum nucleotide identity across supporting rescues |
+| `coverage_*` | Minimum, median and maximum query coverage across supporting rescues |
+| `recommendation` | Conservative interpretation: `collapse_alias`, `review_alias_without_full_synteny`, `review_split`, `review_annotation_match`, or `review_paralog_keep_distinct_by_default` |
+| `example_regions` | Up to five genome/region examples |
+
+### Interpretation
+
+- `collapse_alias`: near-complete, high-identity, synteny-supported evidence that the query is not an independent cluster.
+- `review_alias_without_full_synteny`: high sequence support, but synteny is absent, mixed, or not tested.
+- `review_annotation_match`: the rescued locus overlaps a feature already assigned to another cluster; inspect as a possible naming or boundary issue.
+- `review_paralog_keep_distinct_by_default`: related sequence family member; keep distinct unless additional evidence supports collapse.
+
+---
+
 ## summary.txt
 
 Human-readable run summary. Example:
@@ -142,6 +175,34 @@ NS_1	group_0441	2	group_0441;group_0442
 ```
 
 These clusters had nearly identical nucleotide sequences but were split by Panaroo due to amino acid-level differences (typically from upstream annotation artifacts).
+
+---
+
+## corrected_gff/*.recore.gff3
+
+Written only when `--write-corrected-gff` is enabled.
+
+For each genome with at least one rescue, Recore writes a GFF3 file under
+`corrected_gff/`. If an original GFF was supplied with `--annotations`, its
+records are preserved and Recore appends rescued CDS features. If no original
+GFF is available for a rescued genome, the file contains only the appended
+rescue features.
+
+Appended rescue features use source `Recore`, type `CDS`, and include:
+
+| Attribute | Description |
+|-----------|-------------|
+| `gene_cluster` | Panaroo/Recore cluster name |
+| `rescue_type` | Rescue classification |
+| `identity` | Nucleotide identity (%) |
+| `coverage` | Query coverage (%) |
+| `confidence` | Recore confidence score |
+| `synteny` | `PASS`, `FAIL`, or `NA` |
+| `annotation_match` | Original GFF feature ID overlapped by the rescue, if any |
+
+These GFFs are designed as auditable corrected annotations. If a rescue overlaps
+an existing feature, the original feature is preserved and the appended Recore
+feature records the rescue evidence explicitly.
 
 ---
 

@@ -48,7 +48,8 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     // gB sequence: 100bp gene
     let gene_b = "ATGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGATCGTAA";
     // gC sequence: 80bp gene
-    let gene_c = "ATGCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTGA";
+    let gene_c =
+        "ATGCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTGA";
 
     write_file(base, "pan_ref.fa", &format!(
         ">gA\nATGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGTAA\n\
@@ -85,12 +86,19 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     // ── Run Recore ──
     let status = std::process::Command::new(env!("CARGO_BIN_EXE_recore"))
         .args([
-            "-p", base.join("pa.csv").to_str().unwrap(),
-            "-r", base.join("pan_ref.fa").to_str().unwrap(),
-            "-g", genomes_dir.to_str().unwrap(),
-            "-o", output_dir.to_str().unwrap(),
-            "-t", "1",
-            "--min-prevalence", "0.0",
+            "-p",
+            base.join("pa.csv").to_str().unwrap(),
+            "-r",
+            base.join("pan_ref.fa").to_str().unwrap(),
+            "-g",
+            genomes_dir.to_str().unwrap(),
+            "-o",
+            output_dir.to_str().unwrap(),
+            "-t",
+            "1",
+            "--min-prevalence",
+            "0.0",
+            "--write-corrected-gff",
         ])
         .status()
         .expect("Failed to run recore binary");
@@ -100,31 +108,57 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     // ── Verify outputs exist ──
     assert!(output_dir.join("gene_presence_absence_recore.csv").exists());
     assert!(output_dir.join("rescue_report.tsv").exists());
+    assert!(output_dir.join("cluster_relationships.tsv").exists());
     assert!(output_dir.join("summary.txt").exists());
+    assert!(output_dir
+        .join("corrected_gff")
+        .join("s2.recore.gff3")
+        .exists());
 
     // ── Verify rescue report ──
     let report = fs::read_to_string(output_dir.join("rescue_report.tsv")).unwrap();
     let lines: Vec<&str> = report.lines().collect();
-    assert!(lines.len() >= 2, "rescue_report should have header + at least 1 rescue");
-    assert!(lines[0].contains("gene_cluster"), "header should contain gene_cluster");
+    assert!(
+        lines.len() >= 2,
+        "rescue_report should have header + at least 1 rescue"
+    );
+    assert!(
+        lines[0].contains("gene_cluster"),
+        "header should contain gene_cluster"
+    );
 
     // gB should be rescued in s2 and s3
     let gb_rescues: Vec<&&str> = lines.iter().filter(|l| l.starts_with("gB\t")).collect();
-    assert!(gb_rescues.len() >= 2, "gB should be rescued in s2 and s3, got {}", gb_rescues.len());
+    assert!(
+        gb_rescues.len() >= 2,
+        "gB should be rescued in s2 and s3, got {}",
+        gb_rescues.len()
+    );
 
     // ── Verify corrected CSV ──
-    let csv_content = fs::read_to_string(output_dir.join("gene_presence_absence_recore.csv")).unwrap();
+    let csv_content =
+        fs::read_to_string(output_dir.join("gene_presence_absence_recore.csv")).unwrap();
     let csv_lines: Vec<&str> = csv_content.lines().collect();
     assert_eq!(csv_lines.len(), 4, "header + 3 clusters");
 
     // Check that rescued cells contain "RESCUED:"
     let gb_row = csv_lines.iter().find(|l| l.starts_with("gB")).unwrap();
-    assert!(gb_row.contains("RESCUED:"), "gB row should have RESCUED cells: {}", gb_row);
+    assert!(
+        gb_row.contains("RESCUED:"),
+        "gB row should have RESCUED cells: {}",
+        gb_row
+    );
 
     // ── Verify summary ──
     let summary = fs::read_to_string(output_dir.join("summary.txt")).unwrap();
     assert!(summary.contains("Rescued:"));
     assert!(summary.contains("Core genome"));
+
+    // ── Verify corrected GFF ──
+    let gff_content =
+        fs::read_to_string(output_dir.join("corrected_gff").join("s2.recore.gff3")).unwrap();
+    assert!(gff_content.contains("Recore\tCDS"));
+    assert!(gff_content.contains("gene_cluster=gB"));
 
     // ── Verify report is sorted (reproducibility) ──
     let data_lines: Vec<&str> = lines[1..].to_vec();
@@ -132,8 +166,12 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
         for pair in data_lines.windows(2) {
             let a_cluster: &str = pair[0].split('\t').next().unwrap();
             let b_cluster: &str = pair[1].split('\t').next().unwrap();
-            assert!(a_cluster <= b_cluster,
-                "rescue_report should be sorted by cluster: {} > {}", a_cluster, b_cluster);
+            assert!(
+                a_cluster <= b_cluster,
+                "rescue_report should be sorted by cluster: {} > {}",
+                a_cluster,
+                b_cluster
+            );
         }
     }
 }

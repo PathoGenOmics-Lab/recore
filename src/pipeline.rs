@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::fs;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 
 use crate::cli::Args;
 use crate::nscluster;
@@ -10,10 +11,10 @@ use crate::parser::{
     find_genome_files, parse_gff_genes, parse_pan_reference, parse_presence_absence,
     validate_inputs,
 };
+use crate::relationships::write_cluster_relationships;
 use crate::rescue::{
-    build_gene_to_cluster, check_internal_stops_in_hit, classify_hits,
-    resolve_conflicts, validate_synteny,
-    GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
+    build_gene_to_cluster, check_internal_stops_in_hit, classify_hits, resolve_conflicts,
+    validate_synteny, GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
 };
 use crate::search::batch_search;
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -59,9 +60,15 @@ pub fn run(args: &Args) -> Result<()> {
     let core_before = pa.core_size();
     info!(
         "Gaps: {} total, {} after prevalence filter (≥{:.0}%), {} skipped",
-        total_gaps, filtered_gaps, min_prevalence * 100.0, skipped_by_prevalence
+        total_gaps,
+        filtered_gaps,
+        min_prevalence * 100.0,
+        skipped_by_prevalence
     );
-    info!("Core genome (before): {} / {} clusters", core_before, n_clusters);
+    info!(
+        "Core genome (before): {} / {} clusters",
+        core_before, n_clusters
+    );
 
     // ── 3. Filter to genomes with FASTA files ──
     let mut searchable_genomes: Vec<(GenomeIdx, Vec<ClusterIdx>)> = Vec::new();
@@ -79,13 +86,17 @@ pub fn run(args: &Args) -> Result<()> {
         }
     }
     if missing_genomes > 0 {
-        warn!("{} genomes with gaps have no FASTA file (skipped)", missing_genomes);
+        warn!(
+            "{} genomes with gaps have no FASTA file (skipped)",
+            missing_genomes
+        );
         for name in &missing_names {
             debug!("  Missing FASTA: {}", name);
         }
     }
 
     // ── 4. Load GFF annotations ──
+    let mut gff_paths: HashMap<GenomeIdx, PathBuf> = HashMap::new();
     let gff_indices: HashMap<GenomeIdx, GffIndex> = if let Some(ref ann_dir) = args.annotations {
         let mut data = HashMap::new();
         for gi_val in 0..n_genomes {
@@ -106,10 +117,15 @@ pub fn run(args: &Args) -> Result<()> {
                     let genes: Vec<GffGene> = raw_genes
                         .into_iter()
                         .map(|(contig, start, end, strand, gene_id)| GffGene {
-                            contig, start, end, strand, gene_id,
+                            contig,
+                            start,
+                            end,
+                            strand,
+                            gene_id,
                         })
                         .collect();
                     data.insert(gi, GffIndex::build(genes));
+                    gff_paths.insert(gi, path.clone());
                 }
                 Err(e) => warn!("Cannot parse GFF for {}: {}", genome_name, e),
             }
@@ -120,7 +136,11 @@ pub fn run(args: &Args) -> Result<()> {
             info!("Loaded GFF annotations for {} genomes", loaded);
         }
         if missing > 0 && loaded > 0 {
-            warn!("{} genomes have no matching GFF file in {}", missing, ann_dir.display());
+            warn!(
+                "{} genomes have no matching GFF file in {}",
+                missing,
+                ann_dir.display()
+            );
             if args.verbose {
                 let mut shown = 0;
                 for gi_val in 0..n_genomes {
@@ -137,7 +157,11 @@ pub fn run(args: &Args) -> Result<()> {
             }
         } else if loaded == 0 {
             warn!("No GFF files found in {} — synteny and annotation-based classification will be skipped", ann_dir.display());
-            warn!("Expected files like: {}.gff or {}.gff3", pa.genome_name(GenomeIdx(0)), pa.genome_name(GenomeIdx(0)));
+            warn!(
+                "Expected files like: {}.gff or {}.gff3",
+                pa.genome_name(GenomeIdx(0)),
+                pa.genome_name(GenomeIdx(0))
+            );
         }
         data
     } else {
@@ -148,11 +172,13 @@ pub fn run(args: &Args) -> Result<()> {
     let gene_to_cluster_maps: HashMap<GenomeIdx, HashMap<String, ClusterIdx>> = {
         let mut maps = HashMap::new();
         for (gi, _) in &searchable_genomes {
-            maps.entry(*gi).or_insert_with(|| build_gene_to_cluster(&pa, *gi));
+            maps.entry(*gi)
+                .or_insert_with(|| build_gene_to_cluster(&pa, *gi));
         }
         if args.synteny {
             for &gi in gff_indices.keys() {
-                maps.entry(gi).or_insert_with(|| build_gene_to_cluster(&pa, gi));
+                maps.entry(gi)
+                    .or_insert_with(|| build_gene_to_cluster(&pa, gi));
             }
         }
         maps
@@ -211,34 +237,49 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 7b. Internal stop codon scanning for DROPPED rescues ──
     // Load genome sequences on-demand for rescued genomes only
     {
-        let rescued_genomes: ahash::HashSet<GenomeIdx> = rescues.iter()
+        let rescued_genomes: ahash::HashSet<GenomeIdx> = rescues
+            .iter()
             .filter(|r| matches!(r.rescue_type, RescueType::Dropped))
             .map(|r| r.genome_idx)
             .collect();
 
         if !rescued_genomes.is_empty() {
-            info!("Scanning {} genomes for internal stop codons in DROPPED rescues...",
-                  rescued_genomes.len());
+            info!(
+                "Scanning {} genomes for internal stop codons in DROPPED rescues...",
+                rescued_genomes.len()
+            );
             let mut upgraded = 0usize;
 
             for gi in &rescued_genomes {
                 let genome_name = pa.genome_name(*gi);
-                let Some(fasta_path) = genome_files.get(genome_name) else { continue };
-                let Ok(contigs) = crate::parser::load_genome_contigs(fasta_path) else { continue };
+                let Some(fasta_path) = genome_files.get(genome_name) else {
+                    continue;
+                };
+                let Ok(contigs) = crate::parser::load_genome_contigs(fasta_path) else {
+                    continue;
+                };
 
                 for rescue in rescues.iter_mut() {
-                    if rescue.genome_idx != *gi || !matches!(rescue.rescue_type, RescueType::Dropped) {
+                    if rescue.genome_idx != *gi
+                        || !matches!(rescue.rescue_type, RescueType::Dropped)
+                    {
                         continue;
                     }
                     if let Some(n_stops) = check_internal_stops_in_hit(
                         // Build a minimal hit from rescue coords for the check
                         &crate::search::Hit {
-                            query: String::new(), cluster: String::new(),
-                            query_length: 0, query_start: 0, query_end: 0,
+                            query: String::new(),
+                            cluster: String::new(),
+                            query_length: 0,
+                            query_start: 0,
+                            query_end: 0,
                             strand: rescue.strand,
                             target: rescue.contig.clone(),
-                            target_start: rescue.start, target_end: rescue.end,
-                            matches: 0, alignment_length: 0, mapq: 0,
+                            target_start: rescue.start,
+                            target_end: rescue.end,
+                            matches: 0,
+                            alignment_length: 0,
+                            mapq: 0,
                         },
                         Some(&contigs),
                     ) {
@@ -252,7 +293,10 @@ pub fn run(args: &Args) -> Result<()> {
             }
 
             if upgraded > 0 {
-                info!("Upgraded {} DROPPED rescues to PSEUDOGENE:internal_stop", upgraded);
+                info!(
+                    "Upgraded {} DROPPED rescues to PSEUDOGENE:internal_stop",
+                    upgraded
+                );
             }
         }
     }
@@ -261,12 +305,27 @@ pub fn run(args: &Args) -> Result<()> {
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
         for rescue in &mut rescues {
-            validate_synteny(rescue, &pa, &gff_indices, &gene_to_cluster_maps, args.verbose);
+            validate_synteny(
+                rescue,
+                &pa,
+                &gff_indices,
+                &gene_to_cluster_maps,
+                args.verbose,
+            );
         }
-        let validated = rescues.iter().filter(|r| r.synteny_ok == Some(true)).count();
-        let failed = rescues.iter().filter(|r| r.synteny_ok == Some(false)).count();
+        let validated = rescues
+            .iter()
+            .filter(|r| r.synteny_ok == Some(true))
+            .count();
+        let failed = rescues
+            .iter()
+            .filter(|r| r.synteny_ok == Some(false))
+            .count();
         let skipped = rescues.iter().filter(|r| r.synteny_ok.is_none()).count();
-        info!("Synteny: {} validated, {} failed, {} skipped (no flanking genes found)", validated, failed, skipped);
+        info!(
+            "Synteny: {} validated, {} failed, {} skipped (no flanking genes found)",
+            validated, failed, skipped
+        );
         if validated == 0 && failed == 0 && skipped > 0 {
             warn!("Synteny could not validate any rescue. Possible causes:");
             warn!("  - GFF gene IDs don't match the IDs in Panaroo's CSV cells");
@@ -283,7 +342,9 @@ pub fn run(args: &Args) -> Result<()> {
     if before_conflicts != rescues.len() {
         info!(
             "Conflict resolution: {} → {} rescues ({} conflicts resolved)",
-            before_conflicts, rescues.len(), before_conflicts - rescues.len()
+            before_conflicts,
+            rescues.len(),
+            before_conflicts - rescues.len()
         );
     }
 
@@ -316,8 +377,13 @@ pub fn run(args: &Args) -> Result<()> {
             let genome_name = pa.genome_name(r.genome_idx);
             debug!(
                 "  {} in {} → {:?} (id={:.1}%, cov={:.1}%, conf={:.2}, synteny={:?})",
-                cluster_name, genome_name, r.rescue_type,
-                r.identity, r.coverage, r.confidence, r.synteny_ok
+                cluster_name,
+                genome_name,
+                r.rescue_type,
+                r.identity,
+                r.coverage,
+                r.confidence,
+                r.synteny_ok
             );
         }
     }
@@ -330,8 +396,11 @@ pub fn run(args: &Args) -> Result<()> {
 
         let result = match args.nsc_engine.as_str() {
             "mmseqs2" => {
-                info!("Running NSC with mmseqs2 linclust (min_id={:.0}%, cov={:.0}%)...",
-                      args.nsc_min_seq_id * 100.0, args.nsc_coverage * 100.0);
+                info!(
+                    "Running NSC with mmseqs2 linclust (min_id={:.0}%, cov={:.0}%)...",
+                    args.nsc_min_seq_id * 100.0,
+                    args.nsc_coverage * 100.0
+                );
                 nscluster::run_nscluster_mmseqs2(
                     &pan_ref,
                     pa.cluster_names(),
@@ -342,8 +411,10 @@ pub fn run(args: &Args) -> Result<()> {
                 )?
             }
             _ => {
-                info!("Running NSC with MinHash (k={}, threshold={:.2})...",
-                      args.nsc_kmer_size, args.nsc_threshold);
+                info!(
+                    "Running NSC with MinHash (k={}, threshold={:.2})...",
+                    args.nsc_kmer_size, args.nsc_threshold
+                );
                 nscluster::run_nscluster(
                     &pan_ref,
                     pa.cluster_names(),
@@ -356,9 +427,10 @@ pub fn run(args: &Args) -> Result<()> {
         };
 
         if result.n_clusters > 0 {
-            info!("NSC: {} clusters merged into {} NS groups ({} genes total)",
-                  result.total_merged_genes, result.n_clusters,
-                  result.total_merged_genes);
+            info!(
+                "NSC: {} clusters merged into {} NS groups ({} genes total)",
+                result.total_merged_genes, result.n_clusters, result.total_merged_genes
+            );
         } else {
             info!("NSC: no redundant clusters found");
         }
@@ -372,7 +444,8 @@ pub fn run(args: &Args) -> Result<()> {
 
     // Sort rescues for deterministic output order regardless of thread scheduling
     rescues.sort_by(|a, b| {
-        a.cluster_idx.cmp(&b.cluster_idx)
+        a.cluster_idx
+            .cmp(&b.cluster_idx)
             .then(a.genome_idx.cmp(&b.genome_idx))
     });
 
@@ -383,6 +456,13 @@ pub fn run(args: &Args) -> Result<()> {
 
     write_report(&rescues, &pa, &args.output)?;
     write_corrected_csv(&pa, &rescue_map, &args.output, &nsc_result)?;
+    let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
+    if n_relationships > 0 {
+        info!("Cluster relationships: {} rows", n_relationships);
+    }
+    if args.write_corrected_gff {
+        write_corrected_gffs(&rescues, &pa, &gff_paths, &args.output)?;
+    }
 
     let stats = SummaryStats {
         core_before,
@@ -397,9 +477,19 @@ pub fn run(args: &Args) -> Result<()> {
         pseudogene,
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
-        nsc_merged_genes: nsc_result.as_ref().map(|r| r.total_merged_genes).unwrap_or(0),
+        nsc_merged_genes: nsc_result
+            .as_ref()
+            .map(|r| r.total_merged_genes)
+            .unwrap_or(0),
     };
-    write_summary(&pa, &rescue_map, &rescues, &stats, &nsc_result, &args.output)?;
+    write_summary(
+        &pa,
+        &rescue_map,
+        &rescues,
+        &stats,
+        &nsc_result,
+        &args.output,
+    )?;
 
     // Write NSC report if clusters were merged
     if let Some(ref nsc) = nsc_result {
@@ -413,8 +503,14 @@ pub fn run(args: &Args) -> Result<()> {
     let core_diff = core_after as i64 - core_before as i64;
     let soft_core_before = pa.soft_core_size();
     let soft_diff = soft_core_after as i64 - soft_core_before as i64;
-    info!("Core genome: {} → {} ({:+})", core_before, core_after, core_diff);
-    info!("Soft-core (≥95%): {} → {} ({:+})", soft_core_before, soft_core_after, soft_diff);
+    info!(
+        "Core genome: {} → {} ({:+})",
+        core_before, core_after, core_diff
+    );
+    info!(
+        "Soft-core (≥95%): {} → {} ({:+})",
+        soft_core_before, soft_core_after, soft_diff
+    );
     info!("Output: {}", args.output.display());
 
     Ok(())
@@ -444,7 +540,7 @@ fn write_report(
             r.identity,
             r.coverage,
             r.contig,
-            r.start + 1,  // convert 0-based to 1-based for TSV output
+            r.start + 1, // convert 0-based to 1-based for TSV output
             r.end,
             r.strand,
             r.confidence,
@@ -481,7 +577,10 @@ fn write_corrected_csv(
                 |ci, gi| pa.is_present(ci, gi),
                 pa.n_genomes(),
             );
-            updates.into_iter().map(|(ci, gi)| (ci.val(), gi.val())).collect()
+            updates
+                .into_iter()
+                .map(|(ci, gi)| (ci.val(), gi.val()))
+                .collect()
         })
         .unwrap_or_default();
     let path = output_dir.join("gene_presence_absence_recore.csv");
@@ -491,15 +590,17 @@ fn write_corrected_csv(
 
     csv_writer.write_record(pa.header())?;
 
-    let genome_idx_set: ahash::HashSet<usize> =
-        pa.genome_col_indices().iter().copied().collect();
+    let genome_idx_set: ahash::HashSet<usize> = pa.genome_col_indices().iter().copied().collect();
     let meta_col_indices: Vec<usize> = (0..pa.header().len())
         .filter(|i| !genome_idx_set.contains(i))
         .collect();
 
     let isolates_col = pa.header().iter().position(|h| h == "No. isolates");
     let sequences_col = pa.header().iter().position(|h| h == "No. sequences");
-    let avg_seq_col = pa.header().iter().position(|h| h == "Avg sequences per isolate");
+    let avg_seq_col = pa
+        .header()
+        .iter()
+        .position(|h| h == "Avg sequences per isolate");
 
     let n_cols = pa.header().len();
     let mut row: Vec<String> = vec![String::new(); n_cols];
@@ -550,24 +651,164 @@ fn write_corrected_csv(
             use std::fmt::Write as FmtWrite;
             if let Some(col) = isolates_col {
                 row[col].clear();
-                write!(row[col], "{}", new_count)
-                    .expect("write to String is infallible");
+                write!(row[col], "{}", new_count).expect("write to String is infallible");
             }
             if let Some(col) = sequences_col {
                 row[col].clear();
-                write!(row[col], "{}", new_count)
-                    .expect("write to String is infallible");
+                write!(row[col], "{}", new_count).expect("write to String is infallible");
             }
             if let Some(col) = avg_seq_col {
                 row[col].clear();
-                write!(row[col], "1.00")
-                    .expect("write to String is infallible");
+                write!(row[col], "1.00").expect("write to String is infallible");
             }
         }
 
         csv_writer.write_record(row.iter().map(|s| s.as_str()))?;
     }
     csv_writer.flush()?;
+    Ok(())
+}
+
+fn read_text_maybe_gzip(path: &std::path::Path) -> Result<String> {
+    use std::io::Read;
+
+    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
+    let mut text = String::new();
+    if path.extension().is_some_and(|e| e == "gz") {
+        let mut decoder = flate2::read::GzDecoder::new(file);
+        decoder.read_to_string(&mut text)?;
+    } else {
+        let mut reader = std::io::BufReader::new(file);
+        reader.read_to_string(&mut text)?;
+    }
+    Ok(text)
+}
+
+fn gff_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '%' => out.push_str("%25"),
+            ';' => out.push_str("%3B"),
+            '=' => out.push_str("%3D"),
+            ',' => out.push_str("%2C"),
+            '\t' => out.push_str("%09"),
+            '\n' | '\r' => out.push(' '),
+            ' ' => out.push_str("%20"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn safe_id_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn write_corrected_gffs(
+    rescues: &[RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    gff_paths: &HashMap<GenomeIdx, PathBuf>,
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let gff_dir = output_dir.join("corrected_gff");
+    fs::create_dir_all(&gff_dir)?;
+
+    let mut by_genome: HashMap<GenomeIdx, Vec<&RescueEvent>> = HashMap::new();
+    for rescue in rescues {
+        by_genome.entry(rescue.genome_idx).or_default().push(rescue);
+    }
+
+    let mut genome_indices: Vec<GenomeIdx> = by_genome.keys().copied().collect();
+    genome_indices.sort();
+
+    for gi in genome_indices {
+        let genome_name = pa.genome_name(gi);
+        let path = gff_dir.join(format!("{}.recore.gff3", genome_name));
+        let file = fs::File::create(&path)?;
+        let mut w = BufWriter::new(file);
+
+        if let Some(source_gff) = gff_paths.get(&gi) {
+            let original = read_text_maybe_gzip(source_gff)?;
+            if original.trim_start().starts_with("##gff-version") {
+                write!(w, "{}", original)?;
+            } else {
+                writeln!(w, "##gff-version 3")?;
+                write!(w, "{}", original)?;
+            }
+            if !original.ends_with('\n') {
+                writeln!(w)?;
+            }
+        } else {
+            writeln!(w, "##gff-version 3")?;
+        }
+
+        writeln!(w, "###")?;
+        writeln!(w, "# Recore rescue features appended below")?;
+
+        let mut rows = by_genome.remove(&gi).unwrap_or_default();
+        rows.sort_by(|a, b| {
+            a.contig
+                .cmp(&b.contig)
+                .then(a.start.cmp(&b.start))
+                .then(a.end.cmp(&b.end))
+                .then(a.cluster_idx.cmp(&b.cluster_idx))
+        });
+
+        for rescue in rows {
+            let cluster = pa.cluster_name(rescue.cluster_idx);
+            let feature_id = format!(
+                "recore_{}_{}_{}_{}",
+                safe_id_component(cluster),
+                safe_id_component(&rescue.contig),
+                rescue.start + 1,
+                rescue.end
+            );
+            let synteny = match rescue.synteny_ok {
+                Some(true) => "PASS",
+                Some(false) => "FAIL",
+                None => "NA",
+            };
+            let mut attrs = vec![
+                format!("ID={}", gff_escape(&feature_id)),
+                format!("gene_cluster={}", gff_escape(cluster)),
+                format!(
+                    "rescue_type={}",
+                    gff_escape(&rescue.rescue_type.to_string())
+                ),
+                format!("identity={:.1}", rescue.identity),
+                format!("coverage={:.1}", rescue.coverage),
+                format!("confidence={:.3}", rescue.confidence),
+                format!("synteny={}", synteny),
+            ];
+            if let Some(annotation_match) = rescue.annotation_match.as_deref() {
+                attrs.push(format!("annotation_match={}", gff_escape(annotation_match)));
+            }
+            attrs.push("Note=Recore_rescue_feature".to_string());
+
+            writeln!(
+                w,
+                "{}\tRecore\tCDS\t{}\t{}\t.\t{}\t0\t{}",
+                rescue.contig,
+                rescue.start + 1,
+                rescue.end,
+                rescue.strand,
+                attrs.join(";")
+            )?;
+        }
+        w.flush()?;
+    }
+
+    info!("Corrected GFF3 files written to {}", gff_dir.display());
     Ok(())
 }
 
@@ -580,8 +821,12 @@ fn count_core_after(
     let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
         .as_ref()
         .map(|r| {
-            let (_, updates) = nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
-            updates.into_iter().map(|(ci, gi)| (ci.val(), gi.val())).collect()
+            let (_, updates) =
+                nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
+            updates
+                .into_iter()
+                .map(|(ci, gi)| (ci.val(), gi.val()))
+                .collect()
         })
         .unwrap_or_default();
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
@@ -589,19 +834,27 @@ fn count_core_after(
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
         .unwrap_or_default();
 
-    (0..pa.n_clusters()).filter(|&ci_val| {
-        if clusters_to_skip.contains(&ci_val) { return false; }
-        let ci = ClusterIdx(ci_val);
-        let present = pa.present_count(ci);
-        if present == n { return true; }
-        let extra = (0..n).filter(|&gi_val| {
-            let gi = GenomeIdx(gi_val);
-            !pa.is_present(ci, gi)
-                && (rescue_map.contains_key(&(ci, gi))
-                    || nsc_presence.contains(&(ci_val, gi_val)))
-        }).count();
-        present + extra == n
-    }).count()
+    (0..pa.n_clusters())
+        .filter(|&ci_val| {
+            if clusters_to_skip.contains(&ci_val) {
+                return false;
+            }
+            let ci = ClusterIdx(ci_val);
+            let present = pa.present_count(ci);
+            if present == n {
+                return true;
+            }
+            let extra = (0..n)
+                .filter(|&gi_val| {
+                    let gi = GenomeIdx(gi_val);
+                    !pa.is_present(ci, gi)
+                        && (rescue_map.contains_key(&(ci, gi))
+                            || nsc_presence.contains(&(ci_val, gi_val)))
+                })
+                .count();
+            present + extra == n
+        })
+        .count()
 }
 
 fn count_soft_core_after(
@@ -614,8 +867,12 @@ fn count_soft_core_after(
     let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
         .as_ref()
         .map(|r| {
-            let (_, updates) = nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
-            updates.into_iter().map(|(ci, gi)| (ci.val(), gi.val())).collect()
+            let (_, updates) =
+                nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
+            updates
+                .into_iter()
+                .map(|(ci, gi)| (ci.val(), gi.val()))
+                .collect()
         })
         .unwrap_or_default();
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
@@ -623,19 +880,27 @@ fn count_soft_core_after(
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
         .unwrap_or_default();
 
-    (0..pa.n_clusters()).filter(|&ci_val| {
-        if clusters_to_skip.contains(&ci_val) { return false; }
-        let ci = ClusterIdx(ci_val);
-        let present = pa.present_count(ci);
-        if present >= threshold { return true; }
-        let extra = (0..n).filter(|&gi_val| {
-            let gi = GenomeIdx(gi_val);
-            !pa.is_present(ci, gi)
-                && (rescue_map.contains_key(&(ci, gi))
-                    || nsc_presence.contains(&(ci_val, gi_val)))
-        }).count();
-        present + extra >= threshold
-    }).count()
+    (0..pa.n_clusters())
+        .filter(|&ci_val| {
+            if clusters_to_skip.contains(&ci_val) {
+                return false;
+            }
+            let ci = ClusterIdx(ci_val);
+            let present = pa.present_count(ci);
+            if present >= threshold {
+                return true;
+            }
+            let extra = (0..n)
+                .filter(|&gi_val| {
+                    let gi = GenomeIdx(gi_val);
+                    !pa.is_present(ci, gi)
+                        && (rescue_map.contains_key(&(ci, gi))
+                            || nsc_presence.contains(&(ci_val, gi_val)))
+                })
+                .count();
+            present + extra >= threshold
+        })
+        .count()
 }
 
 struct SummaryStats {
@@ -664,13 +929,19 @@ fn write_nsc_report(
     let mut w = BufWriter::new(file);
     writeln!(w, "ns_cluster\trepresentative\tn_members\tmembers")?;
     for (i, nsc_cl) in nsc.merged_clusters.iter().enumerate() {
-        let member_names: Vec<&str> = nsc_cl.members
+        let member_names: Vec<&str> = nsc_cl
+            .members
             .iter()
             .map(|ci| cluster_names[ci.val()].as_str())
             .collect();
-        writeln!(w, "NS_{}\t{}\t{}\t{}",
-                 i, nsc_cl.representative, nsc_cl.members.len(),
-                 member_names.join(";"))?;
+        writeln!(
+            w,
+            "NS_{}\t{}\t{}\t{}",
+            i,
+            nsc_cl.representative,
+            nsc_cl.members.len(),
+            member_names.join(";")
+        )?;
     }
     w.flush()?;
     Ok(())
@@ -699,12 +970,24 @@ fn write_summary(
     writeln!(w, "Gaps searched:         {}", stats.filtered_gaps)?;
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;
     writeln!(w, "Rescued:               {}", rescues.len())?;
-    writeln!(w, "Remaining gaps:        {}", stats.filtered_gaps - rescues.len())?;
+    writeln!(
+        w,
+        "Remaining gaps:        {}",
+        stats.filtered_gaps - rescues.len()
+    )?;
     writeln!(w)?;
     let core_diff = core_after as i64 - stats.core_before as i64;
     let soft_diff = soft_core_after as i64 - soft_core_before as i64;
-    writeln!(w, "Core genome (strict):  {} → {} ({:+})", stats.core_before, core_after, core_diff)?;
-    writeln!(w, "Soft-core (≥95%):      {} → {} ({:+})", soft_core_before, soft_core_after, soft_diff)?;
+    writeln!(
+        w,
+        "Core genome (strict):  {} → {} ({:+})",
+        stats.core_before, core_after, core_diff
+    )?;
+    writeln!(
+        w,
+        "Soft-core (≥95%):      {} → {} ({:+})",
+        soft_core_before, soft_core_after, soft_diff
+    )?;
     writeln!(w)?;
     writeln!(w, "Rescue types:")?;
     writeln!(w, "  DROPPED:       {}", stats.dropped)?;
@@ -714,8 +997,14 @@ fn write_summary(
     writeln!(w, "  PARALOG:       {}", stats.paralog)?;
     writeln!(w, "  PSEUDOGENE:    {}", stats.pseudogene)?;
     if stats.synteny_enabled {
-        let syn_pass = rescues.iter().filter(|r| r.synteny_ok == Some(true)).count();
-        let syn_fail = rescues.iter().filter(|r| r.synteny_ok == Some(false)).count();
+        let syn_pass = rescues
+            .iter()
+            .filter(|r| r.synteny_ok == Some(true))
+            .count();
+        let syn_fail = rescues
+            .iter()
+            .filter(|r| r.synteny_ok == Some(false))
+            .count();
         writeln!(w)?;
         writeln!(w, "Synteny validation:")?;
         writeln!(w, "  PASS:  {}", syn_pass)?;
@@ -726,7 +1015,11 @@ fn write_summary(
         writeln!(w, "Nucleotide similarity clustering:")?;
         writeln!(w, "  NS clusters:     {}", stats.nsc_clusters)?;
         writeln!(w, "  Genes merged:    {}", stats.nsc_merged_genes)?;
-        writeln!(w, "  Clusters removed: {}", stats.nsc_merged_genes - stats.nsc_clusters)?;
+        writeln!(
+            w,
+            "  Clusters removed: {}",
+            stats.nsc_merged_genes - stats.nsc_clusters
+        )?;
     }
     w.flush()?;
     Ok(())

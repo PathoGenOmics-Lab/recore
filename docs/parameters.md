@@ -36,6 +36,7 @@
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--synteny` | `false` | Validate each rescue by comparing flanking gene context to reference genomes. Requires `--annotations`. Boosts confidence of synteny-consistent rescues (×1.2) and penalizes inconsistent ones (×0.6). |
+| `--write-corrected-gff` | `false` | Write per-genome `corrected_gff/*.recore.gff3` files with rescued CDS features appended. Original GFF records are preserved when `--annotations` is provided. |
 
 ## Nucleotide Similarity Clustering
 

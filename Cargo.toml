@@ -1,6 +1,6 @@
 [package]
 name = "recore"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Paula Ruiz-Rodriguez <paula.ruiz.rodriguez@csic.es>"]
 description = "Post-hoc rescue of falsely absent genes in pangenome matrices"

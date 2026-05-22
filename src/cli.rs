@@ -57,8 +57,12 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub synteny: bool,
 
-    // ── Nucleotide Similarity Clustering ──
+    /// Write per-genome GFF3 files with Recore rescue features appended.
+    /// Original GFF records are preserved when --annotations is provided.
+    #[arg(long, default_value_t = false)]
+    pub write_corrected_gff: bool,
 
+    // ── Nucleotide Similarity Clustering ──
     /// Enable nucleotide similarity clustering to merge redundant Panaroo clusters.
     /// Detects clusters split at the AA level but identical at the DNA level.
     #[arg(long, default_value_t = false)]
