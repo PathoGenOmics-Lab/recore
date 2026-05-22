@@ -18,7 +18,7 @@ use crate::rescue::{
     build_gene_to_cluster, check_internal_stops_in_hit, classify_hits, resolve_conflicts,
     validate_synteny, GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
 };
-use crate::search::batch_search;
+use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
 
 pub fn run(args: &Args) -> Result<()> {
@@ -244,6 +244,57 @@ pub fn run(args: &Args) -> Result<()> {
         50,
     )?;
 
+    let reference_hit_candidates = if let Some(reference_genome) = args.reference_genome.as_deref()
+    {
+        if let Some(reference_gi) = resolve_reference_genome(&pa, reference_genome) {
+            let reference_name = pa.genome_name(reference_gi);
+            if genome_files.contains_key(reference_name) {
+                let reference_gaps: Vec<ClusterIdx> = (0..n_clusters)
+                    .map(ClusterIdx)
+                    .filter(|&ci| !pa.is_present(ci, reference_gi))
+                    .collect();
+                if reference_gaps.is_empty() {
+                    Vec::new()
+                } else {
+                    info!(
+                        "Running reference shadow audit for {} absent clusters in {}",
+                        reference_gaps.len(),
+                        reference_name
+                    );
+                    let reference_search = vec![(reference_gi, reference_gaps)];
+                    let reference_hits = batch_search(
+                        &pan_ref,
+                        &genome_files,
+                        &reference_search,
+                        pa.genome_names(),
+                        pa.cluster_names(),
+                        args.threads,
+                        args.min_identity,
+                        &args.preset,
+                        true,
+                        5000,
+                    )?;
+                    reference_hit_shadow_candidates(
+                        &reference_hits,
+                        &pa,
+                        &gff_indices,
+                        &gene_to_cluster_maps,
+                    )
+                }
+            } else {
+                warn!(
+                    "Reference shadow audit skipped for {}: no resolved FASTA file",
+                    reference_name
+                );
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     // ── 7. Classify hits (parallel) ──
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(args.threads)
@@ -285,19 +336,18 @@ pub fn run(args: &Args) -> Result<()> {
             missing_cds_chunk_size
         );
         let before = rescues.len();
-        let mut seen_missing: ahash::HashSet<(ClusterIdx, GenomeIdx, String, u64, u64)> =
-            rescues
-                .iter()
-                .map(|r| {
-                    (
-                        r.cluster_idx,
-                        r.genome_idx,
-                        r.contig.clone(),
-                        r.start,
-                        r.end,
-                    )
-                })
-                .collect();
+        let mut seen_missing: ahash::HashSet<(ClusterIdx, GenomeIdx, String, u64, u64)> = rescues
+            .iter()
+            .map(|r| {
+                (
+                    r.cluster_idx,
+                    r.genome_idx,
+                    r.contig.clone(),
+                    r.start,
+                    r.end,
+                )
+            })
+            .collect();
 
         for chunk in searchable_genomes.chunks(missing_cds_chunk_size) {
             let max_secondary_missing_cds = chunk.len().saturating_mul(24).clamp(50, 5000);
@@ -454,6 +504,14 @@ pub fn run(args: &Args) -> Result<()> {
     } else if args.synteny && gff_indices.is_empty() {
         warn!("Synteny requested (--synteny) but no GFF annotations loaded — skipping");
     }
+
+    let reference_audit_candidates = if args.reference_genome.is_some() {
+        let mut candidates = reference_hit_candidates;
+        candidates.extend(rescues.clone());
+        candidates
+    } else {
+        Vec::new()
+    };
 
     // Explicit synteny failures are contradictory orthology evidence. Keep
     // them in an audit report, but do not use them to correct the matrix.
@@ -667,6 +725,7 @@ pub fn run(args: &Args) -> Result<()> {
             rescues: &rescues,
             synteny_rejected: &synteny_rejected,
             paralog_rejected: &paralog_rejected,
+            reference_candidates: &reference_audit_candidates,
             pa: &pa,
             gene_to_cluster_maps: &gene_to_cluster_maps,
             matrix_policy: args.matrix_policy,
@@ -1026,6 +1085,7 @@ fn evidence_strength(state: &str) -> &'static str {
         "STRICT_PRESENT" | "ALIAS_CLUSTER" => "high",
         "SEQUENCE_ONLY" => "moderate",
         "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => "review",
+        "PARTIAL_PARALOG_EVIDENCE" => "review",
         "MISSING_CDS_UNVALIDATED" => "review",
         "HOMOLOG_PARALOG" | "REJECTED_CONTEXT" => "low",
         "NO_EVIDENCE" => "none",
@@ -1051,6 +1111,9 @@ fn recommended_wording(state: &str, accepted: bool) -> &'static str {
             "Sequence is present but the CDS is missing from the annotation; require synteny support before matrix correction."
         }
         "HOMOLOG_PARALOG" => "Keep distinct unless synteny confirms the same locus.",
+        "PARTIAL_PARALOG_EVIDENCE" => {
+            "Treat as partial/paralogous reference-like evidence; do not convert to binary presence."
+        }
         _ => "Review before publication.",
     }
 }
@@ -1193,6 +1256,7 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
     if !accepted {
         return match state {
             "HOMOLOG_PARALOG" => "reference_homolog_paralog_rejected",
+            "PARTIAL_PARALOG_EVIDENCE" => "reference_partial_paralog_evidence",
             "REJECTED_CONTEXT" => "reference_incompatible_context",
             _ => "reference_rejected_candidate",
         };
@@ -1203,6 +1267,7 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
         "SEQUENCE_ONLY" => "reference_sequence_only",
         "MISSING_CDS_UNVALIDATED" => "reference_missing_cds_unvalidated",
         "PARTIAL_HOMOLOGY" => "reference_partial_like",
+        "PARTIAL_PARALOG_EVIDENCE" => "reference_partial_paralog_evidence",
         "PSEUDOGENE" => "reference_pseudogene_like",
         "HOMOLOG_PARALOG" => "reference_homolog_paralog",
         _ => "reference_candidate_present",
@@ -1211,6 +1276,9 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
 
 fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
     if !accepted {
+        if state == "PARTIAL_PARALOG_EVIDENCE" {
+            return "flag_reference_partial_paralog_evidence";
+        }
         return "flag_reference_like_ambiguous";
     }
     match state {
@@ -1220,12 +1288,16 @@ fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
         "MISSING_CDS_UNVALIDATED" | "PARTIAL_HOMOLOGY" | "PSEUDOGENE" | "HOMOLOG_PARALOG" => {
             "flag_reference_like_ambiguous"
         }
+        "PARTIAL_PARALOG_EVIDENCE" => "flag_reference_partial_paralog_evidence",
         _ => "review_reference_status",
     }
 }
 
 fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
     if !accepted {
+        if state == "PARTIAL_PARALOG_EVIDENCE" {
+            return "Do not call cleanly novel to the reference; report as partial/paralogous reference-like evidence.";
+        }
         return "Do not call cleanly novel to the reference; report as reference-like but rejected or ambiguous evidence.";
     }
     match state {
@@ -1247,8 +1319,156 @@ fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
         "HOMOLOG_PARALOG" => {
             "Keep as reference-like paralog evidence; do not treat as clean absence without review."
         }
+        "PARTIAL_PARALOG_EVIDENCE" => {
+            "Reference has partial/paralogous sequence evidence; keep the exact cluster absent but flag as complex."
+        }
         _ => "Review before making a reference-absence claim.",
     }
+}
+
+fn reference_publication_confidence(state: &str, reference_status: &str) -> &'static str {
+    match state {
+        "STRICT_PRESENT" | "ALIAS_CLUSTER" | "SEQUENCE_ONLY" => "not_reference_absent",
+        "PARTIAL_PARALOG_EVIDENCE" | "HOMOLOG_PARALOG" => "complex_paralog",
+        "PARTIAL_HOMOLOGY" => "fragmented",
+        "PSEUDOGENE" => "pseudogene",
+        "NO_EVIDENCE" => "clean",
+        "REJECTED_CONTEXT" | "MISSING_CDS_UNVALIDATED" => "unresolved",
+        _ if reference_status.contains("paralog") => "complex_paralog",
+        _ => "unresolved",
+    }
+}
+
+fn reference_shadow_state(
+    rescue: &RescueEvent,
+    query_cluster: &str,
+    annotation_cluster: &str,
+) -> &'static str {
+    if matches!(rescue.rescue_type, RescueType::Paralog { .. }) {
+        return "PARTIAL_PARALOG_EVIDENCE";
+    }
+    if matches!(
+        rescue.rescue_type,
+        RescueType::Pseudogene { .. }
+            | RescueType::Fragmented { .. }
+            | RescueType::AlignmentSplit { .. }
+    ) {
+        return evidence_state(rescue, true, query_cluster, annotation_cluster, "");
+    }
+    if !annotation_cluster.is_empty() && annotation_cluster != query_cluster {
+        return "PARTIAL_PARALOG_EVIDENCE";
+    }
+    if rescue.identity >= 90.0 && rescue.coverage < 95.0 {
+        return "PARTIAL_PARALOG_EVIDENCE";
+    }
+    evidence_state(rescue, true, query_cluster, annotation_cluster, "")
+}
+
+fn best_overlap_gene_id(gff: &GffIndex, hit: &Hit) -> Option<String> {
+    let hit_len = hit.target_end.saturating_sub(hit.target_start) as f64;
+    if hit_len == 0.0 {
+        return None;
+    }
+
+    gff.overlapping(&hit.target, hit.target_start, hit.target_end)
+        .into_iter()
+        .filter_map(|gene| {
+            let overlap = hit
+                .target_end
+                .min(gene.end)
+                .saturating_sub(hit.target_start.max(gene.start)) as f64;
+            let gene_len = gene.end.saturating_sub(gene.start) as f64;
+            if gene_len == 0.0 {
+                return None;
+            }
+            let reciprocal = (overlap / hit_len).min(overlap / gene_len);
+            (reciprocal > 0.5).then(|| (gene.gene_id.clone(), reciprocal))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(gene_id, _)| gene_id)
+}
+
+fn reference_hit_shadow_candidates(
+    hits: &HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>>,
+    pa: &crate::parser::PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+) -> Vec<RescueEvent> {
+    let mut candidates = Vec::new();
+    for (&(gi, ci), cluster_hits) in hits {
+        let gff = gff_indices.get(&gi);
+        let g2c = gene_to_cluster_maps.get(&gi);
+        for hit in cluster_hits {
+            if hit.identity() < 90.0 || hit.query_coverage() < 60.0 {
+                continue;
+            }
+            let annotation_match = gff.and_then(|idx| best_overlap_gene_id(idx, hit));
+            let annotation_cluster = annotation_match
+                .as_deref()
+                .and_then(|gene_id| g2c.and_then(|map| map.get(gene_id)))
+                .map(|other_ci| pa.cluster_name(*other_ci).to_string());
+            let query_cluster = pa.cluster_name(ci);
+            let rescue_type = if let Some(other_cluster) = annotation_cluster {
+                if other_cluster != query_cluster {
+                    RescueType::Paralog { other_cluster }
+                } else if hit.query_coverage() < 95.0 {
+                    RescueType::Fragmented {
+                        n_fragments: 1,
+                        total_coverage: hit.query_coverage(),
+                    }
+                } else {
+                    RescueType::Dropped
+                }
+            } else if hit.query_coverage() < 95.0 {
+                RescueType::Fragmented {
+                    n_fragments: 1,
+                    total_coverage: hit.query_coverage(),
+                }
+            } else {
+                RescueType::Dropped
+            };
+
+            candidates.push(RescueEvent {
+                cluster_idx: ci,
+                genome_idx: gi,
+                rescue_type,
+                identity: hit.identity(),
+                coverage: hit.query_coverage(),
+                contig: hit.target.clone(),
+                start: hit.target_start,
+                end: hit.target_end,
+                strand: hit.strand,
+                annotation_match,
+                confidence: hit.score(),
+                synteny_ok: None,
+                fragment_evidence: crate::rescue::FragmentEvidence {
+                    note: Some("reference_shadow_hit".to_string()),
+                    ..crate::rescue::FragmentEvidence::default()
+                },
+            });
+        }
+    }
+    candidates
+}
+
+fn reference_candidate_score(rescue: &RescueEvent) -> f64 {
+    let synteny_bonus = match rescue.synteny_ok {
+        Some(true) => 2.0,
+        Some(false) => -1.0,
+        None => 0.0,
+    };
+    rescue.confidence + (rescue.identity / 100.0) + (rescue.coverage / 100.0) + synteny_bonus
+}
+
+fn best_reference_candidate<'a>(
+    candidates: &'a [RescueEvent],
+    ci: ClusterIdx,
+    reference_gi: GenomeIdx,
+) -> Option<&'a RescueEvent> {
+    candidates
+        .iter()
+        .filter(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
+        .max_by(|a, b| reference_candidate_score(a).total_cmp(&reference_candidate_score(b)))
 }
 
 struct ReferenceEventRow<'a> {
@@ -1266,6 +1486,7 @@ struct ReferenceAuditInputs<'a> {
     rescues: &'a [RescueEvent],
     synteny_rejected: &'a [RescueEvent],
     paralog_rejected: &'a [RescueEvent],
+    reference_candidates: &'a [RescueEvent],
     pa: &'a crate::parser::PresenceAbsence,
     gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
     matrix_policy: MatrixPolicy,
@@ -1289,6 +1510,7 @@ fn write_reference_event_row(
     );
     let final_status = reference_publication_status(state, row.accepted);
     let reference_status = reference_status_for(state, row.accepted);
+    let publication_confidence = reference_publication_confidence(state, reference_status);
     let dichotomy = if final_status == "remove_from_strict_reference_absent_set" {
         "reference_like_or_present"
     } else {
@@ -1306,10 +1528,60 @@ fn write_reference_event_row(
             matrix_action(row.matrix_policy, row.accepted, state).to_string(),
             state.to_string(),
             evidence_strength(state).to_string(),
+            publication_confidence.to_string(),
             reference_recommended_wording(state, row.accepted).to_string(),
             row.decision.to_string(),
             rescue.rescue_type.to_string(),
             row.rejection_reason.to_string(),
+            format!("{:.1}", rescue.identity),
+            format!("{:.1}", rescue.coverage),
+            rescue.contig.clone(),
+            (rescue.start + 1).to_string(),
+            rescue.end.to_string(),
+            rescue.strand.to_string(),
+            synteny_label(rescue.synteny_ok).to_string(),
+            rescue.annotation_match.as_deref().unwrap_or("").to_string(),
+            annotation_cluster,
+            rescue
+                .fragment_evidence
+                .note
+                .as_deref()
+                .unwrap_or("")
+                .to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn write_reference_shadow_candidate_row(
+    w: &mut BufWriter<fs::File>,
+    pa: &crate::parser::PresenceAbsence,
+    row: ReferenceEventRow<'_>,
+) -> Result<()> {
+    let rescue = row.rescue;
+    let query_cluster = pa.cluster_name(rescue.cluster_idx);
+    let annotation_cluster = annotation_cluster_name(rescue, pa, row.gene_to_cluster_maps);
+    let state = reference_shadow_state(rescue, query_cluster, &annotation_cluster);
+    let final_status = reference_publication_status(state, false);
+    let reference_status = reference_status_for(state, false);
+    let publication_confidence = reference_publication_confidence(state, reference_status);
+
+    write_tsv_fields(
+        w,
+        &[
+            query_cluster.to_string(),
+            row.reference_name.to_string(),
+            "reference_like_ambiguous".to_string(),
+            final_status.to_string(),
+            reference_status.to_string(),
+            matrix_action(row.matrix_policy, false, state).to_string(),
+            state.to_string(),
+            evidence_strength(state).to_string(),
+            publication_confidence.to_string(),
+            reference_recommended_wording(state, false).to_string(),
+            "shadow_candidate".to_string(),
+            rescue.rescue_type.to_string(),
+            "discarded_or_subthreshold_reference_evidence".to_string(),
             format!("{:.1}", rescue.identity),
             format!("{:.1}", rescue.coverage),
             rescue.contig.clone(),
@@ -1344,7 +1616,7 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note"
+        "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\tpublication_confidence\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -1361,6 +1633,7 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
                     "already_present".to_string(),
                     "STRICT_PRESENT".to_string(),
                     "high".to_string(),
+                    "not_reference_absent".to_string(),
                     "Not a reference-absent cluster; it is already present in the audited reference matrix cell.".to_string(),
                     "matrix_present".to_string(),
                     String::new(),
@@ -1443,6 +1716,25 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
             continue;
         }
 
+        if let Some(rescue) =
+            best_reference_candidate(inputs.reference_candidates, ci, reference_gi)
+        {
+            write_reference_shadow_candidate_row(
+                &mut w,
+                inputs.pa,
+                ReferenceEventRow {
+                    reference_name,
+                    rescue,
+                    gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    matrix_policy: inputs.matrix_policy,
+                    decision: "shadow_candidate",
+                    accepted: false,
+                    rejection_reason: "discarded_or_subthreshold_reference_evidence",
+                },
+            )?;
+            continue;
+        }
+
         write_tsv_fields(
             &mut w,
             &[
@@ -1454,6 +1746,8 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
                 "keep_absent".to_string(),
                 "NO_EVIDENCE".to_string(),
                 evidence_strength("NO_EVIDENCE").to_string(),
+                reference_publication_confidence("NO_EVIDENCE", "clean_absent_from_reference")
+                    .to_string(),
                 "Can be described as absent from the audited reference genome under the current thresholds.".to_string(),
                 "none".to_string(),
                 String::new(),
@@ -2436,6 +2730,107 @@ mod tests {
             ),
             "HOMOLOG_PARALOG"
         );
+    }
+
+    #[test]
+    fn reference_shadow_candidate_flags_partial_paralog_evidence() {
+        let partial_hit = RescueEvent {
+            coverage: 91.0,
+            identity: 100.0,
+            annotation_match: Some("rv_duf222".into()),
+            ..rescue_with_type(
+                RescueType::Split {
+                    other_cluster: "group_537".into(),
+                },
+                None,
+            )
+        };
+
+        let state = reference_shadow_state(&partial_hit, "group_1044", "group_537");
+        assert_eq!(state, "PARTIAL_PARALOG_EVIDENCE");
+        assert_eq!(
+            reference_publication_status(state, false),
+            "flag_reference_partial_paralog_evidence"
+        );
+        assert_eq!(
+            reference_publication_confidence(state, reference_status_for(state, false)),
+            "complex_paralog"
+        );
+    }
+
+    #[test]
+    fn reference_hit_shadow_candidates_capture_partial_annotated_paralog() {
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["group_1044".into(), "group_537".into()],
+            vec!["L4_AS00146".into()],
+            vec![vec!["".into()], vec!["rv_duf222".into()]],
+        );
+        let gff = GffIndex::build(vec![GffGene {
+            contig: "chr".into(),
+            start: 0,
+            end: 954,
+            strand: '+',
+            gene_id: "rv_duf222".into(),
+        }]);
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(GenomeIdx(0), gff);
+        let mut gene_map = HashMap::new();
+        gene_map.insert("rv_duf222".to_string(), ClusterIdx(1));
+        let mut gene_to_cluster_maps = HashMap::new();
+        gene_to_cluster_maps.insert(GenomeIdx(0), gene_map);
+        let mut hits = HashMap::new();
+        hits.insert(
+            (GenomeIdx(0), ClusterIdx(0)),
+            vec![Hit {
+                query: "group_1044".into(),
+                cluster: "group_1044".into(),
+                query_length: 972,
+                query_start: 0,
+                query_end: 885,
+                strand: '+',
+                target: "chr".into(),
+                target_start: 0,
+                target_end: 885,
+                matches: 885,
+                alignment_length: 885,
+                mapq: 0,
+            }],
+        );
+
+        let candidates =
+            reference_hit_shadow_candidates(&hits, &pa, &gff_indices, &gene_to_cluster_maps);
+
+        assert_eq!(candidates.len(), 1);
+        assert!(matches!(
+            candidates[0].rescue_type,
+            RescueType::Paralog { .. }
+        ));
+        assert_eq!(
+            reference_shadow_state(&candidates[0], "group_1044", "group_537"),
+            "PARTIAL_PARALOG_EVIDENCE"
+        );
+    }
+
+    #[test]
+    fn reference_shadow_candidate_prefers_synteny_supported_evidence() {
+        let weak = RescueEvent {
+            cluster_idx: ClusterIdx(1),
+            genome_idx: GenomeIdx(2),
+            confidence: 1.5,
+            synteny_ok: Some(false),
+            ..rescue_with_type(RescueType::Dropped, Some(false))
+        };
+        let supported = RescueEvent {
+            cluster_idx: ClusterIdx(1),
+            genome_idx: GenomeIdx(2),
+            confidence: 0.9,
+            synteny_ok: Some(true),
+            ..rescue_with_type(RescueType::Dropped, Some(true))
+        };
+        let candidates = vec![weak, supported];
+
+        let best = best_reference_candidate(&candidates, ClusterIdx(1), GenomeIdx(2)).unwrap();
+        assert_eq!(best.synteny_ok, Some(true));
     }
 
     #[test]

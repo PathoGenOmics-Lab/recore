@@ -309,7 +309,9 @@ For publication figures:
 - Use `orthology_evidence.tsv` to justify whether a cluster is "present",
   "partial/disrupted", "possible paralog", or "not supported".
 - Use `reference_genome_audit.tsv` to support claims such as "absent from
-  H37Rv/reference" instead of relying only on the original matrix.
+  H37Rv/reference" instead of relying only on the original matrix. The
+  `publication_confidence` column flags clean absences separately from
+  complex partial/paralogous reference evidence.
 
 ## Evidence States
 

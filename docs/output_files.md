@@ -121,12 +121,16 @@ matrix column name or an embedded `ASxxxxx` identifier.
 | `reference_absence_class` | `new_to_reference`, `reference_like_or_present`, or `reference_like_ambiguous` |
 | `final_publication_status` | Whether to keep in a strict reference-absent set, remove, or review |
 | `reference_status` | Detailed reason: matrix-present, clean absent, strict rescue, alias, partial-like, pseudogene-like, paralog-like, or incompatible-context evidence |
-| `matrix_action`, `evidence_state`, `evidence_strength`, `recommended_wording` | Same interpretation layer used in `orthology_evidence.tsv` |
+| `matrix_action`, `evidence_state`, `evidence_strength`, `publication_confidence`, `recommended_wording` | Same interpretation layer used in `orthology_evidence.tsv`, plus a publication-facing confidence label |
 | `rescue_decision`, `rescue_type`, `rejection_reason`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `synteny`, `annotation_match`, `annotation_cluster`, `fragment_note` | Evidence fields when reference-like sequence evidence exists |
 
 This file is meant for reference-absence claims: keep `new_to_reference` for
 strictly absent clusters, remove `reference_like_or_present`, and manually
-review `reference_like_ambiguous`.
+review `reference_like_ambiguous`. The `publication_confidence` field uses
+`clean`, `complex_paralog`, `fragmented`, `pseudogene`, `unresolved`, or
+`not_reference_absent`. `complex_paralog` is used when the exact cluster remains
+absent from the reference but discarded/subthreshold sequence evidence points to
+a partial or paralogous reference-like copy.
 
 ---
 

@@ -264,6 +264,15 @@ Written when `--reference-genome` is provided. The reference can be an exact mat
 - `reference_like_or_present`: already present or rescued in the audited reference.
 - `reference_like_ambiguous`: partial, pseudogene, paralog, or rejected-context evidence; review before calling novel to the reference.
 
+The reference audit also runs an exact reference-only shadow search and keeps a
+shadow copy of candidates before conflict resolution. This prevents
+partial/paralogous evidence from disappearing simply because it was correctly
+excluded from the binary matrix. Such rows are reported as
+`flag_reference_partial_paralog_evidence` with
+`publication_confidence=complex_paralog`: the exact cluster can remain absent,
+but the absence should not be described as a clean absence of the broader
+sequence family.
+
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 
 Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context.
