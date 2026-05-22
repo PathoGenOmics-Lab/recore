@@ -42,6 +42,23 @@ Key idea: Recore first finds sequence evidence, then decides whether the hit is
 the same locus. Incompatible-context candidates are kept for audit but are not
 inserted into the corrected matrix.
 
+## Benchmark
+
+Recore includes a synthetic benchmark for the binary matrix policies. It creates
+known false absences, true absences, and partial pseudogenes, runs Recore, and
+calculates precision/recall/F1 from the corrected matrices.
+
+![Synthetic benchmark precision/recall](assets/synthetic_benchmark_precision_recall.svg)
+
+Current result: `balanced` recovers the full-length false absences without
+turning partial pseudogenes into binary presence. `strict` is intentionally
+conservative in this annotation-free benchmark, while `sensitive` maximizes
+recall but accepts pseudogene false positives. Reproduce with:
+
+```bash
+python3 benchmarks/synthetic_benchmark.py
+```
+
 ## Installation
 
 ### From source
