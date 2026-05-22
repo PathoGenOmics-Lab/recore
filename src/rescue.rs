@@ -1,7 +1,7 @@
-use ahash::{HashMap, HashMapExt};
 use crate::parser::PresenceAbsence;
 use crate::search::Hit;
 use crate::types::{ClusterIdx, GenomeIdx};
+use ahash::{HashMap, HashMapExt};
 
 // ── Rescue types ──
 
@@ -12,7 +12,10 @@ pub enum RescueType {
     /// Gene's locus is assigned to a different Panaroo cluster (mis-clustering).
     Split { other_cluster: String },
     /// Gene is broken into multiple fragments (IS, frameshift, assembly break).
-    Fragmented { n_fragments: usize, total_coverage: f64 },
+    Fragmented {
+        n_fragments: usize,
+        total_coverage: f64,
+    },
     /// Start site variant: gene is there but with a different start annotation.
     StartVariant { length_diff_bp: i64 },
     /// Gene hit overlaps a paralog from a different cluster (identity <95%).
@@ -37,24 +40,29 @@ impl std::fmt::Display for RescueType {
         match self {
             RescueType::Dropped => write!(f, "DROPPED"),
             RescueType::Split { other_cluster } => write!(f, "SPLIT:{}", other_cluster),
-            RescueType::Fragmented { n_fragments, total_coverage } => {
-                write!(f, "FRAGMENTED:{}frags:{:.0}%cov", n_fragments, total_coverage)
+            RescueType::Fragmented {
+                n_fragments,
+                total_coverage,
+            } => {
+                write!(
+                    f,
+                    "FRAGMENTED:{}frags:{:.0}%cov",
+                    n_fragments, total_coverage
+                )
             }
             RescueType::StartVariant { length_diff_bp } => {
                 write!(f, "START_VARIANT:{:+}bp", length_diff_bp)
             }
             RescueType::Paralog { other_cluster } => write!(f, "PARALOG:{}", other_cluster),
-            RescueType::Pseudogene { ref reason } => {
-                match reason {
-                    PseudogeneReason::InternalStop { n_stops } => {
-                        write!(f, "PSEUDOGENE:{}stops", n_stops)
-                    }
-                    PseudogeneReason::Frameshift => write!(f, "PSEUDOGENE:frameshift"),
-                    PseudogeneReason::PartialDeletion { coverage } => {
-                        write!(f, "PSEUDOGENE:partial:{:.0}%cov", coverage)
-                    }
+            RescueType::Pseudogene { ref reason } => match reason {
+                PseudogeneReason::InternalStop { n_stops } => {
+                    write!(f, "PSEUDOGENE:{}stops", n_stops)
                 }
-            }
+                PseudogeneReason::Frameshift => write!(f, "PSEUDOGENE:frameshift"),
+                PseudogeneReason::PartialDeletion { coverage } => {
+                    write!(f, "PSEUDOGENE:partial:{:.0}%cov", coverage)
+                }
+            },
         }
     }
 }
@@ -120,7 +128,11 @@ impl GffIndex {
             }
         }
 
-        GffIndex { genes, contig_ranges, gene_id_index }
+        GffIndex {
+            genes,
+            contig_ranges,
+            gene_id_index,
+        }
     }
 
     pub fn get_by_id(&self, gene_id: &str) -> Option<&GffGene> {
@@ -145,7 +157,12 @@ impl GffIndex {
         results
     }
 
-    pub fn flanking(&self, contig: &str, start: u64, end: u64) -> (Option<&GffGene>, Option<&GffGene>) {
+    pub fn flanking(
+        &self,
+        contig: &str,
+        start: u64,
+        end: u64,
+    ) -> (Option<&GffGene>, Option<&GffGene>) {
         let Some(&(range_start, range_end)) = self.contig_ranges.get(contig) else {
             return (None, None);
         };
@@ -155,9 +172,7 @@ impl GffIndex {
 
         let upstream = if pos > 0 { Some(&slice[pos - 1]) } else { None };
 
-        let downstream = slice[pos..]
-            .iter()
-            .find(|g| g.start >= end);
+        let downstream = slice[pos..].iter().find(|g| g.start >= end);
 
         (upstream, downstream)
     }
@@ -242,10 +257,7 @@ fn merged_query_coverage(hits: &[&Hit]) -> (f64, usize) {
 
 // ── Start-site variant detection ──
 
-fn detect_start_variant(
-    hit: &Hit,
-    gff_index: Option<&GffIndex>,
-) -> Option<(i64, String)> {
+fn detect_start_variant(hit: &Hit, gff_index: Option<&GffIndex>) -> Option<(i64, String)> {
     let gff = gff_index?;
 
     if hit.identity() < 98.0 || hit.query_coverage() < 90.0 {
@@ -294,22 +306,28 @@ pub fn classify_hits(
 
     let mut sorted_hits: Vec<&Hit> = hits.iter().collect();
     sorted_hits.sort_by(|a, b| {
-        b.query_length.cmp(&a.query_length)
+        b.query_length
+            .cmp(&a.query_length)
             .then_with(|| b.score().total_cmp(&a.score()))
+            .then(a.target.cmp(&b.target))
+            .then(a.target_start.cmp(&b.target_start))
+            .then(a.target_end.cmp(&b.target_end))
+            .then(a.query.cmp(&b.query))
     });
 
     let best = sorted_hits[0];
 
     // ── Path 1: Single full-coverage hit ──
     if best.query_coverage() >= min_coverage {
-        let (rescue_type, annotation_match, confidence) = classify_single_hit(
-            best, ci, pa, gff_index, gene_to_cluster,
-        );
+        let (rescue_type, annotation_match, confidence) =
+            classify_single_hit(best, ci, pa, gff_index, gene_to_cluster);
 
         let (final_type, final_ann, final_conf) = if matches!(rescue_type, RescueType::Dropped) {
             if let Some((length_diff, matched_gene_id)) = detect_start_variant(best, gff_index) {
                 (
-                    RescueType::StartVariant { length_diff_bp: length_diff },
+                    RescueType::StartVariant {
+                        length_diff_bp: length_diff,
+                    },
                     Some(matched_gene_id),
                     best.identity() / 100.0 * 0.95,
                 )
@@ -350,23 +368,39 @@ pub fn classify_hits(
             / same_contig_hits.len() as f64;
 
         // SAFETY: same_contig_hits is non-empty (filtered from sorted_hits which has ≥1 element)
-        let frag_start = same_contig_hits.iter().map(|h| h.target_start).min()
+        let frag_start = same_contig_hits
+            .iter()
+            .map(|h| h.target_start)
+            .min()
             .expect("same_contig_hits guaranteed non-empty by coverage check");
-        let frag_end = same_contig_hits.iter().map(|h| h.target_end).max()
+        let frag_end = same_contig_hits
+            .iter()
+            .map(|h| h.target_end)
+            .max()
             .expect("same_contig_hits guaranteed non-empty by coverage check");
 
         // ── Frameshift detection ──
         // If fragments have high identity (≥95%) and gaps between them are small (≤30bp)
         // and NOT divisible by 3, this is likely a frameshift pseudogene.
-        let is_frameshift = avg_identity >= 95.0 && n_fragments >= 2
+        let is_frameshift = avg_identity >= 95.0
+            && n_fragments >= 2
             && detect_frameshift_pattern(&same_contig_hits);
 
         let (rescue_type, confidence) = if is_frameshift {
-            (RescueType::Pseudogene { reason: PseudogeneReason::Frameshift },
-             (avg_identity / 100.0) * (total_coverage / 100.0) * 0.5)
+            (
+                RescueType::Pseudogene {
+                    reason: PseudogeneReason::Frameshift,
+                },
+                (avg_identity / 100.0) * (total_coverage / 100.0) * 0.5,
+            )
         } else {
-            (RescueType::Fragmented { n_fragments, total_coverage },
-             (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8)
+            (
+                RescueType::Fragmented {
+                    n_fragments,
+                    total_coverage,
+                },
+                (avg_identity / 100.0) * (total_coverage / 100.0) * 0.8,
+            )
         };
 
         return Some(RescueEvent {
@@ -391,13 +425,19 @@ pub fn classify_hits(
     if best.identity() >= 90.0 {
         let cov = best.query_coverage();
         // Also check fragment coverage for multi-fragment partial hits
-        let effective_cov = if same_contig_hits.len() >= 2 { total_coverage } else { cov };
+        let effective_cov = if same_contig_hits.len() >= 2 {
+            total_coverage
+        } else {
+            cov
+        };
         if effective_cov >= 60.0 && effective_cov < min_coverage {
             return Some(RescueEvent {
                 cluster_idx: ci,
                 genome_idx: gi,
                 rescue_type: RescueType::Pseudogene {
-                    reason: PseudogeneReason::PartialDeletion { coverage: effective_cov },
+                    reason: PseudogeneReason::PartialDeletion {
+                        coverage: effective_cov,
+                    },
                 },
                 identity: best.identity(),
                 coverage: effective_cov,
@@ -434,10 +474,15 @@ pub fn count_internal_stops(seq: &[u8]) -> usize {
             let codon = &seq[pos..pos + 3];
             // Last codon is the terminator, not "internal"
             if pos + 3 < seq.len() {
-                let upper = [codon[0].to_ascii_uppercase(),
-                             codon[1].to_ascii_uppercase(),
-                             codon[2].to_ascii_uppercase()];
-                if matches!(upper, [b'T', b'A', b'A'] | [b'T', b'A', b'G'] | [b'T', b'G', b'A']) {
+                let upper = [
+                    codon[0].to_ascii_uppercase(),
+                    codon[1].to_ascii_uppercase(),
+                    codon[2].to_ascii_uppercase(),
+                ];
+                if matches!(
+                    upper,
+                    [b'T', b'A', b'A'] | [b'T', b'A', b'G'] | [b'T', b'G', b'A']
+                ) {
                     stops += 1;
                 }
             }
@@ -451,13 +496,16 @@ pub fn count_internal_stops(seq: &[u8]) -> usize {
 
 /// Reverse complement a DNA sequence.
 fn reverse_complement(seq: &[u8]) -> Vec<u8> {
-    seq.iter().rev().map(|&b| match b {
-        b'A' | b'a' => b'T',
-        b'T' | b't' => b'A',
-        b'C' | b'c' => b'G',
-        b'G' | b'g' => b'C',
-        _ => b'N',
-    }).collect()
+    seq.iter()
+        .rev()
+        .map(|&b| match b {
+            b'A' | b'a' => b'T',
+            b'T' | b't' => b'A',
+            b'C' | b'c' => b'G',
+            b'G' | b'g' => b'C',
+            _ => b'N',
+        })
+        .collect()
 }
 
 /// Check if a rescued hit is a pseudogene by scanning the genome sequence for internal stops.
@@ -484,7 +532,11 @@ pub fn check_internal_stops_in_hit(
         count_internal_stops(region)
     };
 
-    if n_stops > 0 { Some(n_stops) } else { None }
+    if n_stops > 0 {
+        Some(n_stops)
+    } else {
+        None
+    }
 }
 
 /// Detect frameshift pattern: adjacent fragments with small gaps not divisible by 3.
@@ -553,14 +605,17 @@ fn classify_single_hit(
             0.0
         };
 
-        if recip > 0.5
-            && best_gene.is_none_or(|(_, prev)| recip > prev) {
-                best_gene = Some((gene, recip));
-            }
+        if recip > 0.5 && best_gene.is_none_or(|(_, prev)| recip > prev) {
+            best_gene = Some((gene, recip));
+        }
     }
 
     let Some((matched_gene, _recip)) = best_gene else {
-        return (RescueType::Dropped, Some(overlapping[0].gene_id.clone()), base_confidence);
+        return (
+            RescueType::Dropped,
+            Some(overlapping[0].gene_id.clone()),
+            base_confidence,
+        );
     };
 
     if let Some(&other_ci) = gene_to_cluster.get(&matched_gene.gene_id) {
@@ -588,7 +643,11 @@ fn classify_single_hit(
         }
     }
 
-    (RescueType::Dropped, Some(matched_gene.gene_id.clone()), base_confidence)
+    (
+        RescueType::Dropped,
+        Some(matched_gene.gene_id.clone()),
+        base_confidence,
+    )
 }
 
 // ── Conflict resolution ──
@@ -599,9 +658,12 @@ pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
     }
 
     rescues.sort_by(|a, b| {
-        a.genome_idx.cmp(&b.genome_idx)
+        a.genome_idx
+            .cmp(&b.genome_idx)
             .then(a.contig.cmp(&b.contig))
             .then(a.start.cmp(&b.start))
+            .then(a.end.cmp(&b.end))
+            .then(a.cluster_idx.cmp(&b.cluster_idx))
     });
 
     let mut to_remove: Vec<bool> = vec![false; rescues.len()];
@@ -679,12 +741,18 @@ pub fn validate_synteny(
                 ci.val(), gi.val(), rescue.contig, rescue.start, rescue.end
             );
             if let Some(up) = target_up {
-                log::debug!("  Upstream gene '{}' not found in any Panaroo cluster", up.gene_id);
+                log::debug!(
+                    "  Upstream gene '{}' not found in any Panaroo cluster",
+                    up.gene_id
+                );
             } else {
                 log::debug!("  No upstream gene found in GFF");
             }
             if let Some(down) = target_down {
-                log::debug!("  Downstream gene '{}' not found in any Panaroo cluster", down.gene_id);
+                log::debug!(
+                    "  Downstream gene '{}' not found in any Panaroo cluster",
+                    down.gene_id
+                );
             } else {
                 log::debug!("  No downstream gene found in GFF");
             }
@@ -708,21 +776,19 @@ pub fn validate_synteny(
         let ref_gene_id = ref_cell.split(';').next().unwrap_or(ref_cell).trim();
 
         // Try exact ID first, then strip common suffixes (_pseudo, _dup_N)
-        let ref_gene = ref_gff.get_by_id(ref_gene_id)
-            .or_else(|| {
-                let stripped = ref_gene_id
-                    .strip_suffix("_pseudo")
-                    .or_else(|| {
-                        // Strip _dup_N suffix
-                        ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i])
-                    });
-                stripped.and_then(|s| ref_gff.get_by_id(s))
+        let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
+            let stripped = ref_gene_id.strip_suffix("_pseudo").or_else(|| {
+                // Strip _dup_N suffix
+                ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i])
             });
+            stripped.and_then(|s| ref_gff.get_by_id(s))
+        });
         let Some(ref_gene) = ref_gene else {
             if verbose {
                 log::debug!(
                     "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
-                    ref_gene_id, ref_gi.val()
+                    ref_gene_id,
+                    ref_gi.val()
                 );
             }
             continue;
@@ -766,11 +832,18 @@ mod tests {
 
     fn make_hit(query_start: u64, query_end: u64, query_length: u64) -> Hit {
         Hit {
-            query: "g".into(), cluster: "g".into(), query_length,
-            query_start, query_end, strand: '+', target: "c".into(),
-            target_start: query_start, target_end: query_end,
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length,
+            query_start,
+            query_end,
+            strand: '+',
+            target: "c".into(),
+            target_start: query_start,
+            target_end: query_end,
             matches: query_end - query_start,
-            alignment_length: query_end - query_start, mapq: 60,
+            alignment_length: query_end - query_start,
+            mapq: 60,
         }
     }
 
@@ -795,14 +868,32 @@ mod tests {
     #[test]
     fn test_merged_coverage_multi_allele() {
         let h1 = Hit {
-            query: "g__0".into(), cluster: "g".into(), query_length: 800,
-            query_start: 0, query_end: 600, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 600, matches: 600, alignment_length: 600, mapq: 60,
+            query: "g__0".into(),
+            cluster: "g".into(),
+            query_length: 800,
+            query_start: 0,
+            query_end: 600,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 600,
+            matches: 600,
+            alignment_length: 600,
+            mapq: 60,
         };
         let h2 = Hit {
-            query: "g__1".into(), cluster: "g".into(), query_length: 1200,
-            query_start: 0, query_end: 1100, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 1100, matches: 1100, alignment_length: 1100, mapq: 60,
+            query: "g__1".into(),
+            cluster: "g".into(),
+            query_length: 1200,
+            query_start: 0,
+            query_end: 1100,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 1100,
+            matches: 1100,
+            alignment_length: 1100,
+            mapq: 60,
         };
         let (cov, frags) = merged_query_coverage(&[&h1, &h2]);
         assert!(cov > 90.0);
@@ -812,25 +903,65 @@ mod tests {
     #[test]
     fn test_merged_coverage_same_length_different_alleles() {
         let h1 = Hit {
-            query: "cluster~~~ALLELE~0".into(), cluster: "cluster".into(), query_length: 1000,
-            query_start: 0, query_end: 400, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 400, matches: 400, alignment_length: 400, mapq: 60,
+            query: "cluster~~~ALLELE~0".into(),
+            cluster: "cluster".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 400,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 400,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
         };
         let h2 = Hit {
-            query: "cluster~~~ALLELE~1".into(), cluster: "cluster".into(), query_length: 1000,
-            query_start: 600, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 5000, target_end: 5400, matches: 400, alignment_length: 400, mapq: 60,
+            query: "cluster~~~ALLELE~1".into(),
+            cluster: "cluster".into(),
+            query_length: 1000,
+            query_start: 600,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 5000,
+            target_end: 5400,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
         };
         let (cov, _frags) = merged_query_coverage(&[&h1, &h2]);
-        assert!(cov < 50.0, "Coverage should be <50% (was {:.1}%), alleles must not be merged", cov);
+        assert!(
+            cov < 50.0,
+            "Coverage should be <50% (was {:.1}%), alleles must not be merged",
+            cov
+        );
     }
 
     #[test]
     fn test_gff_index_overlap() {
         let genes = vec![
-            GffGene { contig: "chr1".into(), start: 100, end: 500, strand: '+', gene_id: "g1".into() },
-            GffGene { contig: "chr1".into(), start: 600, end: 900, strand: '-', gene_id: "g2".into() },
-            GffGene { contig: "chr2".into(), start: 50, end: 200, strand: '+', gene_id: "g3".into() },
+            GffGene {
+                contig: "chr1".into(),
+                start: 100,
+                end: 500,
+                strand: '+',
+                gene_id: "g1".into(),
+            },
+            GffGene {
+                contig: "chr1".into(),
+                start: 600,
+                end: 900,
+                strand: '-',
+                gene_id: "g2".into(),
+            },
+            GffGene {
+                contig: "chr2".into(),
+                start: 50,
+                end: 200,
+                strand: '+',
+                gene_id: "g3".into(),
+            },
         ];
         let idx = GffIndex::build(genes);
 
@@ -843,9 +974,27 @@ mod tests {
     #[test]
     fn test_gff_flanking() {
         let genes = vec![
-            GffGene { contig: "c".into(), start: 100, end: 200, strand: '+', gene_id: "g1".into() },
-            GffGene { contig: "c".into(), start: 300, end: 400, strand: '+', gene_id: "g2".into() },
-            GffGene { contig: "c".into(), start: 500, end: 600, strand: '+', gene_id: "g3".into() },
+            GffGene {
+                contig: "c".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "g1".into(),
+            },
+            GffGene {
+                contig: "c".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "g2".into(),
+            },
+            GffGene {
+                contig: "c".into(),
+                start: 500,
+                end: 600,
+                strand: '+',
+                gene_id: "g3".into(),
+            },
         ];
         let idx = GffIndex::build(genes);
 
@@ -860,16 +1009,28 @@ mod tests {
 
     #[test]
     fn test_detect_start_variant_with_gff() {
-        let genes = vec![
-            GffGene { contig: "c".into(), start: 0, end: 1100, strand: '+', gene_id: "gene1".into() },
-        ];
+        let genes = vec![GffGene {
+            contig: "c".into(),
+            start: 0,
+            end: 1100,
+            strand: '+',
+            gene_id: "gene1".into(),
+        }];
         let idx = GffIndex::build(genes);
 
         let hit = Hit {
-            query: "g".into(), cluster: "g".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 100, target_end: 1100,
-            matches: 1000, alignment_length: 1000, mapq: 60,
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 100,
+            target_end: 1100,
+            matches: 1000,
+            alignment_length: 1000,
+            mapq: 60,
         };
         let result = detect_start_variant(&hit, Some(&idx));
         assert_eq!(result, Some((100, "gene1".to_string())));
@@ -881,20 +1042,35 @@ mod tests {
         // Hit: query_length=1100, query aligned 0-1050. Target: 0-1000 (footprint 1000bp).
         // With fix: diff = gene_len(1050) - target_aln_len(1000) = +50bp ✓
         // Old bug would compute: diff = 1050 - 1100(query_length) = -50bp ✗
-        let genes = vec![
-            GffGene { contig: "c".into(), start: 0, end: 1050, strand: '+', gene_id: "gene1".into() },
-        ];
+        let genes = vec![GffGene {
+            contig: "c".into(),
+            start: 0,
+            end: 1050,
+            strand: '+',
+            gene_id: "gene1".into(),
+        }];
         let idx = GffIndex::build(genes);
         let hit = Hit {
-            query: "g".into(), cluster: "g".into(), query_length: 1100,
-            query_start: 0, query_end: 1050, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 1000,
-            matches: 1000, alignment_length: 1050, mapq: 60,
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1100,
+            query_start: 0,
+            query_end: 1050,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 1000,
+            alignment_length: 1050,
+            mapq: 60,
         };
         // identity = 1000/1050 = 95.2% (≥98%? NO — need 98%)
         // query_coverage = 1050/1100 = 95.5% (≥90% ✓)
         // Adjust matches to pass identity filter:
-        let hit = Hit { matches: 1040, ..hit }; // 1040/1050 = 99.0%
+        let hit = Hit {
+            matches: 1040,
+            ..hit
+        }; // 1040/1050 = 99.0%
         let result = detect_start_variant(&hit, Some(&idx));
         // diff = gene_len(1050) - target_aln_len(1000) = +50
         assert_eq!(result, Some((50, "gene1".to_string())));
@@ -910,18 +1086,32 @@ mod tests {
     fn test_conflict_resolution() {
         let mut rescues = vec![
             RescueEvent {
-                cluster_idx: ClusterIdx(0), genome_idx: GenomeIdx(0),
+                cluster_idx: ClusterIdx(0),
+                genome_idx: GenomeIdx(0),
                 rescue_type: RescueType::Dropped,
-                identity: 99.0, coverage: 100.0, contig: "c1".into(),
-                start: 100, end: 500, strand: '+', annotation_match: None,
-                confidence: 0.99, synteny_ok: None,
+                identity: 99.0,
+                coverage: 100.0,
+                contig: "c1".into(),
+                start: 100,
+                end: 500,
+                strand: '+',
+                annotation_match: None,
+                confidence: 0.99,
+                synteny_ok: None,
             },
             RescueEvent {
-                cluster_idx: ClusterIdx(1), genome_idx: GenomeIdx(0),
+                cluster_idx: ClusterIdx(1),
+                genome_idx: GenomeIdx(0),
                 rescue_type: RescueType::Dropped,
-                identity: 95.0, coverage: 90.0, contig: "c1".into(),
-                start: 200, end: 600, strand: '+', annotation_match: None,
-                confidence: 0.85, synteny_ok: None,
+                identity: 95.0,
+                coverage: 90.0,
+                contig: "c1".into(),
+                start: 200,
+                end: 600,
+                strand: '+',
+                annotation_match: None,
+                confidence: 0.85,
+                synteny_ok: None,
             },
         ];
         resolve_conflicts(&mut rescues);
@@ -933,18 +1123,32 @@ mod tests {
     fn test_conflict_resolution_no_overlap() {
         let mut rescues = vec![
             RescueEvent {
-                cluster_idx: ClusterIdx(0), genome_idx: GenomeIdx(0),
+                cluster_idx: ClusterIdx(0),
+                genome_idx: GenomeIdx(0),
                 rescue_type: RescueType::Dropped,
-                identity: 99.0, coverage: 100.0, contig: "c1".into(),
-                start: 100, end: 500, strand: '+', annotation_match: None,
-                confidence: 0.99, synteny_ok: None,
+                identity: 99.0,
+                coverage: 100.0,
+                contig: "c1".into(),
+                start: 100,
+                end: 500,
+                strand: '+',
+                annotation_match: None,
+                confidence: 0.99,
+                synteny_ok: None,
             },
             RescueEvent {
-                cluster_idx: ClusterIdx(1), genome_idx: GenomeIdx(0),
+                cluster_idx: ClusterIdx(1),
+                genome_idx: GenomeIdx(0),
                 rescue_type: RescueType::Dropped,
-                identity: 95.0, coverage: 90.0, contig: "c1".into(),
-                start: 600, end: 900, strand: '+', annotation_match: None,
-                confidence: 0.85, synteny_ok: None,
+                identity: 95.0,
+                coverage: 90.0,
+                contig: "c1".into(),
+                start: 600,
+                end: 900,
+                strand: '+',
+                annotation_match: None,
+                confidence: 0.85,
+                synteny_ok: None,
             },
         ];
         resolve_conflicts(&mut rescues);
@@ -954,16 +1158,32 @@ mod tests {
     #[test]
     fn test_fragmented_span() {
         let h1 = Hit {
-            query: "g".into(), cluster: "g".into(), query_length: 1000,
-            query_start: 0, query_end: 400, strand: '+', target: "c".into(),
-            target_start: 1000, target_end: 1400,
-            matches: 400, alignment_length: 400, mapq: 60,
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 400,
+            strand: '+',
+            target: "c".into(),
+            target_start: 1000,
+            target_end: 1400,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
         };
         let h2 = Hit {
-            query: "g".into(), cluster: "g".into(), query_length: 1000,
-            query_start: 600, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 2000, target_end: 2400,
-            matches: 400, alignment_length: 400, mapq: 60,
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 600,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 2000,
+            target_end: 2400,
+            matches: 400,
+            alignment_length: 400,
+            mapq: 60,
         };
 
         let pa = PresenceAbsence::new_for_test(
@@ -973,7 +1193,15 @@ mod tests {
         );
         let g2c: HashMap<String, ClusterIdx> = HashMap::new();
 
-        let result = classify_hits(&[h1, h2], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+        let result = classify_hits(
+            &[h1, h2],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            None,
+            &g2c,
+            80.0,
+        );
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(r.start, 1000);
@@ -988,9 +1216,13 @@ mod tests {
     fn test_classify_split_vs_paralog() {
         // Setup: cluster "target_cluster" absent in genome, hit lands on a gene
         // assigned to "other_cluster". Identity determines SPLIT vs PARALOG.
-        let gff_genes = vec![
-            GffGene { contig: "c".into(), start: 0, end: 1000, strand: '+', gene_id: "geneA".into() },
-        ];
+        let gff_genes = vec![GffGene {
+            contig: "c".into(),
+            start: 0,
+            end: 1000,
+            strand: '+',
+            gene_id: "geneA".into(),
+        }];
         let gff = GffIndex::build(gff_genes);
 
         let pa = PresenceAbsence::new_for_test(
@@ -1004,12 +1236,28 @@ mod tests {
 
         // High identity (99%) → SPLIT
         let hit_high = Hit {
-            query: "q".into(), cluster: "target_cluster".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 1000,
-            matches: 990, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "target_cluster".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 990,
+            alignment_length: 1000,
+            mapq: 60,
         };
-        let result = classify_hits(&[hit_high], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let result = classify_hits(
+            &[hit_high],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            Some(&gff),
+            &g2c,
+            80.0,
+        );
         let r = result.unwrap();
         match &r.rescue_type {
             RescueType::Split { other_cluster } => assert_eq!(other_cluster, "other_cluster"),
@@ -1018,12 +1266,28 @@ mod tests {
 
         // Low identity (90%) → PARALOG
         let hit_low = Hit {
-            query: "q".into(), cluster: "target_cluster".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 1000,
-            matches: 900, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "target_cluster".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 900,
+            alignment_length: 1000,
+            mapq: 60,
         };
-        let result = classify_hits(&[hit_low], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let result = classify_hits(
+            &[hit_low],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            Some(&gff),
+            &g2c,
+            80.0,
+        );
         let r = result.unwrap();
         match &r.rescue_type {
             RescueType::Paralog { other_cluster } => assert_eq!(other_cluster, "other_cluster"),
@@ -1036,10 +1300,18 @@ mod tests {
     fn test_classify_dropped_no_gff() {
         // Full-coverage hit with no GFF → DROPPED
         let hit = Hit {
-            query: "q".into(), cluster: "cluster1".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 1000,
-            matches: 990, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "cluster1".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 990,
+            alignment_length: 1000,
+            mapq: 60,
         };
         let pa = PresenceAbsence::new_for_test(
             vec!["cluster1".into()],
@@ -1056,9 +1328,13 @@ mod tests {
     #[test]
     fn test_classify_dropped_no_overlapping_genes() {
         // Full-coverage hit, GFF exists but no gene overlaps the hit region → DROPPED
-        let gff_genes = vec![
-            GffGene { contig: "c".into(), start: 5000, end: 6000, strand: '+', gene_id: "far_gene".into() },
-        ];
+        let gff_genes = vec![GffGene {
+            contig: "c".into(),
+            start: 5000,
+            end: 6000,
+            strand: '+',
+            gene_id: "far_gene".into(),
+        }];
         let gff = GffIndex::build(gff_genes);
         let pa = PresenceAbsence::new_for_test(
             vec!["cluster1".into()],
@@ -1067,12 +1343,28 @@ mod tests {
         );
         let g2c: HashMap<String, ClusterIdx> = HashMap::new();
         let hit = Hit {
-            query: "q".into(), cluster: "cluster1".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 1000,
-            matches: 990, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "cluster1".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 990,
+            alignment_length: 1000,
+            mapq: 60,
         };
-        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let result = classify_hits(
+            &[hit],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            Some(&gff),
+            &g2c,
+            80.0,
+        );
         let r = result.unwrap();
         assert!(matches!(r.rescue_type, RescueType::Dropped));
     }
@@ -1080,9 +1372,13 @@ mod tests {
     #[test]
     fn test_classify_start_variant_with_gff() {
         // Hit with high identity overlapping a similar-length GFF gene → START_VARIANT
-        let gff_genes = vec![
-            GffGene { contig: "c".into(), start: 0, end: 1100, strand: '+', gene_id: "gene1".into() },
-        ];
+        let gff_genes = vec![GffGene {
+            contig: "c".into(),
+            start: 0,
+            end: 1100,
+            strand: '+',
+            gene_id: "gene1".into(),
+        }];
         let gff = GffIndex::build(gff_genes);
         let pa = PresenceAbsence::new_for_test(
             vec!["cluster1".into()],
@@ -1093,12 +1389,28 @@ mod tests {
         // gene1 is NOT in g2c → no cluster assignment → classify_single_hit returns DROPPED
         // Then detect_start_variant kicks in: gene_len(1100) - target_aln(1000) = +100bp
         let hit = Hit {
-            query: "q".into(), cluster: "cluster1".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 100, target_end: 1100,
-            matches: 1000, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "cluster1".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 100,
+            target_end: 1100,
+            matches: 1000,
+            alignment_length: 1000,
+            mapq: 60,
         };
-        let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0);
+        let result = classify_hits(
+            &[hit],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            Some(&gff),
+            &g2c,
+            80.0,
+        );
         let r = result.unwrap();
         match &r.rescue_type {
             RescueType::StartVariant { length_diff_bp } => assert_eq!(*length_diff_bp, 100),
@@ -1123,10 +1435,18 @@ mod tests {
     fn test_classify_returns_none_below_coverage() {
         // Single hit with only 50% coverage, no fragments → None
         let hit = Hit {
-            query: "q".into(), cluster: "c1".into(), query_length: 1000,
-            query_start: 0, query_end: 500, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 500,
-            matches: 500, alignment_length: 500, mapq: 60,
+            query: "q".into(),
+            cluster: "c1".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 500,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 500,
+            matches: 500,
+            alignment_length: 500,
+            mapq: 60,
         };
         let pa = PresenceAbsence::new_for_test(
             vec!["c1".into()],
@@ -1162,31 +1482,53 @@ mod tests {
     fn test_rescue_type_display() {
         assert_eq!(RescueType::Dropped.to_string(), "DROPPED");
         assert_eq!(
-            RescueType::Split { other_cluster: "cl2".into() }.to_string(),
+            RescueType::Split {
+                other_cluster: "cl2".into()
+            }
+            .to_string(),
             "SPLIT:cl2"
         );
         assert_eq!(
-            RescueType::Fragmented { n_fragments: 3, total_coverage: 95.5 }.to_string(),
+            RescueType::Fragmented {
+                n_fragments: 3,
+                total_coverage: 95.5
+            }
+            .to_string(),
             "FRAGMENTED:3frags:96%cov"
         );
         assert_eq!(
-            RescueType::StartVariant { length_diff_bp: -42 }.to_string(),
+            RescueType::StartVariant {
+                length_diff_bp: -42
+            }
+            .to_string(),
             "START_VARIANT:-42bp"
         );
         assert_eq!(
-            RescueType::Paralog { other_cluster: "cl3".into() }.to_string(),
+            RescueType::Paralog {
+                other_cluster: "cl3".into()
+            }
+            .to_string(),
             "PARALOG:cl3"
         );
         assert_eq!(
-            RescueType::Pseudogene { reason: PseudogeneReason::InternalStop { n_stops: 2 } }.to_string(),
+            RescueType::Pseudogene {
+                reason: PseudogeneReason::InternalStop { n_stops: 2 }
+            }
+            .to_string(),
             "PSEUDOGENE:2stops"
         );
         assert_eq!(
-            RescueType::Pseudogene { reason: PseudogeneReason::Frameshift }.to_string(),
+            RescueType::Pseudogene {
+                reason: PseudogeneReason::Frameshift
+            }
+            .to_string(),
             "PSEUDOGENE:frameshift"
         );
         assert_eq!(
-            RescueType::Pseudogene { reason: PseudogeneReason::PartialDeletion { coverage: 72.5 } }.to_string(),
+            RescueType::Pseudogene {
+                reason: PseudogeneReason::PartialDeletion { coverage: 72.5 }
+            }
+            .to_string(),
             "PSEUDOGENE:partial:72%cov"
         );
     }
@@ -1219,16 +1561,32 @@ mod tests {
     fn test_frameshift_pattern_detected() {
         // Two fragments with a 2bp gap (not divisible by 3) → frameshift
         let h1 = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 0, query_end: 500, strand: '+', target: "c".into(),
-            target_start: 100, target_end: 600,
-            matches: 500, alignment_length: 500, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 500,
+            strand: '+',
+            target: "c".into(),
+            target_start: 100,
+            target_end: 600,
+            matches: 500,
+            alignment_length: 500,
+            mapq: 60,
         };
         let h2 = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 500, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 602, target_end: 1102, // 2bp gap (not %3)
-            matches: 500, alignment_length: 500, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 500,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 602,
+            target_end: 1102, // 2bp gap (not %3)
+            matches: 500,
+            alignment_length: 500,
+            mapq: 60,
         };
         assert!(detect_frameshift_pattern(&[&h1, &h2]));
     }
@@ -1236,16 +1594,32 @@ mod tests {
     #[test]
     fn test_frameshift_pattern_not_detected_divisible_by_3() {
         let h1 = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 0, query_end: 500, strand: '+', target: "c".into(),
-            target_start: 100, target_end: 600,
-            matches: 500, alignment_length: 500, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 500,
+            strand: '+',
+            target: "c".into(),
+            target_start: 100,
+            target_end: 600,
+            matches: 500,
+            alignment_length: 500,
+            mapq: 60,
         };
         let h2 = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 500, query_end: 1000, strand: '+', target: "c".into(),
-            target_start: 603, target_end: 1103, // 3bp gap (divisible by 3)
-            matches: 500, alignment_length: 500, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 500,
+            query_end: 1000,
+            strand: '+',
+            target: "c".into(),
+            target_start: 603,
+            target_end: 1103, // 3bp gap (divisible by 3)
+            matches: 500,
+            alignment_length: 500,
+            mapq: 60,
         };
         assert!(!detect_frameshift_pattern(&[&h1, &h2]));
     }
@@ -1276,12 +1650,23 @@ mod tests {
         let mut contigs: HashMap<String, Vec<u8>> = HashMap::new();
         contigs.insert("c".into(), seq.to_vec());
         let hit_minus = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 9,
-            query_start: 0, query_end: 9, strand: '-', target: "c".into(),
-            target_start: 0, target_end: 9,
-            matches: 9, alignment_length: 9, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 9,
+            query_start: 0,
+            query_end: 9,
+            strand: '-',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 9,
+            matches: 9,
+            alignment_length: 9,
+            mapq: 60,
         };
-        let hit_plus = Hit { strand: '+', ..hit_minus.clone() };
+        let hit_plus = Hit {
+            strand: '+',
+            ..hit_minus.clone()
+        };
         // Strand - should RC before scanning
         let result_minus = check_internal_stops_in_hit(&hit_minus, Some(&contigs));
         let result_plus = check_internal_stops_in_hit(&hit_plus, Some(&contigs));
@@ -1294,10 +1679,18 @@ mod tests {
     fn test_classify_partial_deletion_pseudogene() {
         // Hit with 95% identity but only 70% coverage → partial deletion pseudogene
         let hit = Hit {
-            query: "q".into(), cluster: "c1".into(), query_length: 1000,
-            query_start: 0, query_end: 700, strand: '+', target: "c".into(),
-            target_start: 0, target_end: 700,
-            matches: 665, alignment_length: 700, mapq: 60,
+            query: "q".into(),
+            cluster: "c1".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 700,
+            strand: '+',
+            target: "c".into(),
+            target_start: 0,
+            target_end: 700,
+            matches: 665,
+            alignment_length: 700,
+            mapq: 60,
         };
         let pa = PresenceAbsence::new_for_test(
             vec!["c1".into()],
@@ -1309,7 +1702,9 @@ mod tests {
         let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
         let r = result.unwrap();
         match &r.rescue_type {
-            RescueType::Pseudogene { reason: PseudogeneReason::PartialDeletion { coverage } } => {
+            RescueType::Pseudogene {
+                reason: PseudogeneReason::PartialDeletion { coverage },
+            } => {
                 assert!(*coverage >= 69.0 && *coverage <= 71.0);
             }
             other => panic!("Expected Pseudogene:PartialDeletion, got {:?}", other),

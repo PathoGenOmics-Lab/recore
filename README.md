@@ -14,6 +14,7 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 - **Nucleotide similarity clustering** — Merges Panaroo clusters that are redundant at the DNA level (split at AA but identical at nucleotide)
 - **Cluster relationship report** — Summarizes SPLIT/PARALOG/annotation-match/NSC evidence between clusters with reproducible collapse/review recommendations
 - **Synteny validation** — Optional flanking gene comparison to confirm orthology
+- **Genome/GFF name reconciliation** — Resolves FASTAs by embedded AS IDs and normalizes single-contig GFF seqids to the FASTA contig name used by minimap2
 - **Corrected GFF export** — Optional per-genome GFF3 files with rescued CDS features appended
 - **Batch architecture** — One minimap2 invocation for all genomes, streamed PAF, rayon parallelism
 
@@ -180,6 +181,17 @@ recore \
 | `--nsc-threshold` | 0.8 | Max containment threshold for MinHash merging |
 | `--nsc-min-seq-id` | 0.9 | Minimum identity for MMseqs2 linclust |
 | `--nsc-coverage` | 0.8 | Minimum coverage for MMseqs2 linclust |
+
+## Genome and GFF name matching
+
+Recore first matches genome FASTA and GFF files by the exact matrix column name.
+If that fails, it falls back to the embedded `ASxxxxx` identifier. This allows a
+matrix column such as `L4_AS00146` to resolve to `AS00146.fna`.
+
+For single-contig assemblies, Recore also reconciles GFF seqids with FASTA contig
+names before annotation-based classification and synteny validation. For example,
+a GFF seqid such as `contig_1` or `L4_AS00146` is mapped internally to FASTA
+contig `AS00146`. Original GFF files are not modified.
 
 ## Rescue types
 

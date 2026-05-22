@@ -16,6 +16,11 @@
 | `-o, --output` | `recore_output/` | Output directory |
 | `-t, --threads` | `4` | Number of parallel threads (for rayon classification and minimap2) |
 
+Recore matches FASTA and GFF files by exact matrix column name first, then by an
+embedded `ASxxxxx` identifier. For single-contig genomes, GFF seqids are
+normalized internally to the FASTA contig name so `--synteny` can work when a
+GFF uses `contig_1` or `L4_AS00146` but the FASTA contig is `AS00146`.
+
 ## Alignment
 
 | Flag | Default | Description |

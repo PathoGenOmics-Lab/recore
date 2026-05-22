@@ -153,7 +153,13 @@ impl PresenceAbsence {
         let mut header = vec!["Gene".to_string()];
         header.extend(genomes.iter().cloned());
         PresenceAbsence {
-            clusters, genomes, present, cell_values, header, metadata, genome_col_indices,
+            clusters,
+            genomes,
+            present,
+            cell_values,
+            header,
+            metadata,
+            genome_col_indices,
         }
     }
 
@@ -188,8 +194,8 @@ const METADATA_COLS: &[&str] = &[
 ];
 
 pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
-    let mut reader = csv::Reader::from_path(path)
-        .with_context(|| format!("Cannot open {}", path.display()))?;
+    let mut reader =
+        csv::Reader::from_path(path).with_context(|| format!("Cannot open {}", path.display()))?;
 
     let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
 
@@ -206,10 +212,7 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         .map(|(i, _)| i)
         .collect();
 
-    let genomes: Vec<String> = genome_indices
-        .iter()
-        .map(|&i| headers[i].clone())
-        .collect();
+    let genomes: Vec<String> = genome_indices.iter().map(|&i| headers[i].clone()).collect();
 
     let genome_idx_set: HashSet<usize> = genome_indices.iter().copied().collect();
     let meta_col_indices: Vec<usize> = (0..headers.len())
@@ -280,8 +283,7 @@ pub fn parse_pan_reference(
 ) -> Result<HashMap<String, Vec<Vec<u8>>>> {
     use std::io::{BufRead, BufReader};
 
-    let file = fs::File::open(path)
-        .with_context(|| format!("Cannot open {}", path.display()))?;
+    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     let reader = BufReader::new(file);
 
     let mut refs: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
@@ -313,7 +315,12 @@ pub fn parse_pan_reference(
         let line = line_result?;
         if let Some(header) = line.strip_prefix('>') {
             if let Some(name) = current_name.take() {
-                flush_record(name, std::mem::take(&mut current_seq), &mut refs, multi_allele);
+                flush_record(
+                    name,
+                    std::mem::take(&mut current_seq),
+                    &mut refs,
+                    multi_allele,
+                );
             }
             current_seq.clear();
 
@@ -347,8 +354,8 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     let extensions = [".fasta", ".fa", ".fna", ".fasta.gz", ".fa.gz", ".fna.gz"];
     let mut files: HashMap<String, PathBuf> = HashMap::new();
 
-    for entry in fs::read_dir(dir)
-        .with_context(|| format!("Cannot read directory {}", dir.display()))?
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("Cannot read directory {}", dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();
@@ -356,7 +363,9 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
             continue;
         }
 
-        let Some(fname) = path.file_name() else { continue };
+        let Some(fname) = path.file_name() else {
+            continue;
+        };
         let filename = fname.to_string_lossy().to_string();
 
         let mut name = filename.clone();
@@ -374,6 +383,67 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
 
     info!("Found {} genome files in {}", files.len(), dir.display());
     Ok(files)
+}
+
+/// Extract the canonical AS identifier embedded in a genome or file name.
+pub fn extract_as_id(name: &str) -> Option<&str> {
+    let bytes = name.as_bytes();
+    if bytes.len() < 7 {
+        return None;
+    }
+    for i in 0..=bytes.len() - 7 {
+        if bytes[i] == b'A'
+            && bytes[i + 1] == b'S'
+            && bytes[i + 2..i + 7].iter().all(u8::is_ascii_digit)
+        {
+            return Some(&name[i..i + 7]);
+        }
+    }
+    None
+}
+
+/// Resolve a genome FASTA by exact column name, then by embedded AS identifier.
+pub fn resolve_genome_file<'a>(
+    genome_files: &'a HashMap<String, PathBuf>,
+    genome_name: &str,
+) -> Option<&'a PathBuf> {
+    genome_files
+        .get(genome_name)
+        .or_else(|| extract_as_id(genome_name).and_then(|as_id| genome_files.get(as_id)))
+}
+
+/// Build a map keyed by presence/absence genome names, with AS-ID fallback.
+pub fn resolve_genome_files_for_pa(
+    pa: &PresenceAbsence,
+    genome_files: &HashMap<String, PathBuf>,
+) -> HashMap<String, PathBuf> {
+    let mut resolved = HashMap::new();
+    for genome_name in pa.genome_names() {
+        if let Some(path) = resolve_genome_file(genome_files, genome_name) {
+            resolved.insert(genome_name.clone(), path.clone());
+        }
+    }
+    resolved
+}
+
+/// Resolve a GFF file by exact genome name, then by embedded AS identifier.
+pub fn find_annotation_file(ann_dir: &Path, genome_name: &str) -> Option<PathBuf> {
+    let mut names = vec![genome_name.to_string()];
+    if let Some(as_id) = extract_as_id(genome_name) {
+        if as_id != genome_name {
+            names.push(as_id.to_string());
+        }
+    }
+
+    for name in names {
+        for suffix in [".gff", ".gff3", ".gff.gz", ".gff3.gz"] {
+            let path = ann_dir.join(format!("{}{}", name, suffix));
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 /// Load genome FASTA as contig_name → sequence map.
@@ -404,14 +474,60 @@ pub fn load_genome_contigs(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
     Ok(contigs)
 }
 
+/// Load only FASTA contig names, preserving file order.
+pub fn load_genome_contig_names(path: &Path) -> Result<Vec<String>> {
+    use std::io::BufRead;
+    let reader = open_maybe_gzip(path)?;
+    let mut names = Vec::new();
+    for line_result in reader.lines() {
+        let line = line_result?;
+        if let Some(header) = line.strip_prefix('>') {
+            let id = header.split_whitespace().next().unwrap_or(header);
+            names.push(id.to_string());
+        }
+    }
+    Ok(names)
+}
+
 pub type GffRecord = (String, u64, u64, char, String);
+
+/// If a single-contig GFF and single-contig FASTA use different contig names,
+/// rewrite GFF seqids to the FASTA contig name used by minimap2 hits.
+pub fn normalize_gff_records_to_fasta(
+    records: &mut [GffRecord],
+    fasta_contigs: &[String],
+) -> Option<(String, String, usize)> {
+    if records.is_empty() || fasta_contigs.len() != 1 {
+        return None;
+    }
+
+    let mut gff_contigs = ahash::HashSet::new();
+    for record in records.iter() {
+        gff_contigs.insert(record.0.clone());
+        if gff_contigs.len() > 1 {
+            return None;
+        }
+    }
+
+    let from = gff_contigs.into_iter().next()?;
+    let to = fasta_contigs[0].clone();
+    if from == to {
+        return None;
+    }
+
+    let mut changed = 0usize;
+    for record in records.iter_mut() {
+        record.0.clone_from(&to);
+        changed += 1;
+    }
+    Some((from, to, changed))
+}
 
 /// Open a file with transparent gzip decompression.
 /// If the path ends with `.gz`, decompresses on-the-fly via flate2.
 fn open_maybe_gzip(path: &Path) -> Result<Box<dyn std::io::BufRead>> {
     use std::io::BufReader;
-    let file = fs::File::open(path)
-        .with_context(|| format!("Cannot open {}", path.display()))?;
+    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     if path.extension().is_some_and(|e| e == "gz") {
         let decoder = flate2::read::GzDecoder::new(file);
         Ok(Box::new(BufReader::new(decoder)))
@@ -523,7 +639,8 @@ pub fn validate_inputs(
 
     // Clusters in pan-reference but not in CSV
     let cluster_idx = pa.cluster_index();
-    let ref_only: usize = pan_ref.keys()
+    let ref_only: usize = pan_ref
+        .keys()
         .filter(|k| !cluster_idx.contains_key(k.as_str()))
         .count();
     if ref_only > 0 {
@@ -537,7 +654,7 @@ pub fn validate_inputs(
     let mut no_fasta = 0usize;
     for gi_val in 0..pa.n_genomes() {
         let gi = GenomeIdx(gi_val);
-        if !genome_files.contains_key(pa.genome_name(gi)) {
+        if resolve_genome_file(genome_files, pa.genome_name(gi)).is_none() {
             no_fasta += 1;
         }
     }
@@ -581,9 +698,8 @@ mod tests {
 
     #[test]
     fn test_parse_pan_ref_single() {
-        let fa = write_temp(
-            ">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n",
-        );
+        let fa =
+            write_temp(">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n");
         let refs = parse_pan_reference(fa.path(), false).unwrap();
         assert_eq!(refs.len(), 2);
         assert_eq!(refs["clA"].len(), 1);
@@ -593,9 +709,8 @@ mod tests {
 
     #[test]
     fn test_parse_pan_ref_multi() {
-        let fa = write_temp(
-            ">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n",
-        );
+        let fa =
+            write_temp(">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n");
         let refs = parse_pan_reference(fa.path(), true).unwrap();
         assert_eq!(refs["clA"].len(), 2);
     }
@@ -646,6 +761,43 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_as_id() {
+        assert_eq!(extract_as_id("AS00146"), Some("AS00146"));
+        assert_eq!(extract_as_id("L4_AS00146"), Some("AS00146"));
+        assert_eq!(extract_as_id("prefix_AS00146_suffix"), Some("AS00146"));
+        assert_eq!(extract_as_id("L4_00146"), None);
+    }
+
+    #[test]
+    fn test_resolve_genome_file_by_as_suffix() {
+        let mut files = HashMap::new();
+        files.insert("AS00146".to_string(), PathBuf::from("AS00146.fna"));
+        let resolved = resolve_genome_file(&files, "L4_AS00146").unwrap();
+        assert_eq!(resolved, &PathBuf::from("AS00146.fna"));
+    }
+
+    #[test]
+    fn test_load_genome_contig_names() {
+        let fa = write_temp(">AS00146 extra words\nATGC\n>plasmid\nGGGG\n");
+        let contigs = load_genome_contig_names(fa.path()).unwrap();
+        assert_eq!(contigs, vec!["AS00146", "plasmid"]);
+    }
+
+    #[test]
+    fn test_normalize_single_contig_gff_to_fasta() {
+        let mut records = vec![
+            ("contig_1".to_string(), 0, 10, '+', "gene1".to_string()),
+            ("contig_1".to_string(), 20, 30, '+', "gene2".to_string()),
+        ];
+        let remap = normalize_gff_records_to_fasta(&mut records, &[String::from("AS00146")]);
+        assert_eq!(
+            remap,
+            Some(("contig_1".to_string(), "AS00146".to_string(), 2))
+        );
+        assert!(records.iter().all(|record| record.0 == "AS00146"));
+    }
+
+    #[test]
     fn test_validate_inputs_rejects_traversal() {
         let pa = PresenceAbsence::new_for_test(
             vec!["cluster1".into()],
@@ -660,7 +812,10 @@ mod tests {
         let genome_files: HashMap<String, PathBuf> = HashMap::new();
         let result = validate_inputs(&pa, &pan_ref, &genome_files);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsafe genome name"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsafe genome name"));
     }
 
     #[test]

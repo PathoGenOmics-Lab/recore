@@ -8,8 +8,9 @@ use std::path::PathBuf;
 use crate::cli::Args;
 use crate::nscluster;
 use crate::parser::{
-    find_genome_files, parse_gff_genes, parse_pan_reference, parse_presence_absence,
-    validate_inputs,
+    find_annotation_file, find_genome_files, load_genome_contig_names,
+    normalize_gff_records_to_fasta, parse_gff_genes, parse_pan_reference, parse_presence_absence,
+    resolve_genome_files_for_pa, validate_inputs,
 };
 use crate::relationships::write_cluster_relationships;
 use crate::rescue::{
@@ -23,7 +24,18 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 1. Parse inputs ──
     let pa = parse_presence_absence(&args.presence_absence)?;
     let pan_ref = parse_pan_reference(&args.pan_reference, args.multi_allele)?;
-    let genome_files = find_genome_files(&args.genomes)?;
+    let raw_genome_files = find_genome_files(&args.genomes)?;
+    let genome_files = resolve_genome_files_for_pa(&pa, &raw_genome_files);
+    let alias_resolved = genome_files
+        .iter()
+        .filter(|(name, _)| !raw_genome_files.contains_key(name.as_str()))
+        .count();
+    if alias_resolved > 0 {
+        info!(
+            "Resolved {} genome FASTA files by embedded AS identifier",
+            alias_resolved
+        );
+    }
 
     let cluster_to_idx = pa.cluster_index();
 
@@ -97,23 +109,36 @@ pub fn run(args: &Args) -> Result<()> {
 
     // ── 4. Load GFF annotations ──
     let mut gff_paths: HashMap<GenomeIdx, PathBuf> = HashMap::new();
+    let mut gff_contig_remaps: Vec<(String, String, String, usize)> = Vec::new();
     let gff_indices: HashMap<GenomeIdx, GffIndex> = if let Some(ref ann_dir) = args.annotations {
         let mut data = HashMap::new();
         for gi_val in 0..n_genomes {
             let gi = GenomeIdx(gi_val);
             let genome_name = pa.genome_name(gi);
-            // Try: .gff, .gff3, .gff.gz, .gff3.gz
-            let candidates = [
-                ann_dir.join(format!("{}.gff", genome_name)),
-                ann_dir.join(format!("{}.gff3", genome_name)),
-                ann_dir.join(format!("{}.gff.gz", genome_name)),
-                ann_dir.join(format!("{}.gff3.gz", genome_name)),
-            ];
-            let Some(path) = candidates.into_iter().find(|p| p.exists()) else {
+            let Some(path) = find_annotation_file(ann_dir, genome_name) else {
                 continue;
             };
             match parse_gff_genes(&path) {
-                Ok(raw_genes) => {
+                Ok(mut raw_genes) => {
+                    if let Some(fasta_path) = genome_files.get(genome_name) {
+                        match load_genome_contig_names(fasta_path) {
+                            Ok(contig_names) => {
+                                if let Some((from, to, n_records)) =
+                                    normalize_gff_records_to_fasta(&mut raw_genes, &contig_names)
+                                {
+                                    gff_contig_remaps.push((
+                                        genome_name.to_string(),
+                                        from,
+                                        to,
+                                        n_records,
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Cannot read FASTA contig names for {}: {}", genome_name, e)
+                            }
+                        }
+                    }
                     let genes: Vec<GffGene> = raw_genes
                         .into_iter()
                         .map(|(contig, start, end, strand, gene_id)| GffGene {
@@ -134,6 +159,18 @@ pub fn run(args: &Args) -> Result<()> {
         let missing = n_genomes - loaded;
         if loaded > 0 {
             info!("Loaded GFF annotations for {} genomes", loaded);
+        }
+        if !gff_contig_remaps.is_empty() {
+            let examples: Vec<String> = gff_contig_remaps
+                .iter()
+                .take(3)
+                .map(|(genome, from, to, _)| format!("{}:{}→{}", genome, from, to))
+                .collect();
+            info!(
+                "Normalized single-contig GFF seqids for {} genomes ({})",
+                gff_contig_remaps.len(),
+                examples.join(", ")
+            );
         }
         if missing > 0 && loaded > 0 {
             warn!(

@@ -12,13 +12,13 @@ const CONTIG_SEP: &str = "|||";
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Hit {
-    pub query: String,       // allele query name
-    pub cluster: String,     // original cluster name (without allele suffix)
+    pub query: String,   // allele query name
+    pub cluster: String, // original cluster name (without allele suffix)
     pub query_length: u64,
     pub query_start: u64,
     pub query_end: u64,
     pub strand: char,
-    pub target: String,      // original contig name (genome prefix stripped)
+    pub target: String, // original contig name (genome prefix stripped)
     pub target_start: u64,
     pub target_end: u64,
     pub matches: u64,
@@ -75,12 +75,14 @@ pub fn batch_search(
     }
 
     // ── 1. Collect unique query clusters needed across all genomes ──
-    let mut needed_clusters: ahash::HashSet<usize> = ahash::HashSet::default();
+    let mut needed_cluster_set: ahash::HashSet<usize> = ahash::HashSet::default();
     for (_gi, cluster_indices) in searchable_genomes {
         for &ci in cluster_indices {
-            needed_clusters.insert(ci);
+            needed_cluster_set.insert(ci);
         }
     }
+    let mut needed_clusters: Vec<usize> = needed_cluster_set.into_iter().collect();
+    needed_clusters.sort_unstable();
 
     // ── 2. Write query FASTA ──
     let mut query_file = NamedTempFile::new().context("Cannot create temp query file")?;
@@ -117,10 +119,10 @@ pub fn batch_search(
         let mut writer = BufWriter::with_capacity(256 * 1024, &mut target_file);
         let mut genomes_written = 0usize;
 
-        let genome_indices_needed: ahash::HashSet<usize> = searchable_genomes
-            .iter()
-            .map(|(gi, _)| *gi)
-            .collect();
+        let mut genome_indices_needed: Vec<usize> =
+            searchable_genomes.iter().map(|(gi, _)| *gi).collect();
+        genome_indices_needed.sort_unstable();
+        genome_indices_needed.dedup();
 
         for &gi in &genome_indices_needed {
             let genome_name = &genome_names[gi];
@@ -156,9 +158,12 @@ pub fn batch_search(
 
     let idx_output = Command::new("minimap2")
         .args([
-            "-x", preset,
-            "-t", &threads.to_string(),
-            "-d", &index_path,
+            "-x",
+            preset,
+            "-t",
+            &threads.to_string(),
+            "-d",
+            &index_path,
             &target_file.path().to_string_lossy(),
         ])
         .stderr(Stdio::piped())
@@ -175,11 +180,15 @@ pub fn batch_search(
     // ── 5. Run minimap2 alignment with streamed stdout ──
     let mut child = Command::new("minimap2")
         .args([
-            "-x", preset,
-            "-t", &threads.to_string(),
+            "-x",
+            preset,
+            "-t",
+            &threads.to_string(),
             "--secondary=yes",
-            "-N", "50",
-            "-p", "0.5",
+            "-N",
+            "50",
+            "-p",
+            "0.5",
             &index_path,
             &query_file.path().to_string_lossy(),
         ])
@@ -194,7 +203,9 @@ pub fn batch_search(
     // Capture stderr in a background thread so it doesn't block/deadlock
     let stderr = child.stderr.take();
     let stderr_handle = std::thread::spawn(move || -> String {
-        let Some(stderr) = stderr else { return String::new() };
+        let Some(stderr) = stderr else {
+            return String::new();
+        };
         let reader = BufReader::new(stderr);
         let mut buf = String::new();
         for line in reader.lines().map_while(Result::ok) {
@@ -336,7 +347,10 @@ fn parse_paf_line(
     let sep_pos = target_field.find(CONTIG_SEP)?;
     let genome_name = &target_field[..sep_pos];
     let original_header = &target_field[sep_pos + CONTIG_SEP.len()..];
-    let original_contig = original_header.split_whitespace().next().unwrap_or(original_header);
+    let original_contig = original_header
+        .split_whitespace()
+        .next()
+        .unwrap_or(original_header);
 
     let &gi = genome_name_to_idx.get(genome_name)?;
 
@@ -374,10 +388,18 @@ mod tests {
     #[test]
     fn test_hit_identity() {
         let h = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "t".into(),
-            target_start: 0, target_end: 1000,
-            matches: 950, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "t".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 950,
+            alignment_length: 1000,
+            mapq: 60,
         };
         assert!((h.identity() - 95.0).abs() < 0.01);
     }
@@ -385,10 +407,18 @@ mod tests {
     #[test]
     fn test_hit_identity_zero_alignment() {
         let h = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 0, query_end: 0, strand: '+', target: "t".into(),
-            target_start: 0, target_end: 0,
-            matches: 0, alignment_length: 0, mapq: 0,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 0,
+            strand: '+',
+            target: "t".into(),
+            target_start: 0,
+            target_end: 0,
+            matches: 0,
+            alignment_length: 0,
+            mapq: 0,
         };
         assert_eq!(h.identity(), 0.0);
     }
@@ -396,10 +426,18 @@ mod tests {
     #[test]
     fn test_hit_query_coverage() {
         let h = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 2000,
-            query_start: 0, query_end: 1000, strand: '+', target: "t".into(),
-            target_start: 0, target_end: 1000,
-            matches: 1000, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 2000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "t".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 1000,
+            alignment_length: 1000,
+            mapq: 60,
         };
         assert!((h.query_coverage() - 50.0).abs() < 0.01);
     }
@@ -407,10 +445,18 @@ mod tests {
     #[test]
     fn test_hit_query_coverage_zero_length() {
         let h = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 0,
-            query_start: 0, query_end: 0, strand: '+', target: "t".into(),
-            target_start: 0, target_end: 0,
-            matches: 0, alignment_length: 0, mapq: 0,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 0,
+            query_start: 0,
+            query_end: 0,
+            strand: '+',
+            target: "t".into(),
+            target_start: 0,
+            target_end: 0,
+            matches: 0,
+            alignment_length: 0,
+            mapq: 0,
         };
         assert_eq!(h.query_coverage(), 0.0);
     }
@@ -418,10 +464,18 @@ mod tests {
     #[test]
     fn test_hit_score() {
         let h = Hit {
-            query: "q".into(), cluster: "c".into(), query_length: 1000,
-            query_start: 0, query_end: 1000, strand: '+', target: "t".into(),
-            target_start: 0, target_end: 1000,
-            matches: 1000, alignment_length: 1000, mapq: 60,
+            query: "q".into(),
+            cluster: "c".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "t".into(),
+            target_start: 0,
+            target_end: 1000,
+            matches: 1000,
+            alignment_length: 1000,
+            mapq: 60,
         };
         assert!((h.score() - 1.0).abs() < 0.001); // 100% × 100% = 1.0
     }
@@ -483,7 +537,8 @@ mod tests {
     fn test_parse_paf_line_unknown_genome() {
         let g2i = make_genome_idx();
         let n2c = make_name_to_cluster();
-        let line = "clA\t1000\t0\t1000\t+\tunknown_genome|||contig_1\t5000000\t100\t1100\t990\t1000\t60";
+        let line =
+            "clA\t1000\t0\t1000\t+\tunknown_genome|||contig_1\t5000000\t100\t1100\t990\t1000\t60";
         assert!(parse_paf_line(line, &g2i, &n2c).is_none());
     }
 
@@ -500,7 +555,8 @@ mod tests {
         let g2i = make_genome_idx();
         let n2c = make_name_to_cluster();
         // Target header with extra description after space → only first token as contig name
-        let line = "clA\t1000\t0\t1000\t+\tgenome1|||ctg1 length=5000\t5000000\t100\t1100\t990\t1000\t60";
+        let line =
+            "clA\t1000\t0\t1000\t+\tgenome1|||ctg1 length=5000\t5000000\t100\t1100\t990\t1000\t60";
         let (_, hit) = parse_paf_line(line, &g2i, &n2c).unwrap();
         assert_eq!(hit.target, "ctg1");
     }
