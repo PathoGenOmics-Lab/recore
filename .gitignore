@@ -16,6 +16,7 @@ Thumbs.db
 
 # Recore output
 recore_output/
+benchmarks/amap_performance_metrics.tsv
 
 
 # Added by cargo
