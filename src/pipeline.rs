@@ -1,6 +1,7 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -212,7 +213,7 @@ pub fn run(args: &Args) -> Result<()> {
             maps.entry(*gi)
                 .or_insert_with(|| build_gene_to_cluster(&pa, *gi));
         }
-        if args.synteny {
+        if args.synteny || !gff_indices.is_empty() {
             for &gi in gff_indices.keys() {
                 maps.entry(gi)
                     .or_insert_with(|| build_gene_to_cluster(&pa, gi));
@@ -528,6 +529,21 @@ pub fn run(args: &Args) -> Result<()> {
             "synteny_rejected_report.tsv",
         )?;
     }
+    write_orthology_evidence(
+        &rescues,
+        &synteny_rejected,
+        &pa,
+        &gene_to_cluster_maps,
+        &args.output,
+    )?;
+    if !gff_indices.is_empty() {
+        let (context_rows, summary_rows) =
+            write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
+        info!(
+            "Cluster locus context audit: {} context rows across {} clusters",
+            context_rows, summary_rows
+        );
+    }
     write_corrected_csv(&pa, &rescue_map, &args.output, &nsc_result)?;
     let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
     if n_relationships > 0 {
@@ -670,6 +686,314 @@ fn write_named_report(
     }
     w.flush()?;
     Ok(())
+}
+
+fn stripped_gene_id(gene_id: &str) -> Option<&str> {
+    gene_id
+        .strip_suffix("_pseudo")
+        .or_else(|| gene_id.rfind("_dup_").map(|pos| &gene_id[..pos]))
+}
+
+fn gff_gene_for_id<'a>(gff: &'a GffIndex, gene_id: &str) -> Option<&'a GffGene> {
+    gff.get_by_id(gene_id)
+        .or_else(|| stripped_gene_id(gene_id).and_then(|id| gff.get_by_id(id)))
+}
+
+fn gff_gene_for_cell<'a>(gff: &'a GffIndex, cell: &str) -> Option<&'a GffGene> {
+    cell.split(';')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .find_map(|id| gff_gene_for_id(gff, id))
+}
+
+fn annotation_cluster_name(
+    rescue: &RescueEvent,
+    pa: &crate::parser::PresenceAbsence,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+) -> String {
+    let Some(annotation_match) = rescue.annotation_match.as_deref() else {
+        return String::new();
+    };
+    let Some(g2c) = gene_to_cluster_maps.get(&rescue.genome_idx) else {
+        return String::new();
+    };
+    g2c.get(annotation_match)
+        .map(|ci| pa.cluster_name(*ci).to_string())
+        .unwrap_or_default()
+}
+
+fn accepted_orthology_status(
+    rescue: &RescueEvent,
+    query_cluster: &str,
+    annotation_cluster: &str,
+) -> &'static str {
+    if rescue.synteny_ok == Some(true) {
+        return "accepted_synteny";
+    }
+    if !annotation_cluster.is_empty() && annotation_cluster == query_cluster {
+        return "accepted_annotation_same_cluster";
+    }
+    match rescue.rescue_type {
+        RescueType::Split { .. } => "accepted_split_alias",
+        RescueType::StartVariant { .. } => "accepted_boundary_variant",
+        RescueType::AlignmentSplit { .. } => "accepted_alignment_split",
+        RescueType::Fragmented { .. } => "accepted_fragment_evidence",
+        RescueType::Pseudogene { .. } => "accepted_pseudogene_evidence",
+        RescueType::Paralog { .. } => "accepted_paralog_sequence_evidence",
+        RescueType::Dropped => "accepted_sequence_evidence",
+    }
+}
+
+fn write_orthology_evidence(
+    rescues: &[RescueEvent],
+    synteny_rejected: &[RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let path = output_dir.join("orthology_evidence.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(
+        w,
+        "decision\torthology_status\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
+    )?;
+
+    for (accepted, rescue) in rescues
+        .iter()
+        .map(|r| (true, r))
+        .chain(synteny_rejected.iter().map(|r| (false, r)))
+    {
+        let query_cluster = pa.cluster_name(rescue.cluster_idx);
+        let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+        let status = if accepted {
+            accepted_orthology_status(rescue, query_cluster, &annotation_cluster)
+        } else {
+            "rejected_incompatible_context"
+        };
+        let rejection_reason = if accepted { "" } else { "synteny_fail" };
+        let decision = if accepted { "accepted" } else { "rejected" };
+        writeln!(
+            w,
+            "{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
+            decision,
+            status,
+            query_cluster,
+            pa.genome_name(rescue.genome_idx),
+            rescue.rescue_type,
+            rescue.identity,
+            rescue.coverage,
+            rescue.contig,
+            rescue.start + 1,
+            rescue.end,
+            rescue.strand,
+            rescue.confidence,
+            match rescue.synteny_ok {
+                Some(true) => "PASS",
+                Some(false) => "FAIL",
+                None => "",
+            },
+            rescue.annotation_match.as_deref().unwrap_or(""),
+            annotation_cluster,
+            rejection_reason,
+            rescue.fragment_evidence.note.as_deref().unwrap_or(""),
+        )?;
+    }
+    w.flush()?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Default)]
+struct ContextAccumulator {
+    count: usize,
+    examples: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ClusterContextSummary {
+    cluster_idx: ClusterIdx,
+    n_present: usize,
+    n_mapped: usize,
+    n_unresolved: usize,
+    n_unique_contexts: usize,
+    dominant_count: usize,
+    dominant_fraction: f64,
+    interpretation: &'static str,
+}
+
+fn context_signature(
+    genes: &[&GffGene],
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    pa: &crate::parser::PresenceAbsence,
+) -> String {
+    let names: Vec<&str> = genes
+        .iter()
+        .filter_map(|gene| gene_to_cluster.get(&gene.gene_id).copied())
+        .map(|ci| pa.cluster_name(ci))
+        .collect();
+    if names.is_empty() {
+        "NA".to_string()
+    } else {
+        names.join("|")
+    }
+}
+
+fn context_interpretation(
+    n_mapped: usize,
+    n_unique_contexts: usize,
+    dominant_fraction: f64,
+) -> &'static str {
+    if n_mapped < 3 {
+        "insufficient_context"
+    } else if n_unique_contexts <= 1 {
+        "stable_single_locus"
+    } else if dominant_fraction >= 0.95 {
+        "stable_single_locus_minor_noise"
+    } else if dominant_fraction >= 0.80 {
+        "mostly_stable_review_minor_contexts"
+    } else {
+        "possible_multilocus_or_paralog"
+    }
+}
+
+fn write_cluster_locus_contexts(
+    pa: &crate::parser::PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    output_dir: &std::path::Path,
+) -> Result<(usize, usize)> {
+    let mut context_rows: BTreeMap<(usize, String, String), ContextAccumulator> = BTreeMap::new();
+    let mut summaries = Vec::new();
+
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        let mut n_mapped = 0usize;
+        let mut n_unresolved = 0usize;
+        let mut context_counts: HashMap<(String, String), usize> = HashMap::new();
+
+        let mut genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
+        genomes.sort_by_key(|gi| gi.val());
+
+        for gi in genomes {
+            let Some(gff) = gff_indices.get(&gi) else {
+                continue;
+            };
+            let Some(g2c) = gene_to_cluster_maps.get(&gi) else {
+                continue;
+            };
+            let cell = pa.cell(ci, gi);
+            let Some(gene) = gff_gene_for_cell(gff, cell) else {
+                n_unresolved += 1;
+                continue;
+            };
+
+            let (upstream, downstream) = gff.context_window(
+                &gene.contig,
+                gene.start,
+                gene.end,
+                Some(gene.gene_id.as_str()),
+                2,
+            );
+            let upstream_sig = context_signature(&upstream, g2c, pa);
+            let downstream_sig = context_signature(&downstream, g2c, pa);
+            let key = (upstream_sig.clone(), downstream_sig.clone());
+            *context_counts.entry(key).or_insert(0) += 1;
+            n_mapped += 1;
+
+            let row_key = (ci.val(), upstream_sig, downstream_sig);
+            let row = context_rows.entry(row_key).or_default();
+            row.count += 1;
+            if row.examples.len() < 5 {
+                row.examples
+                    .push(format!("{}:{}", pa.genome_name(gi), gene.gene_id));
+            }
+        }
+
+        let n_unique_contexts = context_counts.len();
+        let dominant_count = context_counts.values().copied().max().unwrap_or(0);
+        let dominant_fraction = if n_mapped > 0 {
+            dominant_count as f64 / n_mapped as f64
+        } else {
+            0.0
+        };
+        let interpretation = context_interpretation(n_mapped, n_unique_contexts, dominant_fraction);
+        summaries.push(ClusterContextSummary {
+            cluster_idx: ci,
+            n_present: pa.present_count(ci),
+            n_mapped,
+            n_unresolved,
+            n_unique_contexts,
+            dominant_count,
+            dominant_fraction,
+            interpretation,
+        });
+    }
+
+    let context_path = output_dir.join("cluster_locus_context.tsv");
+    let context_file = fs::File::create(&context_path)?;
+    let mut context_w = BufWriter::new(context_file);
+    writeln!(
+        context_w,
+        "gene_cluster\tcontext_rank\tn_genomes\tfraction_of_mapped_contexts\tupstream_context\tdownstream_context\texample_genomes"
+    )?;
+    let mut written_context_rows = 0usize;
+    let mut rows_by_cluster: BTreeMap<usize, Vec<(String, String, ContextAccumulator)>> =
+        BTreeMap::new();
+    for ((ci, upstream, downstream), acc) in context_rows {
+        rows_by_cluster
+            .entry(ci)
+            .or_default()
+            .push((upstream, downstream, acc));
+    }
+    for (ci_val, mut rows) in rows_by_cluster {
+        rows.sort_by(|a, b| {
+            b.2.count
+                .cmp(&a.2.count)
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        let mapped = summaries[ci_val].n_mapped.max(1);
+        for (rank, (upstream, downstream, acc)) in rows.into_iter().enumerate() {
+            writeln!(
+                context_w,
+                "{}\t{}\t{}\t{:.3}\t{}\t{}\t{}",
+                pa.cluster_name(ClusterIdx(ci_val)),
+                rank + 1,
+                acc.count,
+                acc.count as f64 / mapped as f64,
+                upstream,
+                downstream,
+                acc.examples.join(";"),
+            )?;
+            written_context_rows += 1;
+        }
+    }
+    context_w.flush()?;
+
+    let summary_path = output_dir.join("cluster_locus_summary.tsv");
+    let summary_file = fs::File::create(&summary_path)?;
+    let mut summary_w = BufWriter::new(summary_file);
+    writeln!(
+        summary_w,
+        "gene_cluster\tn_present\tn_context_mapped\tn_unresolved_gene_ids\tn_unique_contexts\tdominant_context_count\tdominant_context_fraction\tinterpretation"
+    )?;
+    for summary in &summaries {
+        writeln!(
+            summary_w,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}",
+            pa.cluster_name(summary.cluster_idx),
+            summary.n_present,
+            summary.n_mapped,
+            summary.n_unresolved,
+            summary.n_unique_contexts,
+            summary.dominant_count,
+            summary.dominant_fraction,
+            summary.interpretation,
+        )?;
+    }
+    summary_w.flush()?;
+
+    Ok((written_context_rows, summaries.len()))
 }
 
 fn write_corrected_csv(

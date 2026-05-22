@@ -21,4 +21,4 @@ recore -p gene_presence_absence.csv \
        -t 8 -o recore_output/
 ```
 
-Outputs: `rescue_report.tsv`, `gene_presence_absence_recore.csv`, `summary.txt`, `nscluster_report.tsv`, and `synteny_rejected_report.tsv` when explicit synteny failures are found.
+Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `gene_presence_absence_recore.csv`, `summary.txt`, `cluster_relationships.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` when GFFs are loaded, `nscluster_report.tsv`, and `synteny_rejected_report.tsv` when explicit synteny failures are found.

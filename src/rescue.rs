@@ -204,6 +204,63 @@ impl GffIndex {
 
         (upstream, downstream)
     }
+
+    pub fn context_window(
+        &self,
+        contig: &str,
+        start: u64,
+        end: u64,
+        center_gene_id: Option<&str>,
+        n_neighbors: usize,
+    ) -> (Vec<&GffGene>, Vec<&GffGene>) {
+        let Some(&(range_start, range_end)) = self.contig_ranges.get(contig) else {
+            return (Vec::new(), Vec::new());
+        };
+        let slice = &self.genes[range_start..range_end];
+        if slice.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let center_pos = center_gene_id
+            .and_then(|gene_id| self.gene_id_index.get(gene_id).copied())
+            .and_then(|idx| {
+                if idx >= range_start && idx < range_end {
+                    Some(idx - range_start)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                slice
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, gene)| {
+                        let overlap = gene.end.min(end).saturating_sub(gene.start.max(start));
+                        (overlap > 0).then_some((i, overlap))
+                    })
+                    .max_by_key(|(_, overlap)| *overlap)
+                    .map(|(i, _)| i)
+            });
+
+        if let Some(center_pos) = center_pos {
+            let upstream = slice[..center_pos].iter().rev().take(n_neighbors).collect();
+            let downstream = slice
+                .iter()
+                .skip(center_pos + 1)
+                .take(n_neighbors)
+                .collect();
+            return (upstream, downstream);
+        }
+
+        let pos = slice.partition_point(|g| g.end <= start);
+        let upstream = slice[..pos].iter().rev().take(n_neighbors).collect();
+        let downstream = slice[pos..]
+            .iter()
+            .filter(|g| g.start >= end)
+            .take(n_neighbors)
+            .collect();
+        (upstream, downstream)
+    }
 }
 
 // ── Gene-to-cluster index ──
@@ -1087,65 +1144,15 @@ fn synteny_context(
     end: u64,
     center_gene_id: Option<&str>,
 ) -> SyntenyContext {
-    let Some(&(range_start, range_end)) = gff.contig_ranges.get(contig) else {
-        return SyntenyContext::default();
-    };
-    let slice = &gff.genes[range_start..range_end];
-    if slice.is_empty() {
-        return SyntenyContext::default();
-    }
-
-    let center_pos = center_gene_id
-        .and_then(|gene_id| gff.gene_id_index.get(gene_id).copied())
-        .and_then(|idx| {
-            if idx >= range_start && idx < range_end {
-                Some(idx - range_start)
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            slice
-                .iter()
-                .enumerate()
-                .filter_map(|(i, gene)| {
-                    let overlap = gene.end.min(end).saturating_sub(gene.start.max(start));
-                    (overlap > 0).then_some((i, overlap))
-                })
-                .max_by_key(|(_, overlap)| *overlap)
-                .map(|(i, _)| i)
-        });
-
     let mut context = SyntenyContext::default();
-    if let Some(center_pos) = center_pos {
-        for gene in slice[..center_pos].iter().rev().take(SYNTENY_CONTEXT_GENES) {
-            if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
-                context.upstream.push(cluster);
-            }
-        }
-        for gene in slice
-            .iter()
-            .skip(center_pos + 1)
-            .take(SYNTENY_CONTEXT_GENES)
-        {
-            if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
-                context.downstream.push(cluster);
-            }
-        }
-        return context;
-    }
-
-    let pos = slice.partition_point(|g| g.end <= start);
-    for gene in slice[..pos].iter().rev().take(SYNTENY_CONTEXT_GENES) {
+    let (upstream, downstream) =
+        gff.context_window(contig, start, end, center_gene_id, SYNTENY_CONTEXT_GENES);
+    for gene in upstream {
         if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
             context.upstream.push(cluster);
         }
     }
-    for gene in slice[pos..]
-        .iter()
-        .filter(|g| g.start >= end)
-        .take(SYNTENY_CONTEXT_GENES)
-    {
+    for gene in downstream {
         if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
             context.downstream.push(cluster);
         }

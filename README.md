@@ -13,6 +13,7 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 - **Pseudogene detection** — Identifies disrupted genes: internal stop codons, frameshifts, partial deletions
 - **Nucleotide similarity clustering** — Merges Panaroo clusters that are redundant at the DNA level (split at AA but identical at nucleotide)
 - **Cluster relationship report** — Summarizes SPLIT/PARALOG/annotation-match/NSC evidence between clusters with reproducible collapse/review recommendations
+- **Orthology evidence audit** — Writes accepted/rejected candidate evidence and cluster-level locus-context summaries to catch multi-locus clusters and paralog traps
 - **Synteny validation** — Optional flanking gene comparison to confirm orthology
 - **Genome/GFF name reconciliation** — Resolves FASTAs by embedded AS IDs and normalizes single-contig GFF seqids to the FASTA contig name used by minimap2
 - **Corrected GFF export** — Optional per-genome GFF3 files with rescued CDS features appended
@@ -219,7 +220,10 @@ contig `AS00146`. Original GFF files are not modified.
 recore_output/
 ├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
 ├── rescue_report.tsv                  # Per-rescue details
+├── orthology_evidence.tsv             # Accepted and rejected candidate evidence
 ├── synteny_rejected_report.tsv        # Explicit synteny FAIL candidates, if any
+├── cluster_locus_context.tsv          # Per-cluster locus-context rows (if GFFs are loaded)
+├── cluster_locus_summary.tsv          # Cluster-level context stability flags (if GFFs are loaded)
 ├── cluster_relationships.tsv          # Inter-cluster rescue/NSC relationships
 ├── nscluster_report.tsv               # NS cluster memberships (if --nscluster)
 ├── corrected_gff/                     # Per-genome GFF3s (if --write-corrected-gff)

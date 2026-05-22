@@ -71,6 +71,63 @@ look like sequence rescues but fail the local genomic-context check.
 
 ---
 
+## orthology_evidence.tsv
+
+Written for every run. One row per accepted rescue plus every rejected synteny
+candidate.
+
+| Column | Description |
+|--------|-------------|
+| `decision` | `accepted` or `rejected` |
+| `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, or `rejected_incompatible_context` |
+| `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
+| `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
+| `rejection_reason` | Reason rejected, currently `synteny_fail` |
+| `fragment_note` | Fragment interpretation, if applicable |
+
+Use this table as the primary audit trail for why a candidate entered, or did
+not enter, the corrected matrix.
+
+---
+
+## cluster_locus_context.tsv
+
+Written when GFF annotations are loaded. One row per observed locus context for
+each cluster.
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Panaroo cluster name |
+| `context_rank` | Rank within the cluster by number of genomes |
+| `n_genomes` | Number of genomes supporting this context |
+| `fraction_of_mapped_contexts` | Fraction among genomes where the cluster gene ID was resolved in the GFF |
+| `upstream_context` | Nearest upstream cluster names, joined by `|`; `NA` if no mapped context |
+| `downstream_context` | Nearest downstream cluster names, joined by `|`; `NA` if no mapped context |
+| `example_genomes` | Up to five genome:gene examples |
+
+---
+
+## cluster_locus_summary.tsv
+
+Written when GFF annotations are loaded. One row per cluster.
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Panaroo cluster name |
+| `n_present` | Number of genomes where the cluster is present in the input matrix |
+| `n_context_mapped` | Present genomes where the cell gene ID was found in the GFF |
+| `n_unresolved_gene_ids` | Present genomes where the cell gene ID could not be resolved in the GFF |
+| `n_unique_contexts` | Number of distinct upstream/downstream context signatures |
+| `dominant_context_count` | Number of genomes in the largest context |
+| `dominant_context_fraction` | Dominant context count divided by mapped contexts |
+| `interpretation` | `stable_single_locus`, `stable_single_locus_minor_noise`, `mostly_stable_review_minor_contexts`, `possible_multilocus_or_paralog`, or `insufficient_context` |
+
+Clusters flagged as `possible_multilocus_or_paralog` are not automatically
+changed, but they should be reviewed before treating accessory-gene calls as
+biological.
+
+---
+
 ## gene_presence_absence_recore.csv
 
 Drop-in replacement for Panaroo's `gene_presence_absence.csv`. Identical format and column order.

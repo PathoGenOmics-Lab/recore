@@ -235,6 +235,14 @@ One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, 
 
 Written only when `--synteny` rejects at least one candidate. It uses the same schema as `rescue_report.tsv`, but these rows are audit records only and are not inserted into `gene_presence_absence_recore.csv`.
 
+### orthology_evidence.tsv
+
+One row per accepted rescue plus rejected synteny candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, annotation-matched cluster, synteny state, confidence, coordinates, and rejection reason.
+
+### cluster_locus_context.tsv / cluster_locus_summary.tsv
+
+Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context.
+
 ### gene_presence_absence_recore.csv
 
 Drop-in replacement for Panaroo's CSV. Changes:
