@@ -1179,6 +1179,13 @@ impl SyntenyContext {
         !self.upstream.is_empty() || !self.downstream.is_empty()
     }
 
+    fn signature(&self) -> (Vec<usize>, Vec<usize>) {
+        (
+            self.upstream.iter().map(|ci| ci.val()).collect(),
+            self.downstream.iter().map(|ci| ci.val()).collect(),
+        )
+    }
+
     fn side_matches(&self, other: &SyntenyContext) -> bool {
         let up_matches = cluster_overlap_count(&self.upstream, &other.upstream);
         let down_matches = cluster_overlap_count(&self.downstream, &other.downstream);
@@ -1219,6 +1226,27 @@ fn synteny_context(
         }
     }
     context
+}
+
+fn recurrent_context_counts(
+    contexts: &[SyntenyContext],
+) -> HashMap<(Vec<usize>, Vec<usize>), usize> {
+    let mut counts = HashMap::new();
+    for context in contexts {
+        *counts.entry(context.signature()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn is_recurrent_context(
+    context: &SyntenyContext,
+    counts: &HashMap<(Vec<usize>, Vec<usize>), usize>,
+    total_contexts: usize,
+) -> bool {
+    if total_contexts <= 3 {
+        return true;
+    }
+    counts.get(&context.signature()).copied().unwrap_or(0) >= 2
 }
 
 pub fn validate_synteny(
@@ -1278,7 +1306,7 @@ pub fn validate_synteny(
         return;
     }
 
-    let mut synteny_match = false;
+    let mut reference_contexts = Vec::new();
     let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
     ref_genomes.sort_by_key(|gi| gi.val());
     for ref_gi in ref_genomes {
@@ -1323,11 +1351,16 @@ pub fn validate_synteny(
             Some(ref_gene.gene_id.as_str()),
         );
 
-        if target_context.side_matches(&ref_context) {
-            synteny_match = true;
-            break;
+        if ref_context.has_any_cluster() {
+            reference_contexts.push(ref_context);
         }
     }
+
+    let context_counts = recurrent_context_counts(&reference_contexts);
+    let synteny_match = reference_contexts.iter().any(|ref_context| {
+        is_recurrent_context(ref_context, &context_counts, reference_contexts.len())
+            && target_context.side_matches(ref_context)
+    });
 
     rescue.synteny_ok = Some(synteny_match);
 
@@ -1753,6 +1786,7 @@ mod tests {
                 "ref3".into(),
                 "ref4".into(),
                 "ref5".into(),
+                "ref6".into(),
                 "target".into(),
             ],
             vec![
@@ -1763,6 +1797,7 @@ mod tests {
                     "g3".into(),
                     "g4".into(),
                     "g5".into(),
+                    "g6".into(),
                     "".into(),
                 ],
                 vec![
@@ -1772,6 +1807,7 @@ mod tests {
                     "".into(),
                     "".into(),
                     "up5".into(),
+                    "up6".into(),
                     "up_target".into(),
                 ],
                 vec![
@@ -1781,6 +1817,7 @@ mod tests {
                     "".into(),
                     "".into(),
                     "down5".into(),
+                    "down6".into(),
                     "down_target".into(),
                 ],
                 vec![
@@ -1791,6 +1828,7 @@ mod tests {
                     "xup4".into(),
                     "".into(),
                     "".into(),
+                    "".into(),
                 ],
                 vec![
                     "xdown0".into(),
@@ -1798,6 +1836,7 @@ mod tests {
                     "xdown2".into(),
                     "xdown3".into(),
                     "xdown4".into(),
+                    "".into(),
                     "".into(),
                     "".into(),
                 ],
@@ -1842,16 +1881,17 @@ mod tests {
             );
         }
         gff_indices.insert(GenomeIdx(5), genes("up5", "g5", "down5"));
-        gff_indices.insert(GenomeIdx(6), genes("up_target", "candidate", "down_target"));
+        gff_indices.insert(GenomeIdx(6), genes("up6", "g6", "down6"));
+        gff_indices.insert(GenomeIdx(7), genes("up_target", "candidate", "down_target"));
 
         let mut g2c = HashMap::new();
-        for gi in 0..7 {
+        for gi in 0..8 {
             g2c.insert(GenomeIdx(gi), build_gene_to_cluster(&pa, GenomeIdx(gi)));
         }
 
         let mut rescue = RescueEvent {
             cluster_idx: ClusterIdx(0),
-            genome_idx: GenomeIdx(6),
+            genome_idx: GenomeIdx(7),
             rescue_type: RescueType::Dropped,
             identity: 99.0,
             coverage: 99.0,
@@ -1867,6 +1907,47 @@ mod tests {
 
         validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
         assert_eq!(rescue.synteny_ok, Some(true));
+    }
+
+    #[test]
+    fn test_synteny_rejects_one_off_context_when_many_references_exist() {
+        let one_off = SyntenyContext {
+            upstream: vec![ClusterIdx(1)],
+            downstream: vec![ClusterIdx(2)],
+        };
+        let contexts = vec![
+            SyntenyContext {
+                upstream: vec![ClusterIdx(3)],
+                downstream: vec![ClusterIdx(4)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(5)],
+                downstream: vec![ClusterIdx(6)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(7)],
+                downstream: vec![ClusterIdx(8)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(9)],
+                downstream: vec![ClusterIdx(10)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(11)],
+                downstream: vec![ClusterIdx(12)],
+            },
+            one_off,
+        ];
+        let counts = recurrent_context_counts(&contexts);
+        assert!(!is_recurrent_context(&contexts[5], &counts, contexts.len()));
+
+        let rare_contexts = &contexts[..3];
+        let rare_counts = recurrent_context_counts(rare_contexts);
+        assert!(is_recurrent_context(
+            &rare_contexts[0],
+            &rare_counts,
+            rare_contexts.len()
+        ));
     }
 
     #[test]

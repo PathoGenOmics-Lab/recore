@@ -62,6 +62,11 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub write_corrected_gff: bool,
 
+    /// Genome column to audit as the reference/background genome.
+    /// Accepts exact matrix names or embedded AS identifiers such as AS00146.
+    #[arg(long)]
+    pub reference_genome: Option<String>,
+
     // ── Nucleotide Similarity Clustering ──
     /// Enable nucleotide similarity clustering to merge redundant Panaroo clusters.
     /// Detects clusters split at the AA level but identical at the DNA level.

@@ -175,9 +175,10 @@ For the rescued gene at position (contig, start, end) in the target genome:
 2. For every reference genome where this cluster IS present, in deterministic genome order:
    a. Find the reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes)
    b. Build the same side-specific context window around the reference gene
-   c. Compare side-specific flanking cluster assignments
-3. If both sides are comparable, require at least one upstream and one downstream match on the same side. If only one side is comparable, require a same-side match on that side.
-4. Otherwise → FAIL
+   c. Count recurrent reference contexts
+3. If three or fewer reference contexts are available, any compatible reference context can validate the rescue. If more than three are available, a compatible context must be observed at least twice. This prevents a single noisy/paralogous context from validating a rescue in a large dataset.
+4. If both sides are comparable, require at least one upstream and one downstream match on the same side. If only one side is comparable, require a same-side match on that side.
+5. Otherwise → FAIL
 
 Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty.
 
@@ -243,7 +244,14 @@ Written only when PARALOG candidates lack explicit synteny support. It uses the 
 
 ### orthology_evidence.tsv
 
-One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, annotation-matched cluster, synteny state, confidence, coordinates, and rejection reason.
+One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, evidence state (`STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, `REJECTED_CONTEXT`), matrix action, publication status, annotation-matched cluster, synteny state, confidence, coordinates, and rejection reason.
+
+### reference_genome_audit.tsv
+
+Written when `--reference-genome` is provided. The reference can be an exact matrix column or an embedded `ASxxxxx` identifier. For every cluster, Recore reports whether the reference matrix already contains it, whether Recore rescued reference evidence, whether only rejected/paralog/partial evidence exists, or whether no evidence was found. The `reference_absence_class` column is deliberately simple:
+- `new_to_reference`: no reference evidence under the current thresholds.
+- `reference_like_or_present`: already present or rescued in the audited reference.
+- `reference_like_ambiguous`: partial, pseudogene, paralog, or rejected-context evidence; review before calling novel to the reference.
 
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 

@@ -18,7 +18,8 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 - **Nucleotide similarity clustering** — Merges Panaroo clusters that are redundant at the DNA level (split at AA but identical at nucleotide)
 - **Cluster relationship report** — Summarizes SPLIT/PARALOG/annotation-match/NSC evidence between clusters with reproducible collapse/review recommendations
 - **Orthology evidence audit** — Writes accepted/rejected candidate evidence and cluster-level locus-context summaries to catch multi-locus clusters and paralog traps
-- **Synteny validation** — Optional flanking gene comparison to confirm orthology
+- **Reference-genome audit** — Optional `--reference-genome` report classifying each cluster as cleanly absent, reference-like, alias, partial, paralog, or already present
+- **Synteny validation** — Optional recurrent flanking gene comparison to confirm orthology
 - **Genome/GFF name reconciliation** — Resolves FASTAs by embedded AS IDs and normalizes single-contig GFF seqids to the FASTA contig name used by minimap2
 - **Corrected GFF export** — Optional per-genome GFF3 files with rescued CDS features appended
 - **Batch architecture** — One minimap2 invocation for all genomes, streamed PAF, rayon parallelism
@@ -29,12 +30,14 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 flowchart LR
     A["Inputs<br/>matrix + pan-ref + FASTA + GFF"] --> B["Find candidate<br/>false absences"]
     B --> C["Classify<br/>dropped, split, start, fragment, pseudogene"]
-    C --> D{"Orthology<br/>supported?"}
+    C --> D{"Recurrent synteny<br/>or annotation support?"}
     D -->|yes| E["Correct matrix<br/>+ optional GFF"]
     D -->|no| F["Reject<br/>audit only"]
-    E --> G["Reports"]
+    E --> H{"Reference<br/>audit?"}
+    H -->|optional| G["Reports"]
+    H -->|skip| G
     F --> G
-    G["Reports<br/>rescue + orthology + cluster-context + NSC"]
+    G["Reports<br/>rescue + orthology + reference + cluster-context + NSC"]
 ```
 
 Key idea: Recore first finds sequence evidence, then decides whether the hit is
@@ -82,6 +85,7 @@ recore \
   --nsc-coverage 0.8 \
   --preset asm5 \
   --min-prevalence 0.05 \
+  --reference-genome AS00146 \
   -t 8 \
   -o recore_output/
 ```
@@ -90,6 +94,7 @@ recore \
 |------|-----|
 | `-a annotations/` | GFF directory — enables SPLIT, START_VARIANT, PARALOG, and PSEUDOGENE classification (not just DROPPED) |
 | `--synteny` | Validates rescues by comparing flanking gene context — rejects spurious paralog rescues |
+| `--reference-genome AS00146` | Writes `reference_genome_audit.tsv`, resolving exact names or embedded AS identifiers such as `L4_AS00146` |
 | `--multi-allele` | Queries all allelic variants per cluster instead of just the longest — more sensitive for diverse datasets |
 | `--write-corrected-gff` | Writes per-genome GFF3 files with Recore rescue features appended |
 | `--nscluster` | Merges Panaroo clusters that are identical at the DNA level but were split at the amino-acid level — reduces inflated accessory genome |
@@ -148,6 +153,7 @@ recore \
 | `--multi-allele` | off | Query all alleles per cluster (slower, more sensitive) |
 | `--synteny` | off | Validate rescues by flanking gene conservation |
 | `--write-corrected-gff` | off | Write `corrected_gff/*.recore.gff3` files with rescue features appended |
+| `--reference-genome` | — | Audit one genome column/reference background by exact name or embedded `ASxxxxx` identifier |
 
 ### Nucleotide similarity clustering
 
@@ -198,6 +204,7 @@ recore_output/
 ├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
 ├── rescue_report.tsv                  # Per-rescue details
 ├── orthology_evidence.tsv             # Accepted and rejected candidate evidence
+├── reference_genome_audit.tsv         # Reference-specific absent/present audit (if --reference-genome)
 ├── synteny_rejected_report.tsv        # Explicit synteny FAIL candidates, if any
 ├── paralog_rejected_report.tsv        # PARALOG hits without synteny support, if any
 ├── cluster_locus_context.tsv          # Per-cluster locus-context rows (if GFFs are loaded)

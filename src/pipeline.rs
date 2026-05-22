@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::cli::Args;
 use crate::nscluster;
 use crate::parser::{
-    find_annotation_file, find_genome_files, load_genome_contig_names,
+    extract_as_id, find_annotation_file, find_genome_files, load_genome_contig_names,
     normalize_gff_records_to_fasta, parse_gff_genes, parse_pan_reference, parse_presence_absence,
     resolve_genome_files_for_pa, validate_inputs,
 };
@@ -580,6 +580,17 @@ pub fn run(args: &Args) -> Result<()> {
         &gene_to_cluster_maps,
         &args.output,
     )?;
+    if let Some(reference_genome) = args.reference_genome.as_deref() {
+        write_reference_genome_audit(
+            reference_genome,
+            &rescues,
+            &synteny_rejected,
+            &paralog_rejected,
+            &pa,
+            &gene_to_cluster_maps,
+            &args.output,
+        )?;
+    }
     if !gff_indices.is_empty() {
         let (context_rows, summary_rows) =
             write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
@@ -795,6 +806,98 @@ fn is_paralog_without_synteny_support(rescue: &RescueEvent) -> bool {
     matches!(rescue.rescue_type, RescueType::Paralog { .. }) && rescue.synteny_ok != Some(true)
 }
 
+fn evidence_state(
+    rescue: &RescueEvent,
+    accepted: bool,
+    query_cluster: &str,
+    annotation_cluster: &str,
+    rejection_reason: &str,
+) -> &'static str {
+    if !accepted {
+        if rejection_reason == "synteny_fail" {
+            return "REJECTED_CONTEXT";
+        }
+        if matches!(rescue.rescue_type, RescueType::Paralog { .. }) {
+            return "HOMOLOG_PARALOG";
+        }
+        return "REJECTED_CONTEXT";
+    }
+
+    match rescue.rescue_type {
+        RescueType::Split { .. } => "ALIAS_CLUSTER",
+        RescueType::Paralog { .. } => {
+            if rescue.synteny_ok == Some(true) {
+                "STRICT_PRESENT"
+            } else {
+                "HOMOLOG_PARALOG"
+            }
+        }
+        RescueType::Pseudogene { .. } => "PSEUDOGENE",
+        RescueType::Fragmented { .. } | RescueType::AlignmentSplit { .. } => "PARTIAL_HOMOLOGY",
+        RescueType::Dropped | RescueType::StartVariant { .. } => {
+            if rescue.synteny_ok == Some(true)
+                || (!annotation_cluster.is_empty() && annotation_cluster == query_cluster)
+            {
+                "STRICT_PRESENT"
+            } else {
+                "SEQUENCE_ONLY"
+            }
+        }
+    }
+}
+
+fn matrix_action(accepted: bool) -> &'static str {
+    if accepted {
+        "correct_presence"
+    } else {
+        "audit_only"
+    }
+}
+
+fn publication_status(accepted: bool, state: &str) -> &'static str {
+    if !accepted {
+        return "audit_only_not_corrected";
+    }
+    match state {
+        "STRICT_PRESENT" | "ALIAS_CLUSTER" => "publication_ready_correction",
+        "SEQUENCE_ONLY" | "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => {
+            "corrected_but_review_for_publication"
+        }
+        "HOMOLOG_PARALOG" => "corrected_paralog_review",
+        _ => "corrected_review",
+    }
+}
+
+fn evidence_strength(state: &str) -> &'static str {
+    match state {
+        "STRICT_PRESENT" | "ALIAS_CLUSTER" => "high",
+        "SEQUENCE_ONLY" => "moderate",
+        "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => "review",
+        "HOMOLOG_PARALOG" | "REJECTED_CONTEXT" => "low",
+        "NO_EVIDENCE" => "none",
+        _ => "review",
+    }
+}
+
+fn recommended_wording(state: &str, accepted: bool) -> &'static str {
+    if !accepted {
+        return "Do not correct the matrix; keep as audit evidence only.";
+    }
+    match state {
+        "STRICT_PRESENT" => "Treat as present at the same locus.",
+        "ALIAS_CLUSTER" => {
+            "Treat as a cluster alias or split; avoid counting as an independent novel gene."
+        }
+        "SEQUENCE_ONLY" => "Treat as sequence-supported presence; review if used as a key claim.",
+        "PARTIAL_HOMOLOGY" => {
+            "Describe as partial or fragmented homology, not clean gene presence."
+        }
+        "PSEUDOGENE" => "Describe as disrupted or pseudogenized sequence evidence.",
+        "HOMOLOG_PARALOG" => "Keep distinct unless synteny confirms the same locus.",
+        _ => "Review before publication.",
+    }
+}
+
 fn write_orthology_evidence(
     rescues: &[RescueEvent],
     synteny_rejected: &[RescueEvent],
@@ -808,18 +911,24 @@ fn write_orthology_evidence(
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "decision\torthology_status\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
+        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
     )?;
 
     for rescue in rescues {
         let query_cluster = pa.cluster_name(rescue.cluster_idx);
         let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
         let status = accepted_orthology_status(rescue, query_cluster, &annotation_cluster);
+        let state = evidence_state(rescue, true, query_cluster, &annotation_cluster, "");
         writeln!(
             w,
-            "{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
             "accepted",
             status,
+            state,
+            matrix_action(true),
+            publication_status(true, state),
+            evidence_strength(state),
+            recommended_wording(state, true),
             query_cluster,
             pa.genome_name(rescue.genome_idx),
             rescue.rescue_type,
@@ -857,11 +966,17 @@ fn write_orthology_evidence(
         for rescue in rejected {
             let query_cluster = pa.cluster_name(rescue.cluster_idx);
             let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+            let state = evidence_state(rescue, false, query_cluster, &annotation_cluster, reason);
             writeln!(
                 w,
-                "{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
                 "rejected",
                 status,
+                state,
+                matrix_action(false),
+                publication_status(false, state),
+                evidence_strength(state),
+                recommended_wording(state, false),
                 query_cluster,
                 pa.genome_name(rescue.genome_idx),
                 rescue.rescue_type,
@@ -885,6 +1000,290 @@ fn write_orthology_evidence(
         }
     }
     w.flush()?;
+    Ok(())
+}
+
+fn resolve_reference_genome(
+    pa: &crate::parser::PresenceAbsence,
+    requested: &str,
+) -> Option<GenomeIdx> {
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        if pa.genome_name(gi) == requested {
+            return Some(gi);
+        }
+    }
+
+    let requested_as = extract_as_id(requested);
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        let genome_name = pa.genome_name(gi);
+        if let (Some(a), Some(b)) = (requested_as, extract_as_id(genome_name)) {
+            if a == b {
+                return Some(gi);
+            }
+        }
+    }
+    None
+}
+
+fn reference_status_for(state: &str, accepted: bool) -> &'static str {
+    if !accepted {
+        return match state {
+            "HOMOLOG_PARALOG" => "reference_homolog_paralog_rejected",
+            "REJECTED_CONTEXT" => "reference_incompatible_context",
+            _ => "reference_rejected_candidate",
+        };
+    }
+    match state {
+        "STRICT_PRESENT" => "reference_rescue_strict_present",
+        "ALIAS_CLUSTER" => "reference_alias_cluster",
+        "SEQUENCE_ONLY" => "reference_sequence_only",
+        "PARTIAL_HOMOLOGY" => "reference_partial_like",
+        "PSEUDOGENE" => "reference_pseudogene_like",
+        "HOMOLOG_PARALOG" => "reference_homolog_paralog",
+        _ => "reference_candidate_present",
+    }
+}
+
+fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
+    if !accepted {
+        return "flag_reference_like_ambiguous";
+    }
+    match state {
+        "STRICT_PRESENT" | "ALIAS_CLUSTER" | "SEQUENCE_ONLY" => {
+            "remove_from_strict_reference_absent_set"
+        }
+        "PARTIAL_HOMOLOGY" | "PSEUDOGENE" | "HOMOLOG_PARALOG" => "flag_reference_like_ambiguous",
+        _ => "review_reference_status",
+    }
+}
+
+fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
+    if !accepted {
+        return "Do not call cleanly novel to the reference; report as reference-like but rejected or ambiguous evidence.";
+    }
+    match state {
+        "STRICT_PRESENT" | "SEQUENCE_ONLY" => {
+            "Remove from strict reference-absent set; the audited reference has sequence evidence."
+        }
+        "ALIAS_CLUSTER" => {
+            "Remove from strict reference-absent set; evidence points to a cluster alias or split."
+        }
+        "PARTIAL_HOMOLOGY" => {
+            "Describe as partial reference-like homology rather than fully novel to the reference."
+        }
+        "PSEUDOGENE" => {
+            "Describe as disrupted reference-like sequence rather than fully novel to the reference."
+        }
+        "HOMOLOG_PARALOG" => {
+            "Keep as reference-like paralog evidence; do not treat as clean absence without review."
+        }
+        _ => "Review before making a reference-absence claim.",
+    }
+}
+
+fn write_reference_event_row(
+    w: &mut BufWriter<fs::File>,
+    pa: &crate::parser::PresenceAbsence,
+    reference_name: &str,
+    rescue: &RescueEvent,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    decision: &str,
+    accepted: bool,
+    rejection_reason: &str,
+) -> Result<()> {
+    let query_cluster = pa.cluster_name(rescue.cluster_idx);
+    let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+    let state = evidence_state(
+        rescue,
+        accepted,
+        query_cluster,
+        &annotation_cluster,
+        rejection_reason,
+    );
+    let final_status = reference_publication_status(state, accepted);
+    let reference_status = reference_status_for(state, accepted);
+    let dichotomy = if final_status == "remove_from_strict_reference_absent_set" {
+        "reference_like_or_present"
+    } else {
+        "reference_like_ambiguous"
+    };
+
+    writeln!(
+        w,
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        query_cluster,
+        reference_name,
+        dichotomy,
+        final_status,
+        reference_status,
+        matrix_action(accepted),
+        state,
+        evidence_strength(state),
+        reference_recommended_wording(state, accepted),
+        decision,
+        rescue.rescue_type,
+        rejection_reason,
+        rescue.identity,
+        rescue.coverage,
+        rescue.contig,
+        rescue.start + 1,
+        rescue.end,
+        rescue.strand,
+        match rescue.synteny_ok {
+            Some(true) => "PASS",
+            Some(false) => "FAIL",
+            None => "",
+        },
+        rescue.annotation_match.as_deref().unwrap_or(""),
+        annotation_cluster,
+        rescue.fragment_evidence.note.as_deref().unwrap_or(""),
+    )?;
+    Ok(())
+}
+
+fn write_reference_genome_audit(
+    requested_reference: &str,
+    rescues: &[RescueEvent],
+    synteny_rejected: &[RescueEvent],
+    paralog_rejected: &[RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let Some(reference_gi) = resolve_reference_genome(pa, requested_reference) else {
+        warn!(
+            "--reference-genome {} did not match any matrix column; skipping reference audit",
+            requested_reference
+        );
+        return Ok(());
+    };
+    let reference_name = pa.genome_name(reference_gi);
+    let path = output_dir.join("reference_genome_audit.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(
+        w,
+        "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note"
+    )?;
+
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        if pa.is_present(ci, reference_gi) {
+            writeln!(
+                w,
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                pa.cluster_name(ci),
+                reference_name,
+                "reference_like_or_present",
+                "remove_from_strict_reference_absent_set",
+                "reference_matrix_present",
+                "already_present",
+                "STRICT_PRESENT",
+                "high",
+                "Not a reference-absent cluster; it is already present in the audited reference matrix cell.",
+                "matrix_present",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            )?;
+            continue;
+        }
+
+        if let Some(rescue) = rescues
+            .iter()
+            .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
+        {
+            write_reference_event_row(
+                &mut w,
+                pa,
+                reference_name,
+                rescue,
+                gene_to_cluster_maps,
+                "accepted",
+                true,
+                "",
+            )?;
+            continue;
+        }
+
+        if let Some(rescue) = synteny_rejected
+            .iter()
+            .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
+        {
+            write_reference_event_row(
+                &mut w,
+                pa,
+                reference_name,
+                rescue,
+                gene_to_cluster_maps,
+                "rejected",
+                false,
+                "synteny_fail",
+            )?;
+            continue;
+        }
+
+        if let Some(rescue) = paralog_rejected
+            .iter()
+            .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
+        {
+            write_reference_event_row(
+                &mut w,
+                pa,
+                reference_name,
+                rescue,
+                gene_to_cluster_maps,
+                "rejected",
+                false,
+                "paralog_without_synteny",
+            )?;
+            continue;
+        }
+
+        writeln!(
+            w,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            pa.cluster_name(ci),
+            reference_name,
+            "new_to_reference",
+            "keep_as_strict_reference_absent",
+            "clean_absent_from_reference",
+            "keep_absent",
+            "NO_EVIDENCE",
+            evidence_strength("NO_EVIDENCE"),
+            "Can be described as absent from the audited reference genome under the current thresholds.",
+            "none",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        )?;
+    }
+    w.flush()?;
+    info!(
+        "Reference genome audit written for {} to {}",
+        reference_name,
+        path.display()
+    );
     Ok(())
 }
 
@@ -1642,5 +2041,58 @@ mod tests {
 
         let dropped = rescue_with_type(RescueType::Dropped, None);
         assert!(!is_paralog_without_synteny_support(&dropped));
+    }
+
+    #[test]
+    fn reference_genome_resolution_accepts_embedded_as_id() {
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["group_1".into()],
+            vec!["L4_AS00146".into(), "AS00999".into()],
+            vec![vec!["gene1".into(), "".into()]],
+        );
+
+        assert_eq!(resolve_reference_genome(&pa, "AS00146"), Some(GenomeIdx(0)));
+        assert_eq!(
+            resolve_reference_genome(&pa, "L4_AS00146"),
+            Some(GenomeIdx(0))
+        );
+        assert_eq!(resolve_reference_genome(&pa, "AS00000"), None);
+    }
+
+    #[test]
+    fn evidence_states_separate_strict_alias_and_paralog() {
+        let strict = rescue_with_type(RescueType::Dropped, Some(true));
+        assert_eq!(
+            evidence_state(&strict, true, "group_1", "", ""),
+            "STRICT_PRESENT"
+        );
+
+        let alias = rescue_with_type(
+            RescueType::Split {
+                other_cluster: "group_2".into(),
+            },
+            Some(true),
+        );
+        assert_eq!(
+            evidence_state(&alias, true, "group_1", "group_2", ""),
+            "ALIAS_CLUSTER"
+        );
+
+        let paralog = rescue_with_type(
+            RescueType::Paralog {
+                other_cluster: "group_2".into(),
+            },
+            None,
+        );
+        assert_eq!(
+            evidence_state(
+                &paralog,
+                false,
+                "group_1",
+                "group_2",
+                "paralog_without_synteny"
+            ),
+            "HOMOLOG_PARALOG"
+        );
     }
 }

@@ -17,8 +17,9 @@ recore -p gene_presence_absence.csv \
        -g genomes/ \
        -a annotations/ \
        --synteny --multi-allele --nscluster \
+       --reference-genome AS00146 \
        --preset asm5 --min-prevalence 0.0 \
        -t 8 -o recore_output/
 ```
 
-Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `gene_presence_absence_recore.csv`, `summary.txt`, `cluster_relationships.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` when GFFs are loaded, `nscluster_report.tsv`, `synteny_rejected_report.tsv` when explicit synteny failures are found, and `paralog_rejected_report.tsv` when PARALOG candidates lack synteny support.
+Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `reference_genome_audit.tsv` when `--reference-genome` is used, `gene_presence_absence_recore.csv`, `summary.txt`, `cluster_relationships.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` when GFFs are loaded, `nscluster_report.tsv`, `synteny_rejected_report.tsv` when explicit synteny failures are found, and `paralog_rejected_report.tsv` when PARALOG candidates lack synteny support.

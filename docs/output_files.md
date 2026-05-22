@@ -93,6 +93,11 @@ or paralog candidate.
 |--------|-------------|
 | `decision` | `accepted` or `rejected` |
 | `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
+| `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
+| `matrix_action` | `correct_presence` for accepted rescues, `audit_only` for rejected candidates |
+| `publication_status` | Conservative publication-level interpretation of the evidence |
+| `evidence_strength` | `high`, `moderate`, `review`, or `low` |
+| `recommended_wording` | Short text for how to describe the event in downstream tables/manuscripts |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
 | `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
 | `rejection_reason` | Reason rejected, e.g. `synteny_fail` or `paralog_without_synteny` |
@@ -100,6 +105,27 @@ or paralog candidate.
 
 Use this table as the primary audit trail for why a candidate entered, or did
 not enter, the corrected matrix.
+
+---
+
+## reference_genome_audit.tsv
+
+Written only when `--reference-genome` is provided. The value can be an exact
+matrix column name or an embedded `ASxxxxx` identifier.
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Panaroo cluster name |
+| `reference_genome` | Resolved matrix column used as the audited reference |
+| `reference_absence_class` | `new_to_reference`, `reference_like_or_present`, or `reference_like_ambiguous` |
+| `final_publication_status` | Whether to keep in a strict reference-absent set, remove, or review |
+| `reference_status` | Detailed reason: matrix-present, clean absent, strict rescue, alias, partial-like, pseudogene-like, paralog-like, or incompatible-context evidence |
+| `matrix_action`, `evidence_state`, `evidence_strength`, `recommended_wording` | Same interpretation layer used in `orthology_evidence.tsv` |
+| `rescue_decision`, `rescue_type`, `rejection_reason`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `synteny`, `annotation_match`, `annotation_cluster`, `fragment_note` | Evidence fields when reference-like sequence evidence exists |
+
+This file is meant for reference-absence claims: keep `new_to_reference` for
+strictly absent clusters, remove `reference_like_or_present`, and manually
+review `reference_like_ambiguous`.
 
 ---
 
