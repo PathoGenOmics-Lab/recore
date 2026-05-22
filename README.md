@@ -1,90 +1,54 @@
 <div align="center">
-  <img src="assets/recore_logo.svg" alt="Recore logo" width="128">
+  <img src="assets/recore_logo.svg" alt="Recore logo" width="120">
   <h1>Recore</h1>
-  <p><strong>Post-hoc rescue and quality control of pangenome presence/absence matrices.</strong></p>
+  <p><strong>Post-hoc rescue, audit, and quality control of pangenome presence/absence matrices.</strong></p>
+
+  <p>
+    <a href="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml"><img src="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
+    <img src="https://img.shields.io/badge/Rust-stable-orange.svg" alt="Rust stable">
+  </p>
 </div>
 
-Pangenome tools sometimes report genes as absent when they are actually present — inflating the accessory genome and shrinking the core. Recore detects and corrects these false negatives by searching each "absent" gene against the genome assembly with minimap2, classifying the reason for absence, and optionally merging nucleotide-redundant clusters.
+Pangenome pipelines can mark a gene as absent even when the sequence is still
+present in the assembly. These false absences inflate the accessory genome,
+shrink the core genome, and create noisy lineage-specific signals.
 
-Written in Rust for speed and low memory. Single-invocation batch minimap2 with pre-indexing and streamed PAF parsing.
+Recore searches each absent gene against the genome assemblies with minimap2,
+classifies the evidence, validates orthology when annotations/synteny are
+available, and writes both:
 
-## Features
+- a **Panaroo-compatible corrected binary matrix** for downstream analyses
+- a **multistate evidence matrix** for audit, plotting, and manuscript review
 
-- **False absence rescue** — Recovers genes missed by pangenome graph cleaning, split across clusters, or fragmented by IS elements
-- **Diagnostic classification** — Every rescue is typed (DROPPED, SPLIT, FRAGMENTED, ALIGNMENT_SPLIT, START_VARIANT, PARALOG, PSEUDOGENE) with confidence scoring
-- **Pseudogene detection** — Identifies disrupted genes: internal stop codons, frameshifts, partial deletions
-- **Nucleotide similarity clustering** — Merges Panaroo clusters that are redundant at the DNA level (split at AA but identical at nucleotide)
-- **Cluster relationship report** — Summarizes SPLIT/PARALOG/annotation-match/NSC evidence between clusters with reproducible collapse/review recommendations
-- **Orthology evidence audit** — Writes accepted/rejected candidate evidence and cluster-level locus-context summaries to catch multi-locus clusters and paralog traps
-- **Reference-genome audit** — Optional `--reference-genome` report classifying each cluster as cleanly absent, reference-like, alias, partial, paralog, or already present
-- **Synteny validation** — Optional recurrent flanking gene comparison to confirm orthology
-- **Genome/GFF name reconciliation** — Resolves FASTAs by embedded AS IDs and normalizes single-contig GFF seqids to the FASTA contig name used by minimap2
-- **Corrected GFF export** — Optional per-genome GFF3 files with rescued CDS features appended
-- **Batch architecture** — One minimap2 invocation for all genomes, streamed PAF, rayon parallelism
+The central design choice is conservative: Recore separates **sequence evidence**
+from **clean binary presence**. Full-length evidence can be corrected in the
+binary matrix, while partial homology, pseudogenes, paralog traps, and
+incompatible-context hits remain visible in audit outputs instead of silently
+becoming presence calls.
 
-## How it works
+## Table of Contents
 
-```mermaid
-flowchart LR
-    A["Inputs<br/>matrix + pan-ref + FASTA + GFF"] --> B["Find candidate<br/>false absences"]
-    B --> C["Classify<br/>dropped, split, start, fragment, pseudogene"]
-    C --> D{"Recurrent synteny<br/>or annotation support?"}
-    D -->|yes| E["Correct matrix<br/>+ optional GFF"]
-    D -->|no| F["Reject<br/>audit only"]
-    E --> H{"Reference<br/>audit?"}
-    H -->|optional| G["Reports"]
-    H -->|skip| G
-    F --> G
-    G["Reports<br/>rescue + orthology + reference + cluster-context + NSC"]
-```
+- [Quick Start](#quick-start)
+- [Which Matrix Policy Should I Use?](#which-matrix-policy-should-i-use)
+- [How It Works](#how-it-works)
+- [Benchmark](#benchmark)
+- [Inputs](#inputs)
+- [Installation](#installation)
+- [Usage Profiles](#usage-profiles)
+- [Output Files](#output-files)
+- [Evidence States](#evidence-states)
+- [Rescue Types](#rescue-types)
+- [Algorithm Notes](#algorithm-notes)
+- [Comparison With Panaroo Refinding](#comparison-with-panaroo-refinding)
+- [What Recore Does Not Claim](#what-recore-does-not-claim)
+- [Documentation](#documentation)
+- [Citation](#citation)
 
-Key idea: Recore first finds sequence evidence, then decides whether the hit is
-the same locus. Incompatible-context candidates are kept for audit but are not
-inserted into the corrected matrix.
+## Quick Start
 
-## Benchmark
-
-Recore includes a synthetic benchmark for the binary matrix policies. It creates
-known false absences, true absences, and partial pseudogenes, runs Recore, and
-calculates precision/recall/F1 from the corrected matrices.
-
-![Synthetic benchmark precision/recall](assets/synthetic_benchmark_precision_recall.svg)
-
-Current result: `balanced` recovers the full-length false absences without
-turning partial pseudogenes into binary presence. `strict` is intentionally
-conservative in this annotation-free benchmark, while `sensitive` maximizes
-recall but accepts pseudogene false positives. Reproduce with:
-
-```bash
-python3 benchmarks/synthetic_benchmark.py
-```
-
-## Installation
-
-### From source
-
-```bash
-git clone https://github.com/PathoGenOmics-Lab/recore.git
-cd recore
-cargo build --release
-# Binary: target/release/recore
-```
-
-**Requirements:** Rust ≥1.70, [minimap2](https://github.com/lh3/minimap2) in PATH
-
-**Optional:** [MMseqs2](https://github.com/soedinglab/MMseqs2) for alignment-based NSC (`--nsc-engine mmseqs2`)
-
-### Pre-built binaries
-
-See [Releases](https://github.com/PathoGenOmics-Lab/recore/releases).
-
-## Usage
-
-### Recommended (gold standard)
-
-The recommended command enables all correction layers: annotation-aware rescue
-with synteny validation, multi-allele sensitivity, pseudogene detection, and
-alignment-based nucleotide similarity clustering via MMseqs2.
+Use this for a publication-grade correction pass when FASTA assemblies and GFF
+annotations are available:
 
 ```bash
 recore \
@@ -106,236 +70,413 @@ recore \
   -o recore_output/
 ```
 
-| Flag | Why |
-|------|-----|
-| `-a annotations/` | GFF directory — enables SPLIT, START_VARIANT, PARALOG, and PSEUDOGENE classification (not just DROPPED) |
-| `--synteny` | Validates rescues by comparing flanking gene context — rejects spurious paralog rescues |
-| `--matrix-policy balanced` | Controls what enters the binary corrected matrix: `strict`, `balanced`, or `sensitive` |
-| `--reference-genome AS00146` | Writes `reference_genome_audit.tsv`, resolving exact names or embedded AS identifiers such as `L4_AS00146` |
-| `--multi-allele` | Queries all allelic variants per cluster instead of just the longest — more sensitive for diverse datasets |
-| `--write-corrected-gff` | Writes per-genome GFF3 files with Recore rescue features appended |
-| `--nscluster` | Merges Panaroo clusters that are identical at the DNA level but were split at the amino-acid level — reduces inflated accessory genome |
-| `--nsc-engine mmseqs2` | Alignment-based clustering (exact) instead of MinHash (approximate) — requires [MMseqs2](https://github.com/soedinglab/MMseqs2) in PATH |
-| `--nsc-min-seq-id 0.9` | 90% nucleotide identity threshold for merging redundant clusters |
-| `--nsc-coverage 0.8` | 80% bidirectional coverage required for merging |
-| `--preset asm5` | minimap2 preset for ≤5% sequence divergence — appropriate for most bacterial species |
-| `--min-prevalence 0.05` | Only rescue clusters present in ≥5% of genomes — truly rare genes are likely genuine accessory |
-| `-t 8` | Number of threads — adjust to available cores |
+Most users should start with:
 
-> **No MMseqs2?** Replace `--nsc-engine mmseqs2` with the default (`--nsc-engine minhash`)
-> or simply omit it. The built-in MinHash engine has zero dependencies and gives
-> comparable results for most datasets.
+- `--matrix-policy balanced` for the corrected binary matrix
+- `gene_presence_absence_recore_states.csv` for audit and figures
+- `orthology_evidence.tsv` for publication wording and manual review
+- `reference_genome_audit.tsv` when asking whether clusters are truly absent
+  from a reference genome
 
-### Basic (rescue only, no annotations)
+## Which Matrix Policy Should I Use?
 
-```bash
-recore \
-  -p gene_presence_absence.csv \
-  -r pan_genome_reference.fa \
-  -g genomes/ \
-  -o recore_output/
+Recore always records detected evidence in audit files. The matrix policy only
+controls which accepted evidence is inserted into the **binary** corrected
+matrix.
+
+| Goal | Recommended policy | What it corrects | What stays audit-only |
+|------|--------------------|------------------|------------------------|
+| Paper-ready binary PA matrix | `balanced` | strict same-locus calls, alias clusters, and full-length sequence evidence | pseudogenes, partial homology, context-rejected hits |
+| Maximum conservatism | `strict` | only strict same-locus and alias-cluster evidence | full sequence-only hits without annotation/synteny support |
+| Exploratory rescue | `sensitive` | all accepted evidence, including partial/disrupted calls | only rejected context/paralog traps |
+
+Recommended wording:
+
+> We used Recore with the balanced matrix policy, which rescues full-length false
+> absences while retaining partial or disrupted homologues as multistate
+> audit-only evidence.
+
+## How It Works
+
+```mermaid
+flowchart LR
+    A["Inputs<br/>PA matrix + pan-ref FASTA + assemblies + optional GFF"] --> B["Find matrix gaps"]
+    B --> C["Batch minimap2<br/>one indexed target"]
+    C --> D["Classify evidence<br/>full, split, fragment, pseudogene, paralog"]
+    D --> E{"Orthology support?"}
+    E -->|annotation / synteny / alias| F["Accepted evidence"]
+    E -->|incompatible context| G["Rejected audit-only"]
+    F --> H{"Matrix policy"}
+    H -->|strict / balanced / sensitive| I["Corrected binary matrix"]
+    F --> J["Multistate matrix<br/>and evidence tables"]
+    G --> J
+    I --> K["Reports + optional corrected GFF"]
+    J --> K
 ```
 
-### Without annotations (lightweight)
+Key idea: the corrected binary matrix is not the only output. Recore also
+keeps the evidence trail that explains why a cell was corrected, retained as
+audit-only, or rejected.
 
-If GFF files are not available, Recore still rescues genes but classifies
-everything as DROPPED (no SPLIT/PARALOG/PSEUDOGENE distinction).
+## Benchmark
+
+Recore includes a synthetic benchmark that creates known false absences, true
+absences, and partial pseudogenes, then computes precision/recall/F1 from the
+actual corrected matrices.
+
+![Synthetic benchmark precision/recall](assets/synthetic_benchmark_precision_recall.svg)
+
+Current synthetic benchmark:
+
+| Policy | TP | FP | FN | Precision | Recall | F1 |
+|--------|----|----|----|-----------|--------|----|
+| `strict` | 0 | 0 | 5 | NA | 0.000 | 0.000 |
+| `balanced` | 5 | 0 | 0 | 1.000 | 1.000 | 1.000 |
+| `sensitive` | 5 | 2 | 0 | 0.714 | 1.000 | 0.833 |
+
+Interpretation:
+
+- `strict` is conservative in annotation-free settings.
+- `balanced` recovers full-length false absences without converting partial
+  pseudogenes into binary presence.
+- `sensitive` maximizes recall but accepts partial pseudogene evidence as
+  binary presence, creating false positives in this benchmark.
+
+Reproduce:
+
+```bash
+python3 benchmarks/synthetic_benchmark.py
+```
+
+If `minimap2` is outside `PATH`:
+
+```bash
+python3 benchmarks/synthetic_benchmark.py --minimap2 /path/to/minimap2
+```
+
+This benchmark validates policy behavior on synthetic ground truth. It is not a
+species-specific biological truth benchmark.
+
+## Inputs
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `gene_presence_absence.csv` | yes | Panaroo-style matrix with metadata columns followed by genome columns |
+| `pan_genome_reference.fa` | yes | Cluster representative sequences; FASTA IDs must match matrix cluster names |
+| genome FASTAs | yes | One assembly per matrix genome column |
+| GFF annotations | optional, recommended | Enables annotation-aware SPLIT, START_VARIANT, PARALOG, pseudogene, and synteny classification |
+| reference genome name | optional | Used by `--reference-genome` to audit whether clusters are absent from a chosen reference |
+
+Input checklist:
+
+- Matrix genome columns should match FASTA/GFF file stems, or contain the same
+  embedded `ASxxxxx` identifier.
+- Pan-reference FASTA cluster names must match the `Gene` column.
+- Use GFFs whenever possible; without GFFs, Recore can still detect full-length
+  sequence evidence and some partial/deletion evidence, but it cannot reliably
+  distinguish SPLIT, START_VARIANT, and PARALOG by annotation overlap.
+- Use `--synteny` with GFFs when paralogy or multi-locus clusters are plausible.
+- Use `--multi-allele` when clusters have divergent alleles.
+- Use `--min-prevalence 0.0` for exhaustive audits and a higher value such as
+  `0.05` to reduce rare-cluster noise in large publication runs.
+
+## Installation
+
+### From Source
+
+```bash
+git clone https://github.com/PathoGenOmics-Lab/recore.git
+cd recore
+cargo build --release
+```
+
+Binary:
+
+```bash
+target/release/recore
+```
+
+Requirements:
+
+- Rust 1.70 or newer
+- [minimap2](https://github.com/lh3/minimap2) in `PATH`
+
+Optional:
+
+- [MMseqs2](https://github.com/soedinglab/MMseqs2) for alignment-based
+  nucleotide similarity clustering with `--nsc-engine mmseqs2`
+
+### Pre-Built Binaries
+
+Tagged releases build Linux and macOS binaries through GitHub Actions. See
+[Releases](https://github.com/PathoGenOmics-Lab/recore/releases).
+
+## Usage Profiles
+
+### Full Publication Run
 
 ```bash
 recore \
   -p gene_presence_absence.csv \
   -r pan_genome_reference.fa \
   -g genomes/ \
-  --nscluster --nsc-engine mmseqs2 \
+  -a annotations/ \
+  --synteny \
+  --multi-allele \
+  --nscluster \
+  --nsc-engine mmseqs2 \
+  --matrix-policy balanced \
+  --reference-genome AS00146 \
   -t 8 \
   -o recore_output/
 ```
 
-## Parameters
+### Lightweight Rescue Without GFFs
 
-### Core
+```bash
+recore \
+  -p gene_presence_absence.csv \
+  -r pan_genome_reference.fa \
+  -g genomes/ \
+  --matrix-policy balanced \
+  -t 8 \
+  -o recore_output/
+```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `-p, --presence-absence` | — | Panaroo `gene_presence_absence.csv` |
-| `-r, --pan-reference` | — | Panaroo `pan_genome_reference.fa` |
-| `-g, --genomes` | — | Directory of genome FASTA files |
-| `-a, --annotations` | — | Directory of GFF files (enables rescue classification) |
-| `-o, --output` | `recore_output/` | Output directory |
-| `--min-identity` | 90.0 | Minimum % identity for a hit |
-| `--min-coverage` | 80.0 | Minimum % query coverage |
-| `-t, --threads` | 4 | Number of threads |
-| `--preset` | `asm5` | minimap2 preset (`asm5` ≤5% divergence, `asm20` ≤20%) |
-| `--min-prevalence` | 0.1 | Skip clusters present in fewer genomes |
-| `--multi-allele` | off | Query all alleles per cluster (slower, more sensitive) |
-| `--synteny` | off | Validate rescues by flanking gene conservation |
-| `--write-corrected-gff` | off | Write `corrected_gff/*.recore.gff3` files with rescue features appended |
-| `--matrix-policy` | `balanced` | Binary matrix policy: `strict` corrects only `STRICT_PRESENT`/`ALIAS_CLUSTER`; `balanced` also corrects full `SEQUENCE_ONLY` evidence; `sensitive` also corrects partial/disrupted accepted evidence |
-| `--reference-genome` | — | Audit one genome column/reference background by exact name or embedded `ASxxxxx` identifier |
+Use this when annotations are unavailable. It can still rescue full-length
+sequence evidence, but annotation-specific classifications are limited.
 
-### Nucleotide similarity clustering
+### Exhaustive Reference Audit
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--nscluster` | off | Enable nucleotide similarity clustering |
-| `--nsc-engine` | `minhash` | Engine: `minhash` (built-in) or `mmseqs2` (requires mmseqs2) |
-| `--nsc-kmer-size` | 21 | k-mer size for MinHash sketching |
-| `--nsc-threshold` | 0.8 | Max containment threshold for MinHash merging |
-| `--nsc-min-seq-id` | 0.9 | Minimum identity for MMseqs2 linclust |
-| `--nsc-coverage` | 0.8 | Minimum coverage for MMseqs2 linclust |
+```bash
+recore \
+  -p gene_presence_absence.csv \
+  -r pan_genome_reference.fa \
+  -g genomes/ \
+  -a annotations/ \
+  --synteny \
+  --multi-allele \
+  --reference-genome AS00146 \
+  --min-prevalence 0.0 \
+  --matrix-policy balanced \
+  -t 8 \
+  -o recore_reference_audit/
+```
 
-## Genome and GFF name matching
+Use this to classify whether clusters are genuinely absent from a reference
+background, reference-like, partial, alias-like, paralogous, or already present.
 
-Recore first matches genome FASTA and GFF files by the exact matrix column name.
-If that fails, it falls back to the embedded `ASxxxxx` identifier. This allows a
-matrix column such as `L4_AS00146` to resolve to `AS00146.fna`.
+### Built-In NSC Engine
 
-For single-contig assemblies, Recore also reconciles GFF seqids with FASTA contig
-names before annotation-based classification and synteny validation. For example,
-a GFF seqid such as `contig_1` or `L4_AS00146` is mapped internally to FASTA
-contig `AS00146`. Original GFF files are not modified.
+If MMseqs2 is not installed, omit the engine flag and use the built-in MinHash
+engine:
 
-## Rescue types
+```bash
+recore \
+  -p gene_presence_absence.csv \
+  -r pan_genome_reference.fa \
+  -g genomes/ \
+  --nscluster \
+  --nsc-engine minhash \
+  -o recore_output/
+```
 
-| Type | Description | When |
-|------|-------------|------|
-| **DROPPED** | Gene present but removed by graph cleaning | Full coverage hit, no annotation conflict |
-| **SPLIT** | Gene locus assigned to a different Panaroo cluster | Hit overlaps CDS from another cluster (≥95% id) |
-| **FRAGMENTED** | Gene broken into ≥2 biological fragments | Co-linear multi-hit chain with a large query/target gap |
-| **ALIGNMENT_SPLIT** | Gene reconstructed by ≥2 alignments without biological break evidence | Small co-linear split alignments, reported separately from FRAGMENTED |
-| **START_VARIANT** | CDS present with different start codon | Length differs <300bp from overlapping CDS |
-| **PARALOG** | Hit overlaps a similar but distinct gene | Hit on CDS from another cluster (<95% id) |
-| **PSEUDOGENE** | Gene disrupted: no longer functional | Three sub-types (see below) |
-
-### Pseudogene sub-types
-
-| Sub-type | Signal | Biological interpretation |
-|----------|--------|---------------------------|
-| **InternalStop** | In-frame stop codons in the hit region | Premature termination (nonsense mutation) |
-| **Frameshift** | Fragments with gaps not divisible by 3 | Reading frame disruption (indel) |
-| **PartialDeletion** | High identity (≥90%) but 60–80% coverage | Truncated gene (large deletion) |
-
-## Output
+## Output Files
 
 ```
 recore_output/
-├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
-├── gene_presence_absence_recore_states.csv # Multistate matrix for audit/plotting
-├── rescue_report.tsv                  # Per-rescue details
-├── orthology_evidence.tsv             # Accepted and rejected candidate evidence
-├── reference_genome_audit.tsv         # Reference-specific absent/present audit (if --reference-genome)
-├── synteny_rejected_report.tsv        # Explicit synteny FAIL candidates, if any
-├── paralog_rejected_report.tsv        # PARALOG hits without synteny support, if any
-├── cluster_locus_context.tsv          # Per-cluster locus-context rows (if GFFs are loaded)
-├── cluster_locus_summary.tsv          # Cluster-level context stability flags (if GFFs are loaded)
-├── cluster_relationships.tsv          # Inter-cluster rescue/NSC relationships
-├── nscluster_report.tsv               # NS cluster memberships (if --nscluster)
-├── corrected_gff/                     # Per-genome GFF3s (if --write-corrected-gff)
-└── summary.txt                        # Statistics
+├── gene_presence_absence_recore.csv        # corrected Panaroo-compatible binary matrix
+├── gene_presence_absence_recore_states.csv # multistate evidence matrix
+├── rescue_report.tsv                       # accepted rescue events
+├── orthology_evidence.tsv                  # accepted/rejected evidence with wording guidance
+├── reference_genome_audit.tsv              # reference-specific audit when --reference-genome is set
+├── synteny_rejected_report.tsv             # explicit synteny FAIL candidates
+├── paralog_rejected_report.tsv             # PARALOG candidates lacking synteny support
+├── cluster_locus_context.tsv               # per-cluster locus-context rows when GFFs are loaded
+├── cluster_locus_summary.tsv               # cluster-level context stability flags
+├── cluster_relationships.tsv               # SPLIT/PARALOG/annotation-match/NSC relationships
+├── nscluster_report.tsv                    # NSC groups when --nscluster is enabled
+├── corrected_gff/                          # optional GFF3 files with appended Recore CDSs
+└── summary.txt                             # run summary
 ```
 
-### rescue_report.tsv
+For publication figures:
 
-| Column | Description |
-|--------|-------------|
-| `gene_cluster` | Panaroo cluster name |
-| `genome` | Genome where the gene was rescued |
-| `rescue_type` | Classification with details |
-| `identity` | % identity of the minimap2 hit |
-| `coverage` | % query coverage (merged for fragments) |
-| `contig` | Target contig |
-| `start` / `end` | Coordinates on contig |
-| `strand` | +/- |
-| `confidence` | Score for conflict resolution (0–1+) |
-| `synteny` | PASS/FAIL (if `--synteny`) |
-| `annotation_match` | Overlapping CDS gene ID (if `-a`) |
-| `fragment_*` | Fragment-chain evidence for multi-hit rescues: count, query/target gaps, colinearity, same-CDS support, and note |
+- Use `gene_presence_absence_recore.csv` for binary presence/absence analyses.
+- Use `gene_presence_absence_recore_states.csv` when plotting uncertainty,
+  pseudogenes, partial homology, or rejected contexts.
+- Use `orthology_evidence.tsv` to justify whether a cluster is "present",
+  "partial/disrupted", "possible paralog", or "not supported".
+- Use `reference_genome_audit.tsv` to support claims such as "absent from
+  H37Rv/reference" instead of relying only on the original matrix.
 
-### gene_presence_absence_recore.csv
+## Evidence States
 
-Drop-in replacement for Panaroo's output:
-- Rescued cells: `RESCUED:contig:start-end`
-- NSC-merged cells: `NSC_MERGED` (if `--nscluster`)
-- Redundant clusters removed (merged into representative)
-- Metadata columns recalculated
+The multistate matrix uses the same shape as the original PA matrix but stores
+biological states:
 
-Binary corrections are controlled by `--matrix-policy`. The default
-`balanced` policy does not turn pseudogenes or partial/fragmented homology into
-clean binary presence, but those calls are retained in the multistate matrix and
-audit tables.
+| State | Meaning | Binary correction under `balanced` |
+|-------|---------|------------------------------------|
+| `PRESENT_INPUT` | Present in the original matrix | already present |
+| `ABSENT` | No accepted evidence found | no |
+| `STRICT_PRESENT` | Same-locus evidence from annotation/synteny | yes |
+| `ALIAS_CLUSTER` | Same biological locus assigned to another cluster | yes |
+| `SEQUENCE_ONLY` | Full-length sequence evidence without stronger annotation context | yes |
+| `PARTIAL_HOMOLOGY` | Partial homologous sequence | no |
+| `PSEUDOGENE` | Disrupted gene evidence | no |
+| `HOMOLOG_PARALOG` | Homologous/paralogous hit | no |
+| `REJECTED_CONTEXT` | Candidate rejected by context/paralog checks | no |
 
-### gene_presence_absence_recore_states.csv
+## Rescue Types
 
-Same shape as the Panaroo matrix, but genome cells contain biological states:
-`PRESENT_INPUT`, `ABSENT`, `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`,
-`PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or
-`REJECTED_CONTEXT`. Use this file for manuscript plots and manual review when a
-binary presence/absence matrix would hide important biology.
+| Type | Description | Typical interpretation |
+|------|-------------|------------------------|
+| `DROPPED` | Full-length gene sequence present but missing from matrix | false absence caused by graph cleaning or annotation transfer |
+| `SPLIT` | Hit overlaps a CDS assigned to another cluster | cluster split or alias |
+| `FRAGMENTED` | Gene reconstructed from multiple biological fragments | possible disrupted or split locus |
+| `ALIGNMENT_SPLIT` | Multiple alignments reconstruct the gene without strong biological break evidence | alignment-level split, audit carefully |
+| `START_VARIANT` | Same CDS with a shifted start | start-site/annotation disagreement |
+| `PARALOG` | Similar locus but not clearly the same gene | not corrected unless synteny supports it |
+| `PSEUDOGENE` | Internal stop, frameshift, or partial deletion | disrupted homologue, audit-only under `balanced` |
 
-### nscluster_report.tsv
+Pseudogene sub-types:
 
-| Column | Description |
-|--------|-------------|
-| `ns_cluster` | NS cluster ID |
-| `representative` | Representative cluster (highest prevalence) |
-| `n_members` | Number of merged clusters |
-| `members` | Semicolon-separated list of member cluster names |
+| Sub-type | Signal | Interpretation |
+|----------|--------|----------------|
+| `InternalStop` | in-frame premature stop codon | nonsense disruption |
+| `Frameshift` | fragment gaps not divisible by 3 | indel disrupting the reading frame |
+| `PartialDeletion` | high identity but 60-80% query coverage | truncated gene |
 
-## Architecture
+## Parameters
 
-### Batch search strategy
+### Core Parameters
 
-Recore avoids spawning N separate minimap2 processes:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-p, --presence-absence` | required | Panaroo `gene_presence_absence.csv` |
+| `-r, --pan-reference` | required | Panaroo `pan_genome_reference.fa` |
+| `-g, --genomes` | required | directory of genome FASTA files |
+| `-a, --annotations` | optional | directory of GFF/GFF3 annotations |
+| `-o, --output` | `recore_output/` | output directory |
+| `--min-identity` | `90.0` | minimum percent identity for a hit |
+| `--min-coverage` | `80.0` | minimum query coverage for full rescue |
+| `--preset` | `asm5` | minimap2 preset; use `asm20` for more divergent genomes |
+| `--min-prevalence` | `0.1` | skip rescue for clusters below this prevalence |
+| `--matrix-policy` | `balanced` | binary correction policy: `strict`, `balanced`, or `sensitive` |
+| `--multi-allele` | off | query all alleles per cluster |
+| `--synteny` | off | validate rescues by flanking gene context; requires GFFs |
+| `--reference-genome` | optional | audit one reference/background genome |
+| `--write-corrected-gff` | off | write GFF3 files with appended rescued CDS features |
+| `-t, --threads` | `4` | number of threads |
 
-1. All genome FASTAs concatenated with prefixed contig names (`genome|||contig`)
-2. minimap2 index (`.mmi`) built once on the concatenated target
-3. All query sequences searched in a single minimap2 invocation
-4. PAF output streamed and demuxed back to per-(genome, cluster) groups
-5. Hit classification parallelised with rayon
+### Nucleotide Similarity Clustering
 
-### Nucleotide similarity clustering
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--nscluster` | off | enable nucleotide similarity clustering |
+| `--nsc-engine` | `minhash` | `minhash` built-in or `mmseqs2` alignment-based |
+| `--nsc-kmer-size` | `21` | k-mer size for MinHash sketching |
+| `--nsc-threshold` | `0.8` | max-containment threshold for MinHash merging |
+| `--nsc-min-seq-id` | `0.9` | minimum identity for MMseqs2 clustering |
+| `--nsc-coverage` | `0.8` | bidirectional coverage for MMseqs2 clustering |
 
-Two engines for detecting DNA-level redundancy among Panaroo clusters:
+## Algorithm Notes
 
-**MinHash** (built-in, no dependencies):
-- Bottom-k MinHash sketching (128 hashes per cluster)
-- Canonical k-mer hashing (strand-independent)
-- LSH banding pre-filter reduces O(n²) to O(n × candidates)
-- Max Jaccard containment metric (handles variable-length genes)
-- Union-Find clustering
+### Batch Search
 
-**MMseqs2** (optional, exact):
-- Linear-time linclust with alignment-based identity
-- Bidirectional coverage mode
-- Connected component clustering
+Recore avoids one minimap2 process per genome:
 
-### Type safety
+1. Write all required cluster sequences to one query FASTA.
+2. Concatenate all target genomes with prefixed contig names
+   (`genome|||contig`).
+3. Build one minimap2 index.
+4. Run one minimap2 alignment.
+5. Stream and demultiplex PAF hits back to `(genome, cluster)` gaps.
 
-Newtype wrappers (`ClusterIdx`, `GenomeIdx`) prevent index confusion at compile time. `PresenceAbsence` matrix is encapsulated with a typed accessor API.
+This keeps large pangenome audits fast and memory-stable.
 
-## How does this differ from Panaroo's `--refind_prop_match`?
+### Synteny Model
 
-| Feature | Panaroo refind | Recore |
-|---------|---------------|--------|
-| Timing | During graph cleaning | Post-hoc (on final output) |
-| Aligner | BLAST | minimap2 (batch) |
-| Classification | Binary (found/not found) | 8 types with sub-classification |
-| Pseudogene detection | No | Yes (stops, frameshifts, deletions) |
-| Redundancy correction | No | NSC merges DNA-redundant clusters |
-| Validation | None | Synteny + conflict resolution |
-| Multi-allele | No | Yes (`--multi-allele`) |
-| Speed | Slow (BLAST per genome) | Fast (single minimap2, streamed, parallel) |
+When `--synteny` is enabled, Recore compares flanking gene context around the
+candidate rescue with contexts from genomes where the cluster is already
+present. The model uses recurrent compatible contexts, not one fragile exact
+string, so minor annotation boundary differences do not create artificial
+failures. Explicit incompatible contexts are rejected and written to audit
+tables.
+
+### Nucleotide Similarity Clustering
+
+`--nscluster` detects clusters that are distinct at the protein/annotation
+level but nearly identical at the nucleotide level.
+
+Two engines are available:
+
+- **MinHash**: built-in, dependency-free, fast approximate clustering.
+- **MMseqs2**: optional alignment-based clustering, recommended when exact
+  nucleotide identity/coverage thresholds are needed.
+
+## Comparison With Panaroo Refinding
+
+| Feature | Panaroo `--refind_prop_match` | Recore |
+|---------|-------------------------------|--------|
+| Timing | during graph cleaning | post-hoc on final matrix |
+| Aligner | BLAST-style refinding | batch minimap2 |
+| Output | binary found/not found | binary matrix plus multistate audit |
+| Classification | limited | dropped, split, fragment, start variant, paralog, pseudogene |
+| Pseudogene handling | not explicit | stops, frameshifts, partial deletions |
+| Paralog control | limited | synteny and context rejection |
+| Cluster redundancy | not addressed | optional nucleotide similarity clustering |
+| Reference-specific audit | no | yes, via `--reference-genome` |
+| Corrected GFF export | no | optional |
+
+## What Recore Does Not Claim
+
+Recore is an audit and correction layer, not an oracle. In particular:
+
+- It does not claim that every homologous sequence is a functional gene.
+- It does not turn pseudogenes or partial homologues into clean binary presence
+  under the recommended `balanced` policy.
+- It does not infer ancestry or biological novelty by itself; use
+  `reference_genome_audit.tsv`, phylogeny, synteny, and external evidence.
+- It does not replace manual review for complex paralogous families, repetitive
+  elements, or collapsed assemblies.
+- It cannot recover evidence that is absent from the assembly sequence.
+
+This is why Recore writes both a corrected binary matrix and audit-grade
+evidence tables.
+
+## Documentation
+
+Additional details are in [docs/](docs/):
+
+| Document | Description |
+|----------|-------------|
+| [algorithm.md](docs/algorithm.md) | pipeline phases, data structures, and complexity |
+| [rescue_types.md](docs/rescue_types.md) | rescue classes and biological interpretation |
+| [output_files.md](docs/output_files.md) | output schemas and coordinate conventions |
+| [parameters.md](docs/parameters.md) | complete parameter guide |
+| [benchmarks/README.md](benchmarks/README.md) | synthetic benchmark design and reproduction |
+
+## Development
+
+```bash
+cargo fmt
+cargo test
+cargo clippy --all-targets -- -D warnings
+python3 benchmarks/synthetic_benchmark.py
+```
 
 ## Citation
 
 If you use Recore, please cite:
 
-> Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue and quality control of pangenome presence/absence matrices. *In preparation.*
+> Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue and quality control
+> of pangenome presence/absence matrices. *In preparation.*
 
 ## Contact
 
-Paula Ruiz-Rodriguez — paula.ruiz.rodriguez@csic.es
+Paula Ruiz-Rodriguez - paula.ruiz.rodriguez@csic.es
 
 ## License
 
-GNU General Public License v3.0
+GNU General Public License v3.0. See [LICENSE](LICENSE).
