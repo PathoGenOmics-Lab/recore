@@ -237,6 +237,7 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
 // ── Fragment analysis ──
 
 const BIOLOGICAL_FRAGMENT_MIN_GAP_BP: u64 = 50;
+const SYNTENY_CONTEXT_GENES: usize = 2;
 
 #[derive(Debug, Clone)]
 struct FragmentChain {
@@ -1057,6 +1058,101 @@ pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
 
 // ── Synteny validation ──
 
+#[derive(Debug, Default)]
+struct SyntenyContext {
+    upstream: Vec<ClusterIdx>,
+    downstream: Vec<ClusterIdx>,
+}
+
+impl SyntenyContext {
+    fn has_any_cluster(&self) -> bool {
+        !self.upstream.is_empty() || !self.downstream.is_empty()
+    }
+
+    fn side_matches(&self, other: &SyntenyContext) -> bool {
+        clusters_overlap(&self.upstream, &other.upstream)
+            || clusters_overlap(&self.downstream, &other.downstream)
+    }
+}
+
+fn clusters_overlap(a: &[ClusterIdx], b: &[ClusterIdx]) -> bool {
+    a.iter().any(|x| b.iter().any(|y| x == y))
+}
+
+fn synteny_context(
+    gff: &GffIndex,
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    contig: &str,
+    start: u64,
+    end: u64,
+    center_gene_id: Option<&str>,
+) -> SyntenyContext {
+    let Some(&(range_start, range_end)) = gff.contig_ranges.get(contig) else {
+        return SyntenyContext::default();
+    };
+    let slice = &gff.genes[range_start..range_end];
+    if slice.is_empty() {
+        return SyntenyContext::default();
+    }
+
+    let center_pos = center_gene_id
+        .and_then(|gene_id| gff.gene_id_index.get(gene_id).copied())
+        .and_then(|idx| {
+            if idx >= range_start && idx < range_end {
+                Some(idx - range_start)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            slice
+                .iter()
+                .enumerate()
+                .filter_map(|(i, gene)| {
+                    let overlap = gene.end.min(end).saturating_sub(gene.start.max(start));
+                    (overlap > 0).then_some((i, overlap))
+                })
+                .max_by_key(|(_, overlap)| *overlap)
+                .map(|(i, _)| i)
+        });
+
+    let mut context = SyntenyContext::default();
+    if let Some(center_pos) = center_pos {
+        for gene in slice[..center_pos].iter().rev().take(SYNTENY_CONTEXT_GENES) {
+            if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
+                context.upstream.push(cluster);
+            }
+        }
+        for gene in slice
+            .iter()
+            .skip(center_pos + 1)
+            .take(SYNTENY_CONTEXT_GENES)
+        {
+            if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
+                context.downstream.push(cluster);
+            }
+        }
+        return context;
+    }
+
+    let pos = slice.partition_point(|g| g.end <= start);
+    for gene in slice[..pos].iter().rev().take(SYNTENY_CONTEXT_GENES) {
+        if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
+            context.upstream.push(cluster);
+        }
+    }
+    for gene in slice[pos..]
+        .iter()
+        .filter(|g| g.start >= end)
+        .take(SYNTENY_CONTEXT_GENES)
+    {
+        if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
+            context.downstream.push(cluster);
+        }
+    }
+    context
+}
+
 pub fn validate_synteny(
     rescue: &mut RescueEvent,
     pa: &PresenceAbsence,
@@ -1077,17 +1173,23 @@ pub fn validate_synteny(
         return;
     };
 
-    let (target_up, target_down) = target_gff.flanking(&rescue.contig, rescue.start, rescue.end);
+    let target_context = synteny_context(
+        target_gff,
+        target_g2c,
+        &rescue.contig,
+        rescue.start,
+        rescue.end,
+        rescue.annotation_match.as_deref(),
+    );
 
-    let target_up_cluster = target_up.and_then(|g| target_g2c.get(&g.gene_id).copied());
-    let target_down_cluster = target_down.and_then(|g| target_g2c.get(&g.gene_id).copied());
-
-    if target_up_cluster.is_none() && target_down_cluster.is_none() {
+    if !target_context.has_any_cluster() {
         if verbose {
             log::debug!(
                 "Synteny skip: no flanking genes mapped to clusters for rescue cluster={} genome={} at {}:{}-{}",
                 ci.val(), gi.val(), rescue.contig, rescue.start, rescue.end
             );
+            let (target_up, target_down) =
+                target_gff.flanking(&rescue.contig, rescue.start, rescue.end);
             if let Some(up) = target_up {
                 log::debug!(
                     "  Upstream gene '{}' not found in any Panaroo cluster",
@@ -1142,23 +1244,16 @@ pub fn validate_synteny(
             continue;
         };
 
-        let (ref_up, ref_down) = ref_gff.flanking(&ref_gene.contig, ref_gene.start, ref_gene.end);
+        let ref_context = synteny_context(
+            ref_gff,
+            ref_g2c,
+            &ref_gene.contig,
+            ref_gene.start,
+            ref_gene.end,
+            Some(ref_gene.gene_id.as_str()),
+        );
 
-        let ref_up_cluster = ref_up.and_then(|g| ref_g2c.get(&g.gene_id).copied());
-        let ref_down_cluster = ref_down.and_then(|g| ref_g2c.get(&g.gene_id).copied());
-
-        let up_match = match (target_up_cluster, ref_up_cluster) {
-            (Some(a), Some(b)) => a == b,
-            (None, None) => true,
-            _ => false,
-        };
-        let down_match = match (target_down_cluster, ref_down_cluster) {
-            (Some(a), Some(b)) => a == b,
-            (None, None) => true,
-            _ => false,
-        };
-
-        if up_match || down_match {
+        if target_context.side_matches(&ref_context) {
             synteny_match = true;
             break;
         }
@@ -1353,6 +1448,222 @@ mod tests {
         let (up, down) = idx.flanking("c", 100, 200);
         assert!(up.is_none());
         assert_eq!(down.unwrap().gene_id, "g2");
+    }
+
+    #[test]
+    fn test_synteny_context_handles_overlapping_boundary_genes() {
+        let pa = PresenceAbsence::new_for_test(
+            vec![
+                "target_gene".into(),
+                "up_overlap".into(),
+                "down_overlap".into(),
+                "outer_up".into(),
+                "outer_down".into(),
+            ],
+            vec!["target".into(), "reference".into()],
+            vec![
+                vec!["".into(), "ref_center".into()],
+                vec!["target_up".into(), "ref_up".into()],
+                vec!["target_down".into(), "ref_down".into()],
+                vec!["target_outer_up".into(), "ref_outer_up".into()],
+                vec!["target_outer_down".into(), "ref_outer_down".into()],
+            ],
+        );
+
+        let target_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 0,
+                end: 100,
+                strand: '+',
+                gene_id: "target_outer_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "target_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 197,
+                end: 260,
+                strand: '+',
+                gene_id: "target_center".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 257,
+                end: 320,
+                strand: '+',
+                gene_id: "target_down".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 320,
+                end: 400,
+                strand: '+',
+                gene_id: "target_outer_down".into(),
+            },
+        ]);
+        let ref_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 0,
+                end: 100,
+                strand: '+',
+                gene_id: "ref_outer_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "ref_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 197,
+                end: 260,
+                strand: '+',
+                gene_id: "ref_center".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 257,
+                end: 320,
+                strand: '+',
+                gene_id: "ref_down".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 320,
+                end: 400,
+                strand: '+',
+                gene_id: "ref_outer_down".into(),
+            },
+        ]);
+
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(GenomeIdx(0), target_gff);
+        gff_indices.insert(GenomeIdx(1), ref_gff);
+
+        let mut g2c = HashMap::new();
+        g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
+        g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+
+        let mut rescue = RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(0),
+            rescue_type: RescueType::StartVariant { length_diff_bp: 10 },
+            identity: 100.0,
+            coverage: 95.0,
+            contig: "chr".into(),
+            start: 205,
+            end: 250,
+            strand: '+',
+            annotation_match: Some("target_center".into()),
+            confidence: 0.95,
+            synteny_ok: None,
+            fragment_evidence: FragmentEvidence::default(),
+        };
+
+        validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
+        assert_eq!(rescue.synteny_ok, Some(true));
+    }
+
+    #[test]
+    fn test_synteny_context_rejects_different_locus_paralog() {
+        let pa = PresenceAbsence::new_for_test(
+            vec![
+                "target_gene".into(),
+                "target_up".into(),
+                "target_down".into(),
+            ],
+            vec!["target".into(), "reference".into()],
+            vec![
+                vec!["".into(), "ref_center".into()],
+                vec!["target_up_gene".into(), "".into()],
+                vec!["target_down_gene".into(), "".into()],
+            ],
+        );
+
+        let target_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "target_up_gene".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 200,
+                end: 300,
+                strand: '+',
+                gene_id: "target_center".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "target_down_gene".into(),
+            },
+        ]);
+        let ref_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "ref_up_other".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 200,
+                end: 300,
+                strand: '+',
+                gene_id: "ref_center".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "ref_down_other".into(),
+            },
+        ]);
+
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(GenomeIdx(0), target_gff);
+        gff_indices.insert(GenomeIdx(1), ref_gff);
+
+        let mut g2c = HashMap::new();
+        g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
+        g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+
+        let mut rescue = RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(0),
+            rescue_type: RescueType::Split {
+                other_cluster: "paralogous_cluster".into(),
+            },
+            identity: 99.0,
+            coverage: 99.0,
+            contig: "chr".into(),
+            start: 200,
+            end: 300,
+            strand: '+',
+            annotation_match: Some("target_center".into()),
+            confidence: 1.0,
+            synteny_ok: None,
+            fragment_evidence: FragmentEvidence::default(),
+        };
+
+        validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
+        assert_eq!(rescue.synteny_ok, Some(false));
     }
 
     #[test]

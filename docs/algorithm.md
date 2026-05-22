@@ -171,19 +171,20 @@ When `--synteny` is enabled and GFF files are loaded, each rescue is validated a
 ### Algorithm
 
 For the rescued gene at position (contig, start, end) in the target genome:
-1. Find the **upstream** and **downstream** genes using the GFF index
-2. Map those genes to their Panaroo cluster assignments via gene_to_cluster maps
-3. For up to 5 reference genomes where this cluster IS present:
+1. Build a small side-specific context window around the rescued locus: up to two upstream and two downstream CDSs mapped to Panaroo clusters. If the rescue overlaps an annotated CDS, that CDS is used as the centre so short start-site differences and overlapping CDS boundaries do not shift the context.
+2. For up to 5 reference genomes where this cluster IS present:
    a. Find the reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes)
-   b. Find its flanking genes
-   c. Compare flanking cluster assignments
-4. If **either** upstream OR downstream cluster matches in any reference → PASS
-5. Otherwise → FAIL
+   b. Build the same side-specific context window around the reference gene
+   c. Compare side-specific flanking cluster assignments
+3. If any upstream context cluster or any downstream context cluster matches on the same side in any reference → PASS
+4. Otherwise → FAIL
+
+Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty.
 
 ### Confidence adjustment
 
 - Synteny PASS: confidence × 1.2 (boost)
-- Synteny FAIL: confidence × 0.6 (penalize)
+- Synteny FAIL: confidence × 0.6, then reject from the corrected matrix
 - No flanking genes found: no adjustment (synteny_ok = None)
 
 ---
@@ -229,6 +230,10 @@ Uses MMseqs2 `linclust` for linear-time clustering with alignment-based identity
 ### rescue_report.tsv
 
 One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, annotation_match, plus fragment-chain evidence columns for multi-hit rescues.
+
+### synteny_rejected_report.tsv
+
+Written only when `--synteny` rejects at least one candidate. It uses the same schema as `rescue_report.tsv`, but these rows are audit records only and are not inserted into `gene_presence_absence_recore.csv`.
 
 ### gene_presence_absence_recore.csv
 

@@ -219,6 +219,7 @@ contig `AS00146`. Original GFF files are not modified.
 recore_output/
 ├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
 ├── rescue_report.tsv                  # Per-rescue details
+├── synteny_rejected_report.tsv        # Explicit synteny FAIL candidates, if any
 ├── cluster_relationships.tsv          # Inter-cluster rescue/NSC relationships
 ├── nscluster_report.tsv               # NS cluster memberships (if --nscluster)
 ├── corrected_gff/                     # Per-genome GFF3s (if --write-corrected-gff)

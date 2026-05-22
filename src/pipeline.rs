@@ -373,6 +373,27 @@ pub fn run(args: &Args) -> Result<()> {
         warn!("Synteny requested (--synteny) but no GFF annotations loaded — skipping");
     }
 
+    // Explicit synteny failures are contradictory orthology evidence. Keep
+    // them in an audit report, but do not use them to correct the matrix.
+    let mut synteny_rejected = Vec::new();
+    if args.synteny {
+        let before_rejection = rescues.len();
+        let old_rescues = std::mem::take(&mut rescues);
+        let (rejected, kept): (Vec<_>, Vec<_>) = old_rescues
+            .into_iter()
+            .partition(|r| r.synteny_ok == Some(false));
+        rescues = kept;
+        synteny_rejected = rejected;
+        if !synteny_rejected.is_empty() {
+            info!(
+                "Synteny rejection: {} → {} rescues ({} explicit FAIL candidates written to synteny_rejected_report.tsv)",
+                before_rejection,
+                rescues.len(),
+                synteny_rejected.len()
+            );
+        }
+    }
+
     // ── 9. Conflict resolution ──
     let before_conflicts = rescues.len();
     resolve_conflicts(&mut rescues);
@@ -487,6 +508,11 @@ pub fn run(args: &Args) -> Result<()> {
             .cmp(&b.cluster_idx)
             .then(a.genome_idx.cmp(&b.genome_idx))
     });
+    synteny_rejected.sort_by(|a, b| {
+        a.cluster_idx
+            .cmp(&b.cluster_idx)
+            .then(a.genome_idx.cmp(&b.genome_idx))
+    });
 
     let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
         .iter()
@@ -494,6 +520,14 @@ pub fn run(args: &Args) -> Result<()> {
         .collect();
 
     write_report(&rescues, &pa, &args.output)?;
+    if !synteny_rejected.is_empty() {
+        write_named_report(
+            &synteny_rejected,
+            &pa,
+            &args.output,
+            "synteny_rejected_report.tsv",
+        )?;
+    }
     write_corrected_csv(&pa, &rescue_map, &args.output, &nsc_result)?;
     let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
     if n_relationships > 0 {
@@ -515,6 +549,7 @@ pub fn run(args: &Args) -> Result<()> {
         start_variant,
         paralog,
         pseudogene,
+        synteny_rejected: synteny_rejected.len(),
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result
@@ -563,7 +598,16 @@ fn write_report(
     pa: &crate::parser::PresenceAbsence,
     output_dir: &std::path::Path,
 ) -> Result<()> {
-    let path = output_dir.join("rescue_report.tsv");
+    write_named_report(rescues, pa, output_dir, "rescue_report.tsv")
+}
+
+fn write_named_report(
+    rescues: &[RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    output_dir: &std::path::Path,
+    filename: &str,
+) -> Result<()> {
+    let path = output_dir.join(filename);
     let file = fs::File::create(&path)?;
     let mut w = BufWriter::new(file);
     writeln!(
@@ -1004,6 +1048,7 @@ struct SummaryStats {
     start_variant: usize,
     paralog: usize,
     pseudogene: usize,
+    synteny_rejected: usize,
     synteny_enabled: bool,
     nsc_clusters: usize,
     nsc_merged_genes: usize,
@@ -1060,6 +1105,9 @@ fn write_summary(
     writeln!(w, "Gaps searched:         {}", stats.filtered_gaps)?;
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;
     writeln!(w, "Rescued:               {}", rescues.len())?;
+    if stats.synteny_rejected > 0 {
+        writeln!(w, "Rejected (synteny):    {}", stats.synteny_rejected)?;
+    }
     writeln!(
         w,
         "Remaining gaps:        {}",
@@ -1100,6 +1148,9 @@ fn write_summary(
         writeln!(w, "Synteny validation:")?;
         writeln!(w, "  PASS:  {}", syn_pass)?;
         writeln!(w, "  FAIL:  {}", syn_fail)?;
+        if stats.synteny_rejected > 0 {
+            writeln!(w, "  REJECTED_FAIL: {}", stats.synteny_rejected)?;
+        }
     }
     if stats.nsc_clusters > 0 {
         writeln!(w)?;

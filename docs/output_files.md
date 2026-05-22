@@ -22,7 +22,7 @@ Primary output. One row per rescued gene. Tab-separated.
 | `end` | int | End coordinate, 1-based inclusive |
 | `strand` | char | `+` or `-` |
 | `confidence` | float | Combined quality score (0–1.2+); see [algorithm](algorithm.md#confidence-score) |
-| `synteny` | string | `PASS`, `FAIL`, or empty (not assessed) |
+| `synteny` | string | `PASS` or empty (not assessed). `FAIL` rows are written to `synteny_rejected_report.tsv` when `--synteny` is enabled |
 | `annotation_match` | string | GFF gene ID that overlapped the rescue region, if any |
 | `fragment_n` | int | Number of fragments in the selected multi-hit chain, if applicable |
 | `fragment_query_gap_bp` | int | Total query-space gap across the selected fragment chain |
@@ -56,6 +56,18 @@ grep -v "PSEUDOGENE" rescue_report.tsv
 # DROPPED and SPLIT only (most confident true rescues)
 grep -E "DROPPED|SPLIT" rescue_report.tsv | awk '$10 > 0.9'
 ```
+
+---
+
+## synteny_rejected_report.tsv
+
+Written only when `--synteny` is enabled and one or more candidate rescues have
+explicitly incompatible flanking context. The schema is identical to
+`rescue_report.tsv`, but these rows are audit records: they are not added to
+`gene_presence_absence_recore.csv` and are not written to corrected GFF output.
+
+This file is useful for reviewing high-identity paralog/cross-family hits that
+look like sequence rescues but fail the local genomic-context check.
 
 ---
 
@@ -132,6 +144,7 @@ Total gaps:            91509
 Gaps searched:         91509
 Skipped (prevalence):  0
 Rescued:               947
+Rejected (synteny):    4
 Remaining gaps:        90562
 
 Core genome (strict):  1539 → 1546 (+7)
@@ -148,7 +161,8 @@ Rescue types:
 
 Synteny validation:
   PASS:  747
-  FAIL:  195
+  FAIL:  0
+  REJECTED_FAIL: 4
 
 Nucleotide similarity clustering:
   NS clusters:      19
@@ -244,7 +258,8 @@ Recore writes structured log output to stderr. Use `-v` / `--verbose` for debug-
 [INFO recore::pipeline] Built minimap2 index
 [INFO recore::pipeline] Validating synteny...
 [INFO recore::pipeline] Synteny: 747 validated, 195 failed, 5 skipped (no flanking genes found)
-[INFO recore::pipeline] Final rescues: 947 (DROPPED: 378, SPLIT: 206, ...)
+[INFO recore::pipeline] Synteny rejection: 947 → 752 rescues (195 explicit FAIL candidates written to synteny_rejected_report.tsv)
+[INFO recore::pipeline] Final rescues: 752 (DROPPED: 378, SPLIT: 206, ...)
 [INFO recore::pipeline] Core genome: 1539 → 1546 (+7)
 ```
 

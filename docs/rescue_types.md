@@ -48,7 +48,7 @@ The value after `SPLIT:` is the cluster that actually contains the annotation.
 
 **Example:**
 ```
-geneZ   genome3   FRAGMENTED:2frags:87%cov   97.2   87.4   contig_3   112000   113400   +   0.672   FAIL   
+geneZ   genome3   FRAGMENTED:2frags:87%cov   97.2   87.4   contig_3   112000   113400   +   0.806   PASS
 ```
 
 The `start` and `end` coordinates span from the first to the last fragment.
@@ -99,7 +99,7 @@ geneA   genome4   START_VARIANT:+57bp   99.6   100.0   contig_1   34100   34956 
 
 **Example:**
 ```
-geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   1921800   +   0.501   FAIL   PE_PGRS47
+geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   1921800   +   0.628      PE_PGRS47
 ```
 
 > **Note for MTBC analyses:** A large fraction of PARALOGs in tuberculosis data come from the PE/PPE superfamily, which comprises ~170 genes with high nucleotide similarity. These are not rescued genes — they are correctly absent.
@@ -146,7 +146,7 @@ geneD   genome7   PSEUDOGENE:frameshift   97.8   91.0   contig_2   654000   6551
 
 **Example:**
 ```
-geneE   genome8   PSEUDOGENE:partial:72%cov   94.8   72.1   contig_1   890000   890900   +   0.273   FAIL   
+geneE   genome8   PSEUDOGENE:partial:72%cov   94.8   72.1   contig_1   890000   890900   +   0.273
 ```
 
 ---
@@ -163,7 +163,7 @@ Where:
 - `identity_fraction` = identity / 100
 - `coverage_fraction` = coverage / 100
 - `type_modifier` = see table above (1.0 for DROPPED, down to 0.4 for PartialDeletion)
-- `synteny_modifier` = 1.2 if PASS, 0.6 if FAIL, 1.0 if not assessed
+- `synteny_modifier` = 1.2 if PASS, 1.0 if not assessed. Explicit FAIL candidates are penalized for audit and rejected from the corrected matrix when `--synteny` is enabled.
 
 A value close to 1.0 indicates a high-confidence rescue. Values below ~0.5 should be interpreted with caution.
 
