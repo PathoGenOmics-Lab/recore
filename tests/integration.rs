@@ -107,6 +107,9 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
 
     // ── Verify outputs exist ──
     assert!(output_dir.join("gene_presence_absence_recore.csv").exists());
+    assert!(output_dir
+        .join("gene_presence_absence_recore_states.csv")
+        .exists());
     assert!(output_dir.join("rescue_report.tsv").exists());
     assert!(output_dir.join("cluster_relationships.tsv").exists());
     assert!(output_dir.join("summary.txt").exists());
@@ -148,6 +151,11 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
         "gB row should have RESCUED cells: {}",
         gb_row
     );
+
+    let state_content =
+        fs::read_to_string(output_dir.join("gene_presence_absence_recore_states.csv")).unwrap();
+    assert!(state_content.contains("PRESENT_INPUT"));
+    assert!(state_content.contains("SEQUENCE_ONLY"));
 
     // ── Verify summary ──
     let summary = fs::read_to_string(output_dir.join("summary.txt")).unwrap();

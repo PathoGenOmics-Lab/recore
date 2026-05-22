@@ -261,13 +261,24 @@ Written when GFF annotations are loaded. Recore builds a two-gene upstream and t
 
 Drop-in replacement for Panaroo's CSV. Changes:
 - Rescued genes: cell value `RESCUED:contig:start-end` (1-based coordinates)
+- Binary correction is controlled by `--matrix-policy` (`strict`, `balanced`, `sensitive`)
 - NSC-merged genes: cell value `NSC_MERGED`
 - Clusters absorbed by NSC are removed (rows dropped)
 - Metadata columns (No. isolates, No. sequences) updated to reflect rescues
 
+### gene_presence_absence_recore_states.csv
+
+Same shape as the corrected matrix, but genome cells are states rather than
+binary calls: `PRESENT_INPUT`, `ABSENT`, `STRICT_PRESENT`, `ALIAS_CLUSTER`,
+`SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or
+`REJECTED_CONTEXT`. This is the preferred output for plotting or reviewing
+ambiguous biology without forcing it into a clean 0/1 matrix.
+
 ### summary.txt
 
-Human-readable summary with gap counts, rescue type breakdown, core/soft-core genome changes, synteny stats, and NSC stats.
+Human-readable summary with gap counts, accepted rescues, matrix-corrected
+rescues under the selected policy, rescue type breakdown, core/soft-core genome
+changes, synteny stats, and NSC stats.
 
 ### nscluster_report.tsv (if NSC enabled)
 

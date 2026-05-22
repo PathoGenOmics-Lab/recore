@@ -1,5 +1,15 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum MatrixPolicy {
+    /// Paper-grade: correct only strict same-locus or cluster-alias evidence.
+    Strict,
+    /// Default: correct strict/alias/full-sequence evidence; keep partial/disrupted evidence multistate-only.
+    Balanced,
+    /// Exploratory: correct all accepted rescues, including partial/disrupted evidence.
+    Sensitive,
+}
 
 /// Post-hoc rescue of falsely absent genes in pangenome matrices.
 #[derive(Parser, Debug)]
@@ -61,6 +71,10 @@ pub struct Args {
     /// Original GFF records are preserved when --annotations is provided.
     #[arg(long, default_value_t = false)]
     pub write_corrected_gff: bool,
+
+    /// Policy for inserting accepted rescues into the binary corrected matrix.
+    #[arg(long, value_enum, default_value_t = MatrixPolicy::Balanced)]
+    pub matrix_policy: MatrixPolicy,
 
     /// Genome column to audit as the reference/background genome.
     /// Accepts exact matrix names or embedded AS identifiers such as AS00146.

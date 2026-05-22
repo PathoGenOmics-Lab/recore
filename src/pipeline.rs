@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-use crate::cli::Args;
+use crate::cli::{Args, MatrixPolicy};
 use crate::nscluster;
 use crate::parser::{
     extract_as_id, find_annotation_file, find_genome_files, load_genome_contig_names,
@@ -550,8 +550,16 @@ pub fn run(args: &Args) -> Result<()> {
             .then(a.genome_idx.cmp(&b.genome_idx))
     });
 
-    let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
+    let all_rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
         .iter()
+        .map(|r| ((r.cluster_idx, r.genome_idx), r))
+        .collect();
+    let matrix_rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
+        .iter()
+        .filter(|r| {
+            let state = accepted_rescue_evidence_state(r, &pa, &gene_to_cluster_maps);
+            matrix_policy_corrects(args.matrix_policy, state)
+        })
         .map(|r| ((r.cluster_idx, r.genome_idx), r))
         .collect();
 
@@ -578,18 +586,20 @@ pub fn run(args: &Args) -> Result<()> {
         &paralog_rejected,
         &pa,
         &gene_to_cluster_maps,
+        args.matrix_policy,
         &args.output,
     )?;
     if let Some(reference_genome) = args.reference_genome.as_deref() {
-        write_reference_genome_audit(
-            reference_genome,
-            &rescues,
-            &synteny_rejected,
-            &paralog_rejected,
-            &pa,
-            &gene_to_cluster_maps,
-            &args.output,
-        )?;
+        write_reference_genome_audit(ReferenceAuditInputs {
+            requested_reference: reference_genome,
+            rescues: &rescues,
+            synteny_rejected: &synteny_rejected,
+            paralog_rejected: &paralog_rejected,
+            pa: &pa,
+            gene_to_cluster_maps: &gene_to_cluster_maps,
+            matrix_policy: args.matrix_policy,
+            output_dir: &args.output,
+        })?;
     }
     if !gff_indices.is_empty() {
         let (context_rows, summary_rows) =
@@ -599,13 +609,24 @@ pub fn run(args: &Args) -> Result<()> {
             context_rows, summary_rows
         );
     }
-    write_corrected_csv(&pa, &rescue_map, &args.output, &nsc_result)?;
+    write_corrected_csv(&pa, &matrix_rescue_map, &args.output, &nsc_result)?;
+    write_multistate_matrix(
+        &pa,
+        &all_rescue_map,
+        &synteny_rejected,
+        &paralog_rejected,
+        &gene_to_cluster_maps,
+        &args.output,
+        &nsc_result,
+    )?;
     let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
     if n_relationships > 0 {
         info!("Cluster relationships: {} rows", n_relationships);
     }
     if args.write_corrected_gff {
-        write_corrected_gffs(&rescues, &pa, &gff_paths, &args.output)?;
+        let matrix_rescues: Vec<RescueEvent> =
+            matrix_rescue_map.values().map(|r| (*r).clone()).collect();
+        write_corrected_gffs(&matrix_rescues, &pa, &gff_paths, &args.output)?;
     }
 
     let stats = SummaryStats {
@@ -624,6 +645,8 @@ pub fn run(args: &Args) -> Result<()> {
         pseudogene,
         synteny_rejected: synteny_rejected.len(),
         paralog_rejected: paralog_rejected.len(),
+        matrix_policy: args.matrix_policy,
+        matrix_corrected: matrix_rescue_map.len(),
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result
@@ -633,7 +656,7 @@ pub fn run(args: &Args) -> Result<()> {
     };
     write_summary(
         &pa,
-        &rescue_map,
+        &matrix_rescue_map,
         &rescues,
         &stats,
         &nsc_result,
@@ -647,8 +670,8 @@ pub fn run(args: &Args) -> Result<()> {
         }
     }
 
-    let core_after = count_core_after(&pa, &rescue_map, &nsc_result);
-    let soft_core_after = count_soft_core_after(&pa, &rescue_map, &nsc_result);
+    let core_after = count_core_after(&pa, &matrix_rescue_map, &nsc_result);
+    let soft_core_after = count_soft_core_after(&pa, &matrix_rescue_map, &nsc_result);
     let core_diff = core_after as i64 - core_before as i64;
     let soft_core_before = pa.soft_core_size();
     let soft_diff = soft_core_after as i64 - soft_core_before as i64;
@@ -859,12 +882,42 @@ fn evidence_state(
     }
 }
 
-fn matrix_action(accepted: bool) -> &'static str {
-    if accepted {
+fn matrix_policy_corrects(policy: MatrixPolicy, state: &str) -> bool {
+    match policy {
+        MatrixPolicy::Strict => matches!(state, "STRICT_PRESENT" | "ALIAS_CLUSTER"),
+        MatrixPolicy::Balanced => {
+            matches!(state, "STRICT_PRESENT" | "ALIAS_CLUSTER" | "SEQUENCE_ONLY")
+        }
+        MatrixPolicy::Sensitive => matches!(
+            state,
+            "STRICT_PRESENT"
+                | "ALIAS_CLUSTER"
+                | "SEQUENCE_ONLY"
+                | "PARTIAL_HOMOLOGY"
+                | "PSEUDOGENE"
+                | "HOMOLOG_PARALOG"
+        ),
+    }
+}
+
+fn matrix_action(policy: MatrixPolicy, accepted: bool, state: &str) -> &'static str {
+    if accepted && matrix_policy_corrects(policy, state) {
         "correct_presence"
+    } else if accepted {
+        "audit_only_policy"
     } else {
         "audit_only"
     }
+}
+
+fn accepted_rescue_evidence_state(
+    rescue: &RescueEvent,
+    pa: &crate::parser::PresenceAbsence,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+) -> &'static str {
+    let query_cluster = pa.cluster_name(rescue.cluster_idx);
+    let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+    evidence_state(rescue, true, query_cluster, &annotation_cluster, "")
 }
 
 fn publication_status(accepted: bool, state: &str) -> &'static str {
@@ -917,6 +970,7 @@ fn write_orthology_evidence(
     paralog_rejected: &[RescueEvent],
     pa: &crate::parser::PresenceAbsence,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    matrix_policy: MatrixPolicy,
     output_dir: &std::path::Path,
 ) -> Result<()> {
     let path = output_dir.join("orthology_evidence.tsv");
@@ -938,7 +992,7 @@ fn write_orthology_evidence(
                 "accepted".to_string(),
                 status.to_string(),
                 state.to_string(),
-                matrix_action(true).to_string(),
+                matrix_action(matrix_policy, true, state).to_string(),
                 publication_status(true, state).to_string(),
                 evidence_strength(state).to_string(),
                 recommended_wording(state, true).to_string(),
@@ -988,7 +1042,7 @@ fn write_orthology_evidence(
                     "rejected".to_string(),
                     status.to_string(),
                     state.to_string(),
-                    matrix_action(false).to_string(),
+                    matrix_action(matrix_policy, false, state).to_string(),
                     publication_status(false, state).to_string(),
                     evidence_strength(state).to_string(),
                     recommended_wording(state, false).to_string(),
@@ -1104,9 +1158,21 @@ struct ReferenceEventRow<'a> {
     reference_name: &'a str,
     rescue: &'a RescueEvent,
     gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    matrix_policy: MatrixPolicy,
     decision: &'a str,
     accepted: bool,
     rejection_reason: &'a str,
+}
+
+struct ReferenceAuditInputs<'a> {
+    requested_reference: &'a str,
+    rescues: &'a [RescueEvent],
+    synteny_rejected: &'a [RescueEvent],
+    paralog_rejected: &'a [RescueEvent],
+    pa: &'a crate::parser::PresenceAbsence,
+    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    matrix_policy: MatrixPolicy,
+    output_dir: &'a std::path::Path,
 }
 
 fn write_reference_event_row(
@@ -1140,7 +1206,7 @@ fn write_reference_event_row(
             dichotomy.to_string(),
             final_status.to_string(),
             reference_status.to_string(),
-            matrix_action(row.accepted).to_string(),
+            matrix_action(row.matrix_policy, row.accepted, state).to_string(),
             state.to_string(),
             evidence_strength(state).to_string(),
             reference_recommended_wording(state, row.accepted).to_string(),
@@ -1167,24 +1233,16 @@ fn write_reference_event_row(
     Ok(())
 }
 
-fn write_reference_genome_audit(
-    requested_reference: &str,
-    rescues: &[RescueEvent],
-    synteny_rejected: &[RescueEvent],
-    paralog_rejected: &[RescueEvent],
-    pa: &crate::parser::PresenceAbsence,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
-    output_dir: &std::path::Path,
-) -> Result<()> {
-    let Some(reference_gi) = resolve_reference_genome(pa, requested_reference) else {
+fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> {
+    let Some(reference_gi) = resolve_reference_genome(inputs.pa, inputs.requested_reference) else {
         warn!(
             "--reference-genome {} did not match any matrix column; skipping reference audit",
-            requested_reference
+            inputs.requested_reference
         );
         return Ok(());
     };
-    let reference_name = pa.genome_name(reference_gi);
-    let path = output_dir.join("reference_genome_audit.tsv");
+    let reference_name = inputs.pa.genome_name(reference_gi);
+    let path = inputs.output_dir.join("reference_genome_audit.tsv");
     let file = fs::File::create(&path)?;
     let mut w = BufWriter::new(file);
     writeln!(
@@ -1192,13 +1250,13 @@ fn write_reference_genome_audit(
         "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note"
     )?;
 
-    for ci_val in 0..pa.n_clusters() {
+    for ci_val in 0..inputs.pa.n_clusters() {
         let ci = ClusterIdx(ci_val);
-        if pa.is_present(ci, reference_gi) {
+        if inputs.pa.is_present(ci, reference_gi) {
             write_tsv_fields(
                 &mut w,
                 &[
-                    pa.cluster_name(ci).to_string(),
+                    inputs.pa.cluster_name(ci).to_string(),
                     reference_name.to_string(),
                     "reference_like_or_present".to_string(),
                     "remove_from_strict_reference_absent_set".to_string(),
@@ -1225,17 +1283,19 @@ fn write_reference_genome_audit(
             continue;
         }
 
-        if let Some(rescue) = rescues
+        if let Some(rescue) = inputs
+            .rescues
             .iter()
             .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
         {
             write_reference_event_row(
                 &mut w,
-                pa,
+                inputs.pa,
                 ReferenceEventRow {
                     reference_name,
                     rescue,
-                    gene_to_cluster_maps,
+                    gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    matrix_policy: inputs.matrix_policy,
                     decision: "accepted",
                     accepted: true,
                     rejection_reason: "",
@@ -1244,17 +1304,19 @@ fn write_reference_genome_audit(
             continue;
         }
 
-        if let Some(rescue) = synteny_rejected
+        if let Some(rescue) = inputs
+            .synteny_rejected
             .iter()
             .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
         {
             write_reference_event_row(
                 &mut w,
-                pa,
+                inputs.pa,
                 ReferenceEventRow {
                     reference_name,
                     rescue,
-                    gene_to_cluster_maps,
+                    gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    matrix_policy: inputs.matrix_policy,
                     decision: "rejected",
                     accepted: false,
                     rejection_reason: "synteny_fail",
@@ -1263,17 +1325,19 @@ fn write_reference_genome_audit(
             continue;
         }
 
-        if let Some(rescue) = paralog_rejected
+        if let Some(rescue) = inputs
+            .paralog_rejected
             .iter()
             .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
         {
             write_reference_event_row(
                 &mut w,
-                pa,
+                inputs.pa,
                 ReferenceEventRow {
                     reference_name,
                     rescue,
-                    gene_to_cluster_maps,
+                    gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    matrix_policy: inputs.matrix_policy,
                     decision: "rejected",
                     accepted: false,
                     rejection_reason: "paralog_without_synteny",
@@ -1285,7 +1349,7 @@ fn write_reference_genome_audit(
         write_tsv_fields(
             &mut w,
             &[
-                pa.cluster_name(ci).to_string(),
+                inputs.pa.cluster_name(ci).to_string(),
                 reference_name.to_string(),
                 "new_to_reference".to_string(),
                 "keep_as_strict_reference_absent".to_string(),
@@ -1626,6 +1690,117 @@ fn write_corrected_csv(
     Ok(())
 }
 
+fn write_multistate_matrix(
+    pa: &crate::parser::PresenceAbsence,
+    accepted_rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    synteny_rejected: &[RescueEvent],
+    paralog_rejected: &[RescueEvent],
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    output_dir: &std::path::Path,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+) -> Result<()> {
+    let clusters_to_skip: ahash::HashSet<usize> = nsc_result
+        .as_ref()
+        .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
+        .unwrap_or_default();
+
+    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
+        .as_ref()
+        .map(|r| {
+            let (_, updates) = nscluster::apply_ns_merges(
+                &r.merge_map,
+                |ci, gi| pa.is_present(ci, gi),
+                pa.n_genomes(),
+            );
+            updates
+                .into_iter()
+                .map(|(ci, gi)| (ci.val(), gi.val()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let synteny_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = synteny_rejected
+        .iter()
+        .map(|r| ((r.cluster_idx, r.genome_idx), r))
+        .collect();
+    let paralog_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = paralog_rejected
+        .iter()
+        .map(|r| ((r.cluster_idx, r.genome_idx), r))
+        .collect();
+
+    let path = output_dir.join("gene_presence_absence_recore_states.csv");
+    let file = fs::File::create(&path)?;
+    let writer = BufWriter::with_capacity(256 * 1024, file);
+    let mut csv_writer = csv::Writer::from_writer(writer);
+    csv_writer.write_record(pa.header())?;
+
+    let genome_idx_set: ahash::HashSet<usize> = pa.genome_col_indices().iter().copied().collect();
+    let meta_col_indices: Vec<usize> = (0..pa.header().len())
+        .filter(|i| !genome_idx_set.contains(i))
+        .collect();
+
+    let n_cols = pa.header().len();
+    let mut row: Vec<String> = vec![String::new(); n_cols];
+
+    for ci_val in 0..pa.n_clusters() {
+        if clusters_to_skip.contains(&ci_val) {
+            continue;
+        }
+
+        let ci = ClusterIdx(ci_val);
+        for (mi, &col_idx) in meta_col_indices.iter().enumerate() {
+            let meta = pa.metadata(ci);
+            if mi < meta.len() {
+                row[col_idx].clone_from(&meta[mi]);
+            } else {
+                row[col_idx].clear();
+            }
+        }
+
+        for (gi_val, &col_idx) in pa.genome_col_indices().iter().enumerate() {
+            let gi = GenomeIdx(gi_val);
+            row[col_idx].clear();
+            if pa.is_present(ci, gi) {
+                row[col_idx].push_str("PRESENT_INPUT");
+            } else if let Some(rescue) = accepted_rescue_map.get(&(ci, gi)) {
+                row[col_idx].push_str(accepted_rescue_evidence_state(
+                    rescue,
+                    pa,
+                    gene_to_cluster_maps,
+                ));
+            } else if let Some(rescue) = synteny_rejected_map.get(&(ci, gi)) {
+                let query_cluster = pa.cluster_name(rescue.cluster_idx);
+                let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+                row[col_idx].push_str(evidence_state(
+                    rescue,
+                    false,
+                    query_cluster,
+                    &annotation_cluster,
+                    "synteny_fail",
+                ));
+            } else if let Some(rescue) = paralog_rejected_map.get(&(ci, gi)) {
+                let query_cluster = pa.cluster_name(rescue.cluster_idx);
+                let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+                row[col_idx].push_str(evidence_state(
+                    rescue,
+                    false,
+                    query_cluster,
+                    &annotation_cluster,
+                    "paralog_without_synteny",
+                ));
+            } else if nsc_presence.contains(&(ci_val, gi_val)) {
+                row[col_idx].push_str("ALIAS_CLUSTER");
+            } else {
+                row[col_idx].push_str("ABSENT");
+            }
+        }
+
+        csv_writer.write_record(row.iter().map(|s| s.as_str()))?;
+    }
+    csv_writer.flush()?;
+    Ok(())
+}
+
 fn read_text_maybe_gzip(path: &std::path::Path) -> Result<String> {
     use std::io::Read;
 
@@ -1893,6 +2068,8 @@ struct SummaryStats {
     pseudogene: usize,
     synteny_rejected: usize,
     paralog_rejected: usize,
+    matrix_policy: MatrixPolicy,
+    matrix_corrected: usize,
     synteny_enabled: bool,
     nsc_clusters: usize,
     nsc_merged_genes: usize,
@@ -1953,6 +2130,8 @@ fn write_summary(
     }
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;
     writeln!(w, "Rescued:               {}", rescues.len())?;
+    writeln!(w, "Matrix policy:         {:?}", stats.matrix_policy)?;
+    writeln!(w, "Matrix-corrected:      {}", stats.matrix_corrected)?;
     if stats.synteny_rejected > 0 {
         writeln!(w, "Rejected (synteny):    {}", stats.synteny_rejected)?;
     }
@@ -1962,7 +2141,7 @@ fn write_summary(
     writeln!(
         w,
         "Remaining gaps:        {}",
-        stats.searchable_gaps.saturating_sub(rescues.len())
+        stats.searchable_gaps.saturating_sub(stats.matrix_corrected)
     )?;
     writeln!(w)?;
     let core_diff = core_after as i64 - stats.core_before as i64;
@@ -2126,5 +2305,43 @@ mod tests {
             ),
             "HOMOLOG_PARALOG"
         );
+    }
+
+    #[test]
+    fn matrix_policy_controls_binary_correction() {
+        assert!(matrix_policy_corrects(
+            MatrixPolicy::Strict,
+            "STRICT_PRESENT"
+        ));
+        assert!(matrix_policy_corrects(
+            MatrixPolicy::Strict,
+            "ALIAS_CLUSTER"
+        ));
+        assert!(!matrix_policy_corrects(
+            MatrixPolicy::Strict,
+            "SEQUENCE_ONLY"
+        ));
+
+        assert!(matrix_policy_corrects(
+            MatrixPolicy::Balanced,
+            "SEQUENCE_ONLY"
+        ));
+        assert!(!matrix_policy_corrects(
+            MatrixPolicy::Balanced,
+            "PSEUDOGENE"
+        ));
+        assert!(!matrix_policy_corrects(
+            MatrixPolicy::Balanced,
+            "PARTIAL_HOMOLOGY"
+        ));
+
+        assert!(matrix_policy_corrects(
+            MatrixPolicy::Sensitive,
+            "PSEUDOGENE"
+        ));
+        assert!(matrix_policy_corrects(
+            MatrixPolicy::Sensitive,
+            "PARTIAL_HOMOLOGY"
+        ));
     }
 }

@@ -83,6 +83,7 @@ recore \
   --nsc-coverage 0.8 \
   --preset asm5 \
   --min-prevalence 0.05 \
+  --matrix-policy balanced \
   --reference-genome AS00146 \
   -t 8 \
   -o recore_output/
@@ -92,6 +93,7 @@ recore \
 |------|-----|
 | `-a annotations/` | GFF directory — enables SPLIT, START_VARIANT, PARALOG, and PSEUDOGENE classification (not just DROPPED) |
 | `--synteny` | Validates rescues by comparing flanking gene context — rejects spurious paralog rescues |
+| `--matrix-policy balanced` | Controls what enters the binary corrected matrix: `strict`, `balanced`, or `sensitive` |
 | `--reference-genome AS00146` | Writes `reference_genome_audit.tsv`, resolving exact names or embedded AS identifiers such as `L4_AS00146` |
 | `--multi-allele` | Queries all allelic variants per cluster instead of just the longest — more sensitive for diverse datasets |
 | `--write-corrected-gff` | Writes per-genome GFF3 files with Recore rescue features appended |
@@ -151,6 +153,7 @@ recore \
 | `--multi-allele` | off | Query all alleles per cluster (slower, more sensitive) |
 | `--synteny` | off | Validate rescues by flanking gene conservation |
 | `--write-corrected-gff` | off | Write `corrected_gff/*.recore.gff3` files with rescue features appended |
+| `--matrix-policy` | `balanced` | Binary matrix policy: `strict` corrects only `STRICT_PRESENT`/`ALIAS_CLUSTER`; `balanced` also corrects full `SEQUENCE_ONLY` evidence; `sensitive` also corrects partial/disrupted accepted evidence |
 | `--reference-genome` | — | Audit one genome column/reference background by exact name or embedded `ASxxxxx` identifier |
 
 ### Nucleotide similarity clustering
@@ -200,6 +203,7 @@ contig `AS00146`. Original GFF files are not modified.
 ```
 recore_output/
 ├── gene_presence_absence_recore.csv   # Corrected matrix (Panaroo-compatible)
+├── gene_presence_absence_recore_states.csv # Multistate matrix for audit/plotting
 ├── rescue_report.tsv                  # Per-rescue details
 ├── orthology_evidence.tsv             # Accepted and rejected candidate evidence
 ├── reference_genome_audit.tsv         # Reference-specific absent/present audit (if --reference-genome)
@@ -237,6 +241,19 @@ Drop-in replacement for Panaroo's output:
 - NSC-merged cells: `NSC_MERGED` (if `--nscluster`)
 - Redundant clusters removed (merged into representative)
 - Metadata columns recalculated
+
+Binary corrections are controlled by `--matrix-policy`. The default
+`balanced` policy does not turn pseudogenes or partial/fragmented homology into
+clean binary presence, but those calls are retained in the multistate matrix and
+audit tables.
+
+### gene_presence_absence_recore_states.csv
+
+Same shape as the Panaroo matrix, but genome cells contain biological states:
+`PRESENT_INPUT`, `ABSENT`, `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`,
+`PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or
+`REJECTED_CONTEXT`. Use this file for manuscript plots and manual review when a
+binary presence/absence matrix would hide important biology.
 
 ### nscluster_report.tsv
 

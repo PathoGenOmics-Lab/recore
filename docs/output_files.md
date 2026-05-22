@@ -179,18 +179,43 @@ Drop-in replacement for Panaroo's `gene_presence_absence.csv`. Identical format 
    After:  "RESCUED:L1_AS00349:245301-246100"
    ```
 
-2. **NSC-merged cells** (only if `--nscluster`): Cells where a merged cluster would have added presence become `NSC_MERGED`.
+2. **Matrix-policy filter**: `--matrix-policy` controls which accepted rescues become binary presence. `strict` corrects only `STRICT_PRESENT`/`ALIAS_CLUSTER`; `balanced` also corrects full-length `SEQUENCE_ONLY`; `sensitive` also corrects partial/disrupted accepted evidence.
 
-3. **Metadata columns updated**: `No. isolates`, `No. sequences`, and `Avg sequences per isolate` are updated to reflect the new presence count.
+3. **NSC-merged cells** (only if `--nscluster`): Cells where a merged cluster would have added presence become `NSC_MERGED`.
 
-4. **NSC clusters removed**: Panaroo clusters that were merged by NSC into a representative cluster are dropped entirely (their rows are absent from the output).
+4. **Metadata columns updated**: `No. isolates`, `No. sequences`, and `Avg sequences per isolate` are updated to reflect the new presence count.
+
+5. **NSC clusters removed**: Panaroo clusters that were merged by NSC into a representative cluster are dropped entirely (their rows are absent from the output).
 
 ### Compatibility
 
 This file can be used directly as input to downstream tools that accept Panaroo's format:
 - `distree` for phylogenetic distance analysis
 - `fstic` for allele frequency-based FST calculations
-- Custom R/Python scripts expecting Panaroo output
+- Custom R/Python scripts expecting Panaroo output.
+
+---
+
+## gene_presence_absence_recore_states.csv
+
+Written for every run. Same row/column layout as the corrected matrix, but each
+genome cell stores the biological interpretation rather than a binary presence
+call.
+
+Possible states:
+- `PRESENT_INPUT`: present in the original matrix.
+- `ABSENT`: no evidence under current thresholds.
+- `STRICT_PRESENT`: accepted same-locus rescue.
+- `ALIAS_CLUSTER`: accepted split/alias or NSC-compatible cluster evidence.
+- `SEQUENCE_ONLY`: full-length sequence evidence without context/annotation support.
+- `PARTIAL_HOMOLOGY`: accepted fragmented or alignment-split evidence.
+- `PSEUDOGENE`: accepted disrupted sequence evidence.
+- `HOMOLOG_PARALOG`: rejected or ambiguous paralog-like evidence.
+- `REJECTED_CONTEXT`: rejected incompatible-context evidence.
+
+Use this file when a binary matrix would overstate biology, especially for
+pseudogenes, partial genes, PE/PPE-like families, or publication figures that
+need to show uncertainty explicitly.
 
 ---
 

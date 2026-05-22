@@ -42,6 +42,7 @@ GFF uses `contig_1` or `L4_AS00146` but the FASTA contig is `AS00146`.
 |------|---------|-------------|
 | `--synteny` | `false` | Validate each rescue by comparing flanking gene context to reference genomes. Requires `--annotations`. Boosts synteny-consistent rescues (×1.2) and rejects explicit synteny failures from the corrected matrix while writing them to `synteny_rejected_report.tsv`. Independently, PARALOG candidates without explicit synteny support are rejected to `paralog_rejected_report.tsv`. |
 | `--write-corrected-gff` | `false` | Write per-genome `corrected_gff/*.recore.gff3` files with rescued CDS features appended. Original GFF records are preserved when `--annotations` is provided. |
+| `--matrix-policy` | `balanced` | Controls which accepted rescues enter the binary corrected matrix. `strict` corrects only `STRICT_PRESENT` and `ALIAS_CLUSTER`; `balanced` also corrects full-length `SEQUENCE_ONLY`; `sensitive` also corrects partial/disrupted accepted evidence for exploratory analyses. |
 | `--reference-genome` | — | Audit one genome column/reference background by exact matrix name or embedded `ASxxxxx` identifier. Writes `reference_genome_audit.tsv` with `new_to_reference`, `reference_like_or_present`, and `reference_like_ambiguous` classifications. |
 
 ## Nucleotide Similarity Clustering
