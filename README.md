@@ -101,8 +101,9 @@ Recommended wording:
 ```mermaid
 flowchart LR
     A["Inputs<br/>PA matrix + pan-ref FASTA + assemblies + optional GFF"] --> B["Find matrix gaps"]
-    B --> C["Batch minimap2<br/>one indexed target"]
-    C --> D["Classify evidence<br/>full, split, fragment, pseudogene, paralog"]
+    B --> C["Batch minimap2<br/>primary indexed target"]
+    C --> C2["Exact no-CDS pass<br/>GFF + synteny mode"]
+    C2 --> D["Classify evidence<br/>full, missing CDS, split, fragment, pseudogene, paralog"]
     D --> E{"Orthology support?"}
     E -->|annotation / synteny / alias| F["Accepted evidence"]
     E -->|incompatible context| G["Rejected audit-only"]
@@ -322,6 +323,7 @@ biological states:
 | `STRICT_PRESENT` | Same-locus evidence from annotation/synteny | yes |
 | `ALIAS_CLUSTER` | Same biological locus assigned to another cluster | yes |
 | `SEQUENCE_ONLY` | Full-length sequence evidence without stronger annotation context | yes |
+| `MISSING_CDS_UNVALIDATED` | Full-length sequence falls in a locus with no CDS annotation but lacks synteny support | no |
 | `PARTIAL_HOMOLOGY` | Partial homologous sequence | no |
 | `PSEUDOGENE` | Disrupted gene evidence | no |
 | `HOMOLOG_PARALOG` | Homologous/paralogous hit | no |
@@ -332,6 +334,7 @@ biological states:
 | Type | Description | Typical interpretation |
 |------|-------------|------------------------|
 | `DROPPED` | Full-length gene sequence present but missing from matrix | false absence caused by graph cleaning or annotation transfer |
+| `MISSING_CDS` | Full-length gene sequence present at a locus where the GFF has no substantial CDS overlap | annotation omission; corrected only when synteny validates the locus |
 | `SPLIT` | Hit overlaps a CDS assigned to another cluster | cluster split or alias |
 | `FRAGMENTED` | Gene reconstructed from multiple biological fragments | possible disrupted or split locus |
 | `ALIGNMENT_SPLIT` | Multiple alignments reconstruct the gene without strong biological break evidence | alignment-level split, audit carefully |

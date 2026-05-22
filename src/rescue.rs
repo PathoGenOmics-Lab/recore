@@ -9,6 +9,8 @@ use ahash::{HashMap, HashMapExt};
 pub enum RescueType {
     /// Gene is present but Panaroo dropped it during graph cleaning.
     Dropped,
+    /// Gene is present in the assembly at an unannotated CDS locus.
+    MissingCds,
     /// Gene's locus is assigned to a different Panaroo cluster (mis-clustering).
     Split { other_cluster: String },
     /// Gene is broken into multiple fragments (IS, frameshift, assembly break).
@@ -44,6 +46,7 @@ impl std::fmt::Display for RescueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RescueType::Dropped => write!(f, "DROPPED"),
+            RescueType::MissingCds => write!(f, "MISSING_CDS"),
             RescueType::Split { other_cluster } => write!(f, "SPLIT:{}", other_cluster),
             RescueType::Fragmented {
                 n_fragments,
@@ -272,7 +275,12 @@ impl GffIndex {
                     .enumerate()
                     .filter_map(|(i, gene)| {
                         let overlap = gene.end.min(end).saturating_sub(gene.start.max(start));
-                        (overlap > 0).then_some((i, overlap))
+                        let query_len = end.saturating_sub(start);
+                        let gene_len = gene.end.saturating_sub(gene.start);
+                        let substantial = overlap > 0
+                            && ((query_len > 0 && overlap as f64 / query_len as f64 >= 0.5)
+                                || (gene_len > 0 && overlap as f64 / gene_len as f64 >= 0.5));
+                        substantial.then_some((i, overlap))
                     })
                     .max_by_key(|(_, overlap)| *overlap)
                     .map(|(i, _)| i)
@@ -288,13 +296,13 @@ impl GffIndex {
             return (upstream, downstream);
         }
 
-        let pos = slice.partition_point(|g| g.end <= start);
+        let midpoint = start.saturating_add(end.saturating_sub(start) / 2);
+        let pos = slice.partition_point(|g| {
+            let gene_mid = g.start.saturating_add(g.end.saturating_sub(g.start) / 2);
+            gene_mid < midpoint
+        });
         let upstream = slice[..pos].iter().rev().take(n_neighbors).collect();
-        let downstream = slice[pos..]
-            .iter()
-            .filter(|g| g.start >= end)
-            .take(n_neighbors)
-            .collect();
+        let downstream = slice[pos..].iter().take(n_neighbors).collect();
         (upstream, downstream)
     }
 }
@@ -331,6 +339,7 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
 
 const BIOLOGICAL_FRAGMENT_MIN_GAP_BP: u64 = 50;
 const SYNTENY_CONTEXT_GENES: usize = 2;
+const MISSING_CDS_MIN_IDENTITY: f64 = 95.0;
 
 #[derive(Debug, Clone)]
 struct FragmentChain {
@@ -677,9 +686,37 @@ pub fn classify_hits(
             .then(a.query.cmp(&b.query))
     });
 
+    // ── Path 1: Single full-coverage hit ──
+    if let Some(missing_cds_hit) = sorted_hits
+        .iter()
+        .copied()
+        .filter(|hit| hit.query_coverage() >= min_coverage)
+        .find(|hit| is_missing_cds_candidate(hit, gff_index))
+    {
+        let confidence = missing_cds_hit.identity() / 100.0
+            * missing_cds_hit.query_coverage() / 100.0;
+        return Some(RescueEvent {
+            cluster_idx: ci,
+            genome_idx: gi,
+            rescue_type: RescueType::MissingCds,
+            identity: missing_cds_hit.identity(),
+            coverage: missing_cds_hit.query_coverage(),
+            contig: missing_cds_hit.target.clone(),
+            start: missing_cds_hit.target_start,
+            end: missing_cds_hit.target_end,
+            strand: missing_cds_hit.strand,
+            annotation_match: None,
+            confidence,
+            synteny_ok: None,
+            fragment_evidence: FragmentEvidence {
+                note: Some("missing_cds_no_substantial_gff_overlap".to_string()),
+                ..FragmentEvidence::default()
+            },
+        });
+    }
+
     let best = sorted_hits[0];
 
-    // ── Path 1: Single full-coverage hit ──
     if best.query_coverage() >= min_coverage {
         let (rescue_type, annotation_match, confidence) =
             classify_single_hit(best, ci, pa, gff_index, gene_to_cluster);
@@ -1092,6 +1129,31 @@ fn classify_single_hit(
         Some(matched_gene.gene_id.clone()),
         base_confidence,
     )
+}
+
+fn is_missing_cds_candidate(hit: &Hit, gff_index: Option<&GffIndex>) -> bool {
+    if hit.identity() < MISSING_CDS_MIN_IDENTITY {
+        return false;
+    }
+    let Some(gff) = gff_index else {
+        return false;
+    };
+    let overlapping = gff.overlapping(&hit.target, hit.target_start, hit.target_end);
+    if overlapping.is_empty() {
+        return true;
+    }
+
+    let hit_len = hit.target_end.saturating_sub(hit.target_start) as f64;
+    !overlapping.iter().any(|gene| {
+        let overlap = hit
+            .target_end
+            .min(gene.end)
+            .saturating_sub(hit.target_start.max(gene.start)) as f64;
+        let gene_len = gene.end.saturating_sub(gene.start) as f64;
+        hit_len > 0.0
+            && gene_len > 0.0
+            && (overlap / hit_len).min(overlap / gene_len) > 0.5
+    })
 }
 
 // ── Conflict resolution ──
@@ -1899,6 +1961,152 @@ mod tests {
     }
 
     #[test]
+    fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() {
+        let pa = PresenceAbsence::new_for_test(
+            vec![
+                "target_gene".into(),
+                "shared_up".into(),
+                "shared_down".into(),
+                "other_cluster".into(),
+            ],
+            vec!["target".into(), "ref1".into(), "ref2".into()],
+            vec![
+                vec!["".into(), "ref_center1".into(), "ref_center2".into()],
+                vec!["target_up".into(), "ref_up1".into(), "ref_up2".into()],
+                vec!["target_down".into(), "ref_down1".into(), "ref_down2".into()],
+                vec!["target_paralog".into(), "".into(), "".into()],
+            ],
+        );
+
+        let target_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "target_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "target_down".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 1000,
+                end: 1100,
+                strand: '+',
+                gene_id: "target_paralog".into(),
+            },
+        ]);
+        let ref1_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "ref_up1".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 200,
+                end: 300,
+                strand: '+',
+                gene_id: "ref_center1".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "ref_down1".into(),
+            },
+        ]);
+        let ref2_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "ref_up2".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 200,
+                end: 300,
+                strand: '+',
+                gene_id: "ref_center2".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "ref_down2".into(),
+            },
+        ]);
+
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(GenomeIdx(0), target_gff);
+        gff_indices.insert(GenomeIdx(1), ref1_gff);
+        gff_indices.insert(GenomeIdx(2), ref2_gff);
+
+        let mut g2c = HashMap::new();
+        for gi in 0..3 {
+            g2c.insert(GenomeIdx(gi), build_gene_to_cluster(&pa, GenomeIdx(gi)));
+        }
+
+        let annotated_paralog = Hit {
+            query: "target_gene".into(),
+            cluster: "target_gene".into(),
+            query_length: 100,
+            query_start: 0,
+            query_end: 100,
+            strand: '+',
+            target: "chr".into(),
+            target_start: 1000,
+            target_end: 1100,
+            matches: 100,
+            alignment_length: 100,
+            mapq: 60,
+        };
+        let missing_cds_hit = Hit {
+            query: "target_gene".into(),
+            cluster: "target_gene".into(),
+            query_length: 100,
+            query_start: 0,
+            query_end: 100,
+            strand: '+',
+            target: "chr".into(),
+            target_start: 198,
+            target_end: 302,
+            matches: 98,
+            alignment_length: 100,
+            mapq: 60,
+        };
+
+        let mut rescue = classify_hits(
+            &[annotated_paralog, missing_cds_hit],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            gff_indices.get(&GenomeIdx(0)),
+            g2c.get(&GenomeIdx(0)).unwrap(),
+            80.0,
+        )
+        .unwrap();
+
+        assert!(matches!(rescue.rescue_type, RescueType::MissingCds));
+        assert_eq!(rescue.start, 198);
+        assert_eq!(rescue.annotation_match, None);
+
+        validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
+        assert_eq!(rescue.synteny_ok, Some(true));
+    }
+
+    #[test]
     fn test_synteny_rejects_one_off_context_when_many_references_exist() {
         let target = SyntenyContext {
             upstream: vec![ClusterIdx(1)],
@@ -2381,8 +2589,8 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_dropped_no_overlapping_genes() {
-        // Full-coverage hit, GFF exists but no gene overlaps the hit region → DROPPED
+    fn test_classify_missing_cds_no_overlapping_genes() {
+        // Full-coverage hit, GFF exists but no gene overlaps the hit region → MISSING_CDS
         let gff_genes = vec![GffGene {
             contig: "c".into(),
             start: 5000,
@@ -2421,7 +2629,7 @@ mod tests {
             80.0,
         );
         let r = result.unwrap();
-        assert!(matches!(r.rescue_type, RescueType::Dropped));
+        assert!(matches!(r.rescue_type, RescueType::MissingCds));
     }
 
     #[test]
@@ -2536,6 +2744,7 @@ mod tests {
     #[test]
     fn test_rescue_type_display() {
         assert_eq!(RescueType::Dropped.to_string(), "DROPPED");
+        assert_eq!(RescueType::MissingCds.to_string(), "MISSING_CDS");
         assert_eq!(
             RescueType::Split {
                 other_cluster: "cl2".into()

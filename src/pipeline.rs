@@ -240,6 +240,8 @@ pub fn run(args: &Args) -> Result<()> {
         args.threads,
         args.min_identity,
         &args.preset,
+        false,
+        50,
     )?;
 
     // ── 7. Classify hits (parallel) ──
@@ -270,18 +272,96 @@ pub fn run(args: &Args) -> Result<()> {
     let mut rescues = rescues;
     info!("Raw rescues before filtering: {}", rescues.len());
 
-    // ── 7b. Internal stop codon scanning for DROPPED rescues ──
+    // ── 7a. Exact missing-CDS pass ──
+    //
+    // Repetitive families can hide true CDS omissions when the best annotated
+    // paralog consumes minimap2's global secondary-hit budget. Run an exact,
+    // high-secondary pass, but only import MISSING_CDS candidates; all other
+    // extra alignments remain ignored by the binary correction path.
+    if args.synteny && !gff_indices.is_empty() && !searchable_genomes.is_empty() {
+        let missing_cds_chunk_size = 64usize;
+        info!(
+            "Running exact missing-CDS pass (-c) in {}-genome chunks...",
+            missing_cds_chunk_size
+        );
+        let before = rescues.len();
+        let mut seen_missing: ahash::HashSet<(ClusterIdx, GenomeIdx, String, u64, u64)> =
+            rescues
+                .iter()
+                .map(|r| {
+                    (
+                        r.cluster_idx,
+                        r.genome_idx,
+                        r.contig.clone(),
+                        r.start,
+                        r.end,
+                    )
+                })
+                .collect();
+
+        for chunk in searchable_genomes.chunks(missing_cds_chunk_size) {
+            let max_secondary_missing_cds = chunk.len().saturating_mul(24).clamp(50, 5000);
+            let missing_hits_map = batch_search(
+                &pan_ref,
+                &genome_files,
+                chunk,
+                pa.genome_names(),
+                pa.cluster_names(),
+                args.threads,
+                args.min_identity,
+                &args.preset,
+                true,
+                max_secondary_missing_cds,
+            )?;
+            let missing_inputs: Vec<(ClusterIdx, GenomeIdx, &[crate::search::Hit])> =
+                missing_hits_map
+                    .iter()
+                    .map(|((gi, ci), hits)| (*ci, *gi, hits.as_slice()))
+                    .collect();
+            let missing_rescues: Vec<RescueEvent> = pool.install(|| {
+                use rayon::prelude::*;
+                missing_inputs
+                    .par_iter()
+                    .filter_map(|&(ci, gi, hits)| {
+                        let gff_index = gff_indices.get(&gi);
+                        let g2c = gene_to_cluster_maps.get(&gi).unwrap_or(&empty_map);
+                        classify_hits(hits, ci, gi, &pa, gff_index, g2c, args.min_coverage)
+                    })
+                    .filter(|rescue| matches!(rescue.rescue_type, RescueType::MissingCds))
+                    .collect()
+            });
+
+            for rescue in missing_rescues {
+                let key = (
+                    rescue.cluster_idx,
+                    rescue.genome_idx,
+                    rescue.contig.clone(),
+                    rescue.start,
+                    rescue.end,
+                );
+                if seen_missing.insert(key) {
+                    rescues.push(rescue);
+                }
+            }
+        }
+        info!(
+            "Exact missing-CDS pass added {} candidates",
+            rescues.len() - before
+        );
+    }
+
+    // ── 7b. Internal stop codon scanning for sequence-only rescues ──
     // Load genome sequences on-demand for rescued genomes only
     {
         let rescued_genomes: ahash::HashSet<GenomeIdx> = rescues
             .iter()
-            .filter(|r| matches!(r.rescue_type, RescueType::Dropped))
+            .filter(|r| matches!(r.rescue_type, RescueType::Dropped | RescueType::MissingCds))
             .map(|r| r.genome_idx)
             .collect();
 
         if !rescued_genomes.is_empty() {
             info!(
-                "Scanning {} genomes for internal stop codons in DROPPED rescues...",
+                "Scanning {} genomes for internal stop codons in sequence-only rescues...",
                 rescued_genomes.len()
             );
             let mut upgraded = 0usize;
@@ -297,7 +377,10 @@ pub fn run(args: &Args) -> Result<()> {
 
                 for rescue in rescues.iter_mut() {
                     if rescue.genome_idx != *gi
-                        || !matches!(rescue.rescue_type, RescueType::Dropped)
+                        || !matches!(
+                            rescue.rescue_type,
+                            RescueType::Dropped | RescueType::MissingCds
+                        )
                     {
                         continue;
                     }
@@ -330,7 +413,7 @@ pub fn run(args: &Args) -> Result<()> {
 
             if upgraded > 0 {
                 info!(
-                    "Upgraded {} DROPPED rescues to PSEUDOGENE:internal_stop",
+                    "Upgraded {} sequence-only rescues to PSEUDOGENE:internal_stop",
                     upgraded
                 );
             }
@@ -425,6 +508,7 @@ pub fn run(args: &Args) -> Result<()> {
 
     // ── 10. Count rescue types ──
     let mut dropped = 0usize;
+    let mut missing_cds = 0usize;
     let mut split = 0usize;
     let mut fragmented = 0usize;
     let mut alignment_split = 0usize;
@@ -434,6 +518,7 @@ pub fn run(args: &Args) -> Result<()> {
     for r in &rescues {
         match &r.rescue_type {
             RescueType::Dropped => dropped += 1,
+            RescueType::MissingCds => missing_cds += 1,
             RescueType::Split { .. } => split += 1,
             RescueType::Fragmented { .. } => fragmented += 1,
             RescueType::AlignmentSplit { .. } => alignment_split += 1,
@@ -443,8 +528,8 @@ pub fn run(args: &Args) -> Result<()> {
         }
     }
     info!(
-        "Final rescues: {} (DROPPED: {}, SPLIT: {}, FRAGMENTED: {}, ALIGNMENT_SPLIT: {}, START_VARIANT: {}, PARALOG: {}, PSEUDOGENE: {})",
-        rescues.len(), dropped, split, fragmented, alignment_split, start_variant, paralog, pseudogene
+        "Final rescues: {} (DROPPED: {}, MISSING_CDS: {}, SPLIT: {}, FRAGMENTED: {}, ALIGNMENT_SPLIT: {}, START_VARIANT: {}, PARALOG: {}, PSEUDOGENE: {})",
+        rescues.len(), dropped, missing_cds, split, fragmented, alignment_split, start_variant, paralog, pseudogene
     );
 
     if args.verbose && !rescues.is_empty() {
@@ -624,6 +709,7 @@ pub fn run(args: &Args) -> Result<()> {
         searchable_gaps,
         missing_fasta_gaps,
         dropped,
+        missing_cds,
         split,
         fragmented,
         alignment_split,
@@ -821,6 +907,13 @@ fn accepted_orthology_status(
         RescueType::Fragmented { .. } => "accepted_fragment_evidence",
         RescueType::Pseudogene { .. } => "accepted_pseudogene_evidence",
         RescueType::Paralog { .. } => "accepted_paralog_sequence_evidence",
+        RescueType::MissingCds => {
+            if rescue.synteny_ok == Some(true) {
+                "accepted_missing_cds_synteny"
+            } else {
+                "accepted_missing_cds_sequence"
+            }
+        }
         RescueType::Dropped => "accepted_sequence_evidence",
     }
 }
@@ -857,6 +950,13 @@ fn evidence_state(
         }
         RescueType::Pseudogene { .. } => "PSEUDOGENE",
         RescueType::Fragmented { .. } | RescueType::AlignmentSplit { .. } => "PARTIAL_HOMOLOGY",
+        RescueType::MissingCds => {
+            if rescue.synteny_ok == Some(true) {
+                "STRICT_PRESENT"
+            } else {
+                "MISSING_CDS_UNVALIDATED"
+            }
+        }
         RescueType::Dropped | RescueType::StartVariant { .. } => {
             if rescue.synteny_ok == Some(true)
                 || (!annotation_cluster.is_empty() && annotation_cluster == query_cluster)
@@ -926,6 +1026,7 @@ fn evidence_strength(state: &str) -> &'static str {
         "STRICT_PRESENT" | "ALIAS_CLUSTER" => "high",
         "SEQUENCE_ONLY" => "moderate",
         "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => "review",
+        "MISSING_CDS_UNVALIDATED" => "review",
         "HOMOLOG_PARALOG" | "REJECTED_CONTEXT" => "low",
         "NO_EVIDENCE" => "none",
         _ => "review",
@@ -946,6 +1047,9 @@ fn recommended_wording(state: &str, accepted: bool) -> &'static str {
             "Describe as partial or fragmented homology, not clean gene presence."
         }
         "PSEUDOGENE" => "Describe as disrupted or pseudogenized sequence evidence.",
+        "MISSING_CDS_UNVALIDATED" => {
+            "Sequence is present but the CDS is missing from the annotation; require synteny support before matrix correction."
+        }
         "HOMOLOG_PARALOG" => "Keep distinct unless synteny confirms the same locus.",
         _ => "Review before publication.",
     }
@@ -1097,6 +1201,7 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
         "STRICT_PRESENT" => "reference_rescue_strict_present",
         "ALIAS_CLUSTER" => "reference_alias_cluster",
         "SEQUENCE_ONLY" => "reference_sequence_only",
+        "MISSING_CDS_UNVALIDATED" => "reference_missing_cds_unvalidated",
         "PARTIAL_HOMOLOGY" => "reference_partial_like",
         "PSEUDOGENE" => "reference_pseudogene_like",
         "HOMOLOG_PARALOG" => "reference_homolog_paralog",
@@ -1112,7 +1217,9 @@ fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
         "STRICT_PRESENT" | "ALIAS_CLUSTER" | "SEQUENCE_ONLY" => {
             "remove_from_strict_reference_absent_set"
         }
-        "PARTIAL_HOMOLOGY" | "PSEUDOGENE" | "HOMOLOG_PARALOG" => "flag_reference_like_ambiguous",
+        "MISSING_CDS_UNVALIDATED" | "PARTIAL_HOMOLOGY" | "PSEUDOGENE" | "HOMOLOG_PARALOG" => {
+            "flag_reference_like_ambiguous"
+        }
         _ => "review_reference_status",
     }
 }
@@ -1127,6 +1234,9 @@ fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
         }
         "ALIAS_CLUSTER" => {
             "Remove from strict reference-absent set; evidence points to a cluster alias or split."
+        }
+        "MISSING_CDS_UNVALIDATED" => {
+            "Reference-like sequence is present but lacks annotation/synteny-grade support; review before claiming clean absence."
         }
         "PARTIAL_HOMOLOGY" => {
             "Describe as partial reference-like homology rather than fully novel to the reference."
@@ -2079,6 +2189,7 @@ struct SummaryStats {
     searchable_gaps: usize,
     missing_fasta_gaps: usize,
     dropped: usize,
+    missing_cds: usize,
     split: usize,
     fragmented: usize,
     alignment_split: usize,
@@ -2178,6 +2289,7 @@ fn write_summary(
     writeln!(w)?;
     writeln!(w, "Rescue types:")?;
     writeln!(w, "  DROPPED:       {}", stats.dropped)?;
+    writeln!(w, "  MISSING_CDS:   {}", stats.missing_cds)?;
     writeln!(w, "  SPLIT:         {}", stats.split)?;
     writeln!(w, "  FRAGMENTED:    {}", stats.fragmented)?;
     writeln!(w, "  ALIGNMENT_SPLIT: {}", stats.alignment_split)?;
@@ -2353,6 +2465,10 @@ mod tests {
             MatrixPolicy::Balanced,
             "PARTIAL_HOMOLOGY"
         ));
+        assert!(!matrix_policy_corrects(
+            MatrixPolicy::Balanced,
+            "MISSING_CDS_UNVALIDATED"
+        ));
 
         assert!(matrix_policy_corrects(
             MatrixPolicy::Sensitive,
@@ -2361,6 +2477,10 @@ mod tests {
         assert!(matrix_policy_corrects(
             MatrixPolicy::Sensitive,
             "PARTIAL_HOMOLOGY"
+        ));
+        assert!(!matrix_policy_corrects(
+            MatrixPolicy::Sensitive,
+            "MISSING_CDS_UNVALIDATED"
         ));
     }
 

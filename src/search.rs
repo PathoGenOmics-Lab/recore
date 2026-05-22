@@ -72,6 +72,8 @@ pub fn batch_search(
     threads: usize,
     min_identity: f64,
     preset: &str,
+    exact_base_alignment: bool,
+    max_secondary: usize,
 ) -> Result<HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>>> {
     if searchable_genomes.is_empty() {
         return Ok(HashMap::default());
@@ -116,16 +118,17 @@ pub fn batch_search(
         return Ok(HashMap::default());
     }
 
+    let mut genome_indices_needed: Vec<GenomeIdx> =
+        searchable_genomes.iter().map(|(gi, _)| *gi).collect();
+    genome_indices_needed.sort_unstable();
+    genome_indices_needed.dedup();
+    let max_secondary = max_secondary.max(1).to_string();
+
     // ── 3. Concatenate genome FASTAs with prefixed contig names ──
     let mut target_file = NamedTempFile::new().context("Cannot create temp target file")?;
     {
         let mut writer = BufWriter::with_capacity(256 * 1024, &mut target_file);
         let mut genomes_written = 0usize;
-
-        let mut genome_indices_needed: Vec<GenomeIdx> =
-            searchable_genomes.iter().map(|(gi, _)| *gi).collect();
-        genome_indices_needed.sort_unstable();
-        genome_indices_needed.dedup();
 
         for &gi in &genome_indices_needed {
             let genome_name = &genome_names[gi.val()];
@@ -171,20 +174,27 @@ pub fn batch_search(
     info!("Built minimap2 index");
 
     // ── 5. Run minimap2 alignment with streamed stdout ──
+    let mut aln_args = vec![
+        "-x".to_string(),
+        preset.to_string(),
+        "-t".to_string(),
+        threads.to_string(),
+    ];
+    if exact_base_alignment {
+        aln_args.push("-c".to_string());
+    }
+    aln_args.extend([
+        "--secondary=yes".to_string(),
+        "-N".to_string(),
+        max_secondary,
+        "-p".to_string(),
+        "0.5".to_string(),
+        index_path,
+        query_file.path().to_string_lossy().to_string(),
+    ]);
+
     let mut child = Command::new("minimap2")
-        .args([
-            "-x",
-            preset,
-            "-t",
-            &threads.to_string(),
-            "--secondary=yes",
-            "-N",
-            "50",
-            "-p",
-            "0.5",
-            &index_path,
-            &query_file.path().to_string_lossy(),
-        ])
+        .args(&aln_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

@@ -36,6 +36,7 @@ Primary output. One row per rescued gene. Tab-separated.
 ```tsv
 gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	annotation_match	fragment_n	fragment_query_gap_bp	fragment_target_gap_bp	fragment_colinear	fragment_same_cds	fragment_note
 group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	Rv0210c	NA	NA	NA	NA	NA	NA
+group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS		NA	NA	NA	NA	NA	missing_cds_no_substantial_gff_overlap
 group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	Rv1099c	NA	NA	NA	NA	NA	NA
 group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	Rv2651c	NA	NA	NA	NA	NA	NA
 group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS		2	9	9	true	false	alignment_split
@@ -53,8 +54,8 @@ awk '$11 == "PASS"' rescue_report.tsv
 # Non-pseudogene rescues
 grep -v "PSEUDOGENE" rescue_report.tsv
 
-# DROPPED and SPLIT only (most confident true rescues)
-grep -E "DROPPED|SPLIT" rescue_report.tsv | awk '$10 > 0.9'
+# Same-locus full-length rescues with strong support
+grep -E "DROPPED|MISSING_CDS|SPLIT" rescue_report.tsv | awk '$10 > 0.9 && $11 == "PASS"'
 ```
 
 ---
@@ -93,7 +94,7 @@ or paralog candidate.
 |--------|-------------|
 | `decision` | `accepted` or `rejected` |
 | `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
-| `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
+| `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `MISSING_CDS_UNVALIDATED`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
 | `matrix_action` | `correct_presence` for accepted rescues, `audit_only` for rejected candidates |
 | `publication_status` | Conservative publication-level interpretation of the evidence |
 | `evidence_strength` | `high`, `moderate`, `review`, or `low` |
@@ -273,6 +274,7 @@ Soft-core (≥95%):      3781 → 3776 (-5)
 
 Rescue types:
   DROPPED:       378
+  MISSING_CDS:   0
   SPLIT:         206
   FRAGMENTED:    0
   ALIGNMENT_SPLIT: 12

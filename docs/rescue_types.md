@@ -1,6 +1,6 @@
 # Rescue Types
 
-Recore classifies each rescued gene into one of 8 types based on the alignment evidence and GFF annotation context.
+Recore classifies each rescued gene into one of 9 types based on the alignment evidence and GFF annotation context.
 
 Examples below show the core `rescue_report.tsv` columns; see [output_files.md](output_files.md) for the full schema, including fragment evidence columns.
 
@@ -17,6 +17,23 @@ Examples below show the core `rescue_report.tsv` columns; see [output_files.md](
 **Example in rescue_report.tsv:**
 ```
 geneX   genome1   DROPPED   99.8   100.0   contig_1   230401   231234   +   0.998   PASS   Rv0210c
+```
+
+---
+
+## MISSING_CDS
+
+**What it means:** The gene sequence is present in the assembly, but the supplied GFF has no substantial CDS feature at that locus. This catches annotation omissions rather than Panaroo-only matrix cleaning errors.
+
+**Evidence:** Full-coverage hit (≥80%) with ≥95% identity, GFF annotations loaded, and no CDS overlapping more than half of both the hit span and the annotated CDS. Tiny boundary overlaps with adjacent genes are allowed.
+
+**Confidence:** `identity × coverage` (base confidence, unmodified)
+
+**Matrix behavior:** A MISSING_CDS candidate is corrected only when `--synteny` gives `PASS`, which upgrades it to `STRICT_PRESENT`. Without synteny support it remains `MISSING_CDS_UNVALIDATED` audit evidence and is not inserted into the binary corrected matrix.
+
+**Example:**
+```
+geneM   genome2   MISSING_CDS   99.2   89.5   contig_1   2195924   2197220   +   1.066   PASS
 ```
 
 ---
@@ -176,7 +193,7 @@ A value close to 1.0 indicates a high-confidence rescue. Values below ~0.5 shoul
 When two rescues overlap on the genome, the one with higher confidence wins. Because of the type modifiers, the natural priority order is:
 
 ```
-SPLIT > DROPPED ≈ START_VARIANT > ALIGNMENT_SPLIT > FRAGMENTED > PARALOG > PSEUDOGENE:InternalStop ≈ PSEUDOGENE:Frameshift > PSEUDOGENE:PartialDeletion
+SPLIT > DROPPED ≈ MISSING_CDS ≈ START_VARIANT > ALIGNMENT_SPLIT > FRAGMENTED > PARALOG > PSEUDOGENE:InternalStop ≈ PSEUDOGENE:Frameshift > PSEUDOGENE:PartialDeletion
 ```
 
 This prevents a PARALOG cross-match from overwriting a genuine DROPPED rescue at the same locus.
