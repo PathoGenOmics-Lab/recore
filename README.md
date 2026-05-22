@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/recore_logo.svg" alt="Recore logo" width="180">
+</p>
+
 # Recore
 
 **Post-hoc rescue and quality control of pangenome presence/absence matrices.**
@@ -21,47 +25,45 @@ Written in Rust for speed and low memory. Single-invocation batch minimap2 with 
 
 ## How it works
 
-```
-Panaroo output                    Genome assemblies       GFF annotations
-(gene_presence_absence.csv        (FASTA directory)       (optional)
- + pan_genome_reference.fa)
-         │                                │                      │
-         └────────────────┬───────────────┘                      │
-                          ▼                                      │
-              Prevalence filter (skip truly                      │
-              accessory genes, default ≥10%)                     │
-                          │                                      │
-                          ▼                                      │
-              Batch minimap2 (all queries ×         ◄────────────┘
-              all genomes in ONE invocation)         GFF-based classification
-                          │
-     ┌─────────┬──────┬───┼──────────┬──────────┬──────────┐
-     ▼         ▼      ▼   ▼          ▼          ▼          ▼
-  DROPPED   SPLIT  FRAG-  START_   PARALOG   PSEUDO-    No hit
-  (graph    (diff.  MENT-  VARIANT (similar   GENE      (true
-  clean-    clust-  ED     (alt.   gene,     (stop/     absence)
-  ing)      ering)  (IS/   start)  <95%id)   frame-
-                    break)                    shift)
-     │         │      │       │       │         │
-     └─────────┴──────┴───────┴───────┴─────────┘
-                          │
-                    Conflict resolution
-                   (overlapping rescues
-                    → highest confidence wins)
-                          │
-                   Synteny validation
-                   (optional, --synteny)
-                          │
-                          ▼
-              ┌──────────────────────────┐
-              │  Nucleotide similarity   │ (optional, --nscluster)
-              │  clustering: merge       │
-              │  DNA-redundant clusters  │
-              └──────────────────────────┘
-                          │
-                          ▼
-              Corrected presence/absence matrix
-              + rescue report + NSC report + summary
+```mermaid
+flowchart TD
+    PA["Panaroo/Roary matrix<br/>gene_presence_absence.csv"]
+    REF["Pan-genome reference<br/>pan_genome_reference.fa"]
+    FASTA["Genome assemblies<br/>FASTA directory"]
+    GFF["GFF annotations<br/>(optional)"]
+
+    PA --> INPUT["Input reconciliation<br/>genome/GFF AS-ID matching"]
+    REF --> INPUT
+    FASTA --> INPUT
+    GFF --> INPUT
+
+    INPUT --> GAPS["Gap discovery<br/>absent cluster x genome pairs"]
+    GAPS --> PREV["Prevalence filter<br/>skip likely true accessory genes"]
+    PREV --> MM["Batch minimap2<br/>one indexed all-genome search"]
+
+    MM --> CLASSIFY["Candidate classification"]
+    CLASSIFY --> TYPES["DROPPED / SPLIT / START_VARIANT<br/>FRAGMENTED / ALIGNMENT_SPLIT<br/>PARALOG / PSEUDOGENE"]
+
+    TYPES --> CONTEXT["Orthology decision layer<br/>annotation overlap + context-window synteny"]
+    CONTEXT --> ACCEPT{"Accept rescue?"}
+    ACCEPT -->|PASS / compatible evidence| CONFLICT["Conflict resolution<br/>keep highest-confidence non-overlapping call"]
+    ACCEPT -->|explicit incompatible context| REJECT["Reject candidate<br/>keep audit trail"]
+
+    CONFLICT --> NSC["Nucleotide similarity clustering<br/>(optional --nscluster)"]
+    NSC --> MATRIX["Corrected presence/absence matrix"]
+    NSC --> GFFOUT["Corrected GFF export<br/>(optional --write-corrected-gff)"]
+
+    GFF --> LOCUS["Cluster locus-context audit<br/>two-gene upstream/downstream windows"]
+
+    CONFLICT --> AUDIT["rescue_report.tsv<br/>orthology_evidence.tsv"]
+    REJECT --> AUDIT
+    REJECT --> REJECTOUT["synteny_rejected_report.tsv"]
+    LOCUS --> LOCUSOUT["cluster_locus_context.tsv<br/>cluster_locus_summary.tsv"]
+    NSC --> REL["cluster_relationships.tsv<br/>nscluster_report.tsv"]
+
+    MATRIX --> SUMMARY["summary.txt"]
+    GFFOUT --> SUMMARY
+    AUDIT --> SUMMARY
 ```
 
 ## Installation
