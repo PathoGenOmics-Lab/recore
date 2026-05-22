@@ -746,6 +746,19 @@ fn write_named_report(
     Ok(())
 }
 
+fn write_tsv_fields(w: &mut BufWriter<fs::File>, fields: &[String]) -> Result<()> {
+    writeln!(w, "{}", fields.join("\t"))?;
+    Ok(())
+}
+
+fn synteny_label(synteny_ok: Option<bool>) -> &'static str {
+    match synteny_ok {
+        Some(true) => "PASS",
+        Some(false) => "FAIL",
+        None => "",
+    }
+}
+
 fn stripped_gene_id(gene_id: &str) -> Option<&str> {
     gene_id
         .strip_suffix("_pseudo")
@@ -919,35 +932,37 @@ fn write_orthology_evidence(
         let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
         let status = accepted_orthology_status(rescue, query_cluster, &annotation_cluster);
         let state = evidence_state(rescue, true, query_cluster, &annotation_cluster, "");
-        writeln!(
-            w,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
-            "accepted",
-            status,
-            state,
-            matrix_action(true),
-            publication_status(true, state),
-            evidence_strength(state),
-            recommended_wording(state, true),
-            query_cluster,
-            pa.genome_name(rescue.genome_idx),
-            rescue.rescue_type,
-            rescue.identity,
-            rescue.coverage,
-            rescue.contig,
-            rescue.start + 1,
-            rescue.end,
-            rescue.strand,
-            rescue.confidence,
-            match rescue.synteny_ok {
-                Some(true) => "PASS",
-                Some(false) => "FAIL",
-                None => "",
-            },
-            rescue.annotation_match.as_deref().unwrap_or(""),
-            annotation_cluster,
-            "",
-            rescue.fragment_evidence.note.as_deref().unwrap_or(""),
+        write_tsv_fields(
+            &mut w,
+            &[
+                "accepted".to_string(),
+                status.to_string(),
+                state.to_string(),
+                matrix_action(true).to_string(),
+                publication_status(true, state).to_string(),
+                evidence_strength(state).to_string(),
+                recommended_wording(state, true).to_string(),
+                query_cluster.to_string(),
+                pa.genome_name(rescue.genome_idx).to_string(),
+                rescue.rescue_type.to_string(),
+                format!("{:.1}", rescue.identity),
+                format!("{:.1}", rescue.coverage),
+                rescue.contig.clone(),
+                (rescue.start + 1).to_string(),
+                rescue.end.to_string(),
+                rescue.strand.to_string(),
+                format!("{:.3}", rescue.confidence),
+                synteny_label(rescue.synteny_ok).to_string(),
+                rescue.annotation_match.as_deref().unwrap_or("").to_string(),
+                annotation_cluster,
+                String::new(),
+                rescue
+                    .fragment_evidence
+                    .note
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string(),
+            ],
         )?;
     }
 
@@ -967,35 +982,37 @@ fn write_orthology_evidence(
             let query_cluster = pa.cluster_name(rescue.cluster_idx);
             let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
             let state = evidence_state(rescue, false, query_cluster, &annotation_cluster, reason);
-            writeln!(
-                w,
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
-                "rejected",
-                status,
-                state,
-                matrix_action(false),
-                publication_status(false, state),
-                evidence_strength(state),
-                recommended_wording(state, false),
-                query_cluster,
-                pa.genome_name(rescue.genome_idx),
-                rescue.rescue_type,
-                rescue.identity,
-                rescue.coverage,
-                rescue.contig,
-                rescue.start + 1,
-                rescue.end,
-                rescue.strand,
-                rescue.confidence,
-                match rescue.synteny_ok {
-                    Some(true) => "PASS",
-                    Some(false) => "FAIL",
-                    None => "",
-                },
-                rescue.annotation_match.as_deref().unwrap_or(""),
-                annotation_cluster,
-                reason,
-                rescue.fragment_evidence.note.as_deref().unwrap_or(""),
+            write_tsv_fields(
+                &mut w,
+                &[
+                    "rejected".to_string(),
+                    status.to_string(),
+                    state.to_string(),
+                    matrix_action(false).to_string(),
+                    publication_status(false, state).to_string(),
+                    evidence_strength(state).to_string(),
+                    recommended_wording(state, false).to_string(),
+                    query_cluster.to_string(),
+                    pa.genome_name(rescue.genome_idx).to_string(),
+                    rescue.rescue_type.to_string(),
+                    format!("{:.1}", rescue.identity),
+                    format!("{:.1}", rescue.coverage),
+                    rescue.contig.clone(),
+                    (rescue.start + 1).to_string(),
+                    rescue.end.to_string(),
+                    rescue.strand.to_string(),
+                    format!("{:.3}", rescue.confidence),
+                    synteny_label(rescue.synteny_ok).to_string(),
+                    rescue.annotation_match.as_deref().unwrap_or("").to_string(),
+                    annotation_cluster,
+                    reason.to_string(),
+                    rescue
+                        .fragment_evidence
+                        .note
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_string(),
+                ],
             )?;
         }
     }
@@ -1083,62 +1100,69 @@ fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
     }
 }
 
+struct ReferenceEventRow<'a> {
+    reference_name: &'a str,
+    rescue: &'a RescueEvent,
+    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    decision: &'a str,
+    accepted: bool,
+    rejection_reason: &'a str,
+}
+
 fn write_reference_event_row(
     w: &mut BufWriter<fs::File>,
     pa: &crate::parser::PresenceAbsence,
-    reference_name: &str,
-    rescue: &RescueEvent,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
-    decision: &str,
-    accepted: bool,
-    rejection_reason: &str,
+    row: ReferenceEventRow<'_>,
 ) -> Result<()> {
+    let rescue = row.rescue;
     let query_cluster = pa.cluster_name(rescue.cluster_idx);
-    let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+    let annotation_cluster = annotation_cluster_name(rescue, pa, row.gene_to_cluster_maps);
     let state = evidence_state(
         rescue,
-        accepted,
+        row.accepted,
         query_cluster,
         &annotation_cluster,
-        rejection_reason,
+        row.rejection_reason,
     );
-    let final_status = reference_publication_status(state, accepted);
-    let reference_status = reference_status_for(state, accepted);
+    let final_status = reference_publication_status(state, row.accepted);
+    let reference_status = reference_status_for(state, row.accepted);
     let dichotomy = if final_status == "remove_from_strict_reference_absent_set" {
         "reference_like_or_present"
     } else {
         "reference_like_ambiguous"
     };
 
-    writeln!(
+    write_tsv_fields(
         w,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        query_cluster,
-        reference_name,
-        dichotomy,
-        final_status,
-        reference_status,
-        matrix_action(accepted),
-        state,
-        evidence_strength(state),
-        reference_recommended_wording(state, accepted),
-        decision,
-        rescue.rescue_type,
-        rejection_reason,
-        rescue.identity,
-        rescue.coverage,
-        rescue.contig,
-        rescue.start + 1,
-        rescue.end,
-        rescue.strand,
-        match rescue.synteny_ok {
-            Some(true) => "PASS",
-            Some(false) => "FAIL",
-            None => "",
-        },
-        rescue.annotation_match.as_deref().unwrap_or(""),
-        annotation_cluster,
-        rescue.fragment_evidence.note.as_deref().unwrap_or(""),
+        &[
+            query_cluster.to_string(),
+            row.reference_name.to_string(),
+            dichotomy.to_string(),
+            final_status.to_string(),
+            reference_status.to_string(),
+            matrix_action(row.accepted).to_string(),
+            state.to_string(),
+            evidence_strength(state).to_string(),
+            reference_recommended_wording(state, row.accepted).to_string(),
+            row.decision.to_string(),
+            rescue.rescue_type.to_string(),
+            row.rejection_reason.to_string(),
+            format!("{:.1}", rescue.identity),
+            format!("{:.1}", rescue.coverage),
+            rescue.contig.clone(),
+            (rescue.start + 1).to_string(),
+            rescue.end.to_string(),
+            rescue.strand.to_string(),
+            synteny_label(rescue.synteny_ok).to_string(),
+            rescue.annotation_match.as_deref().unwrap_or("").to_string(),
+            annotation_cluster,
+            rescue
+                .fragment_evidence
+                .note
+                .as_deref()
+                .unwrap_or("")
+                .to_string(),
+        ],
     )?;
     Ok(())
 }
@@ -1171,31 +1195,32 @@ fn write_reference_genome_audit(
     for ci_val in 0..pa.n_clusters() {
         let ci = ClusterIdx(ci_val);
         if pa.is_present(ci, reference_gi) {
-            writeln!(
-                w,
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                pa.cluster_name(ci),
-                reference_name,
-                "reference_like_or_present",
-                "remove_from_strict_reference_absent_set",
-                "reference_matrix_present",
-                "already_present",
-                "STRICT_PRESENT",
-                "high",
-                "Not a reference-absent cluster; it is already present in the audited reference matrix cell.",
-                "matrix_present",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
+            write_tsv_fields(
+                &mut w,
+                &[
+                    pa.cluster_name(ci).to_string(),
+                    reference_name.to_string(),
+                    "reference_like_or_present".to_string(),
+                    "remove_from_strict_reference_absent_set".to_string(),
+                    "reference_matrix_present".to_string(),
+                    "already_present".to_string(),
+                    "STRICT_PRESENT".to_string(),
+                    "high".to_string(),
+                    "Not a reference-absent cluster; it is already present in the audited reference matrix cell.".to_string(),
+                    "matrix_present".to_string(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                ],
             )?;
             continue;
         }
@@ -1207,12 +1232,14 @@ fn write_reference_genome_audit(
             write_reference_event_row(
                 &mut w,
                 pa,
-                reference_name,
-                rescue,
-                gene_to_cluster_maps,
-                "accepted",
-                true,
-                "",
+                ReferenceEventRow {
+                    reference_name,
+                    rescue,
+                    gene_to_cluster_maps,
+                    decision: "accepted",
+                    accepted: true,
+                    rejection_reason: "",
+                },
             )?;
             continue;
         }
@@ -1224,12 +1251,14 @@ fn write_reference_genome_audit(
             write_reference_event_row(
                 &mut w,
                 pa,
-                reference_name,
-                rescue,
-                gene_to_cluster_maps,
-                "rejected",
-                false,
-                "synteny_fail",
+                ReferenceEventRow {
+                    reference_name,
+                    rescue,
+                    gene_to_cluster_maps,
+                    decision: "rejected",
+                    accepted: false,
+                    rejection_reason: "synteny_fail",
+                },
             )?;
             continue;
         }
@@ -1241,41 +1270,44 @@ fn write_reference_genome_audit(
             write_reference_event_row(
                 &mut w,
                 pa,
-                reference_name,
-                rescue,
-                gene_to_cluster_maps,
-                "rejected",
-                false,
-                "paralog_without_synteny",
+                ReferenceEventRow {
+                    reference_name,
+                    rescue,
+                    gene_to_cluster_maps,
+                    decision: "rejected",
+                    accepted: false,
+                    rejection_reason: "paralog_without_synteny",
+                },
             )?;
             continue;
         }
 
-        writeln!(
-            w,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            pa.cluster_name(ci),
-            reference_name,
-            "new_to_reference",
-            "keep_as_strict_reference_absent",
-            "clean_absent_from_reference",
-            "keep_absent",
-            "NO_EVIDENCE",
-            evidence_strength("NO_EVIDENCE"),
-            "Can be described as absent from the audited reference genome under the current thresholds.",
-            "none",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
+        write_tsv_fields(
+            &mut w,
+            &[
+                pa.cluster_name(ci).to_string(),
+                reference_name.to_string(),
+                "new_to_reference".to_string(),
+                "keep_as_strict_reference_absent".to_string(),
+                "clean_absent_from_reference".to_string(),
+                "keep_absent".to_string(),
+                "NO_EVIDENCE".to_string(),
+                evidence_strength("NO_EVIDENCE").to_string(),
+                "Can be described as absent from the audited reference genome under the current thresholds.".to_string(),
+                "none".to_string(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ],
         )?;
     }
     w.flush()?;

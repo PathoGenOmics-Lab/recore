@@ -1,10 +1,8 @@
-<p align="center">
-  <img src="assets/recore_logo.svg" alt="Recore logo" width="180">
-</p>
-
-# Recore
-
-**Post-hoc rescue and quality control of pangenome presence/absence matrices.**
+<div align="center">
+  <img src="assets/recore_logo.svg" alt="Recore logo" width="128">
+  <h1>Recore</h1>
+  <p><strong>Post-hoc rescue and quality control of pangenome presence/absence matrices.</strong></p>
+</div>
 
 Pangenome tools sometimes report genes as absent when they are actually present — inflating the accessory genome and shrinking the core. Recore detects and corrects these false negatives by searching each "absent" gene against the genome assembly with minimap2, classifying the reason for absence, and optionally merging nucleotide-redundant clusters.
 

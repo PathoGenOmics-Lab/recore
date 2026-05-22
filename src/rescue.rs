@@ -1179,13 +1179,6 @@ impl SyntenyContext {
         !self.upstream.is_empty() || !self.downstream.is_empty()
     }
 
-    fn signature(&self) -> (Vec<usize>, Vec<usize>) {
-        (
-            self.upstream.iter().map(|ci| ci.val()).collect(),
-            self.downstream.iter().map(|ci| ci.val()).collect(),
-        )
-    }
-
     fn side_matches(&self, other: &SyntenyContext) -> bool {
         let up_matches = cluster_overlap_count(&self.upstream, &other.upstream);
         let down_matches = cluster_overlap_count(&self.downstream, &other.downstream);
@@ -1228,25 +1221,25 @@ fn synteny_context(
     context
 }
 
-fn recurrent_context_counts(
-    contexts: &[SyntenyContext],
-) -> HashMap<(Vec<usize>, Vec<usize>), usize> {
-    let mut counts = HashMap::new();
-    for context in contexts {
-        *counts.entry(context.signature()).or_insert(0) += 1;
-    }
-    counts
+fn compatible_reference_support(
+    target_context: &SyntenyContext,
+    reference_contexts: &[SyntenyContext],
+) -> usize {
+    reference_contexts
+        .iter()
+        .filter(|ref_context| target_context.side_matches(ref_context))
+        .count()
 }
 
-fn is_recurrent_context(
-    context: &SyntenyContext,
-    counts: &HashMap<(Vec<usize>, Vec<usize>), usize>,
-    total_contexts: usize,
+fn has_recurrent_context_support(
+    target_context: &SyntenyContext,
+    reference_contexts: &[SyntenyContext],
 ) -> bool {
-    if total_contexts <= 3 {
-        return true;
+    let support = compatible_reference_support(target_context, reference_contexts);
+    if reference_contexts.len() <= 3 {
+        return support > 0;
     }
-    counts.get(&context.signature()).copied().unwrap_or(0) >= 2
+    support >= 2
 }
 
 pub fn validate_synteny(
@@ -1356,11 +1349,7 @@ pub fn validate_synteny(
         }
     }
 
-    let context_counts = recurrent_context_counts(&reference_contexts);
-    let synteny_match = reference_contexts.iter().any(|ref_context| {
-        is_recurrent_context(ref_context, &context_counts, reference_contexts.len())
-            && target_context.side_matches(ref_context)
-    });
+    let synteny_match = has_recurrent_context_support(&target_context, &reference_contexts);
 
     rescue.synteny_ok = Some(synteny_match);
 
@@ -1911,7 +1900,7 @@ mod tests {
 
     #[test]
     fn test_synteny_rejects_one_off_context_when_many_references_exist() {
-        let one_off = SyntenyContext {
+        let target = SyntenyContext {
             upstream: vec![ClusterIdx(1)],
             downstream: vec![ClusterIdx(2)],
         };
@@ -1936,18 +1925,47 @@ mod tests {
                 upstream: vec![ClusterIdx(11)],
                 downstream: vec![ClusterIdx(12)],
             },
-            one_off,
+            SyntenyContext {
+                upstream: vec![ClusterIdx(1)],
+                downstream: vec![ClusterIdx(2)],
+            },
         ];
-        let counts = recurrent_context_counts(&contexts);
-        assert!(!is_recurrent_context(&contexts[5], &counts, contexts.len()));
+        assert!(!has_recurrent_context_support(&target, &contexts));
 
         let rare_contexts = &contexts[..3];
-        let rare_counts = recurrent_context_counts(rare_contexts);
-        assert!(is_recurrent_context(
+        assert!(has_recurrent_context_support(
             &rare_contexts[0],
-            &rare_counts,
-            rare_contexts.len()
+            rare_contexts
         ));
+    }
+
+    #[test]
+    fn test_synteny_accepts_recurrent_compatible_context_not_exact_signature() {
+        let target = SyntenyContext {
+            upstream: vec![ClusterIdx(1)],
+            downstream: vec![ClusterIdx(2)],
+        };
+        let contexts = vec![
+            SyntenyContext {
+                upstream: vec![ClusterIdx(1), ClusterIdx(20)],
+                downstream: vec![ClusterIdx(2), ClusterIdx(21)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(1), ClusterIdx(30)],
+                downstream: vec![ClusterIdx(2), ClusterIdx(31)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(3)],
+                downstream: vec![ClusterIdx(4)],
+            },
+            SyntenyContext {
+                upstream: vec![ClusterIdx(5)],
+                downstream: vec![ClusterIdx(6)],
+            },
+        ];
+
+        assert_eq!(compatible_reference_support(&target, &contexts), 2);
+        assert!(has_recurrent_context_support(&target, &contexts));
     }
 
     #[test]

@@ -70,6 +70,8 @@ impl RelationshipAccumulator {
     }
 }
 
+// Keep the documented Rust MSRV; usize::is_multiple_of is newer.
+#[allow(clippy::manual_is_multiple_of)]
 fn median(values: &mut [f64]) -> f64 {
     if values.is_empty() {
         return f64::NAN;
