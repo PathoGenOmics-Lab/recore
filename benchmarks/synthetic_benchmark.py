@@ -382,86 +382,133 @@ def plot_value(value: object) -> float:
 
 
 def render_svg(metrics: list[dict[str, object]], path: Path) -> None:
-    width = 760
-    height = 430
-    left = 82
-    right = 28
-    top = 72
-    plot_height = 235
-    bottom = top + plot_height
-    group_width = 190
-    bar_width = 28
-    bar_gap = 9
-    colors = {
-        "precision": "#276EF1",
-        "recall": "#12B886",
-        "f1": "#7C3AED",
-    }
-    labels = {
-        "precision": "Precision",
-        "recall": "Recall",
-        "f1": "F1",
-    }
+    width = 1120
+    height = 520
+    panel_x = 42
+    panel_w = width - 84
 
-    def y(value: float) -> float:
-        return bottom - value * plot_height
+    def score_label(value: object) -> str:
+        if value is None:
+            return "NA"
+        return f"{float(value):.2f}"
+
+    def score_fill(value: object) -> str:
+        if value is None:
+            return "#d0d5dd"
+        value_f = float(value)
+        if value_f >= 0.95:
+            return "#079455"
+        if value_f >= 0.8:
+            return "#7f56d9"
+        if value_f >= 0.5:
+            return "#dc6803"
+        return "#d92d20"
+
+    def metric_bar(x: int, y: int, value: object) -> list[str]:
+        track_w = 126
+        bar_h = 14
+        fill_w = track_w * plot_value(value)
+        value_text = score_label(value)
+        fill = score_fill(value)
+        return [
+            f"<rect x='{x}' y='{y}' width='{track_w}' height='{bar_h}' rx='6' fill='#eaecf0'/>",
+            f"<rect x='{x}' y='{y}' width='{fill_w:.1f}' height='{bar_h}' rx='6' fill='{fill}'/>",
+            f"<text x='{x + track_w + 10}' y='{y + 11}' class='tiny strong'>{value_text}</text>",
+        ]
 
     lines = [
         f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 0 {width} {height}'>",
         "<rect width='100%' height='100%' fill='white'/>",
-        "<style>text{font-family:DejaVu Sans,Arial,sans-serif;fill:#1f2933}.axis{stroke:#344054;stroke-width:1}.grid{stroke:#d8dee9;stroke-width:1}.label{font-size:12px}.small{font-size:11px}.title{font-size:17px;font-weight:700}</style>",
-        f"<text x='{left}' y='28' class='title'>Synthetic benchmark: binary matrix correction</text>",
-        f"<text x='{left}' y='49' class='small'>Intact hidden genes are positives; partial pseudogenes are negatives for binary presence.</text>",
+        (
+            "<style>"
+            "text{font-family:DejaVu Sans,Arial,sans-serif;fill:#101828}"
+            ".title{font-size:22px;font-weight:700}"
+            ".subtitle{font-size:13px;fill:#475467}"
+            ".section{font-size:12px;font-weight:700;letter-spacing:.08em;fill:#667085}"
+            ".label{font-size:13px;font-weight:700}"
+            ".small{font-size:12px}"
+            ".tiny{font-size:11px}"
+            ".muted{fill:#667085}"
+            ".white{fill:white}"
+            ".strong{font-weight:700}"
+            ".row{fill:#f8fafc;stroke:#eaecf0;stroke-width:1}"
+            ".balanced{fill:#ecfdf3;stroke:#079455;stroke-width:1.5}"
+            "</style>"
+        ),
+        "<text x='42' y='38' class='title'>Synthetic benchmark: matrix policy trade-off</text>",
+        (
+            "<text x='42' y='61' class='subtitle'>Full-length false absences should be rescued; "
+            "partial pseudogenes should remain audit-only in the binary matrix.</text>"
+        ),
     ]
 
-    for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
-        yy = y(tick)
-        lines.append(f"<line x1='{left}' x2='{width - right}' y1='{yy:.1f}' y2='{yy:.1f}' class='grid'/>")
-        lines.append(
-            f"<text x='{left - 12}' y='{yy + 4:.1f}' text-anchor='end' class='small'>{tick:.2f}</text>"
-        )
-
-    lines.append(f"<line x1='{left}' x2='{left}' y1='{top}' y2='{bottom}' class='axis'/>")
-    lines.append(
-        f"<line x1='{left}' x2='{width - right}' y1='{bottom}' y2='{bottom}' class='axis'/>"
+    lines.extend(
+        [
+            "<text x='42' y='101' class='section'>GROUND TRUTH</text>",
+            f"<rect x='{panel_x}' y='115' width='{panel_w}' height='82' rx='12' fill='#f8fafc' stroke='#eaecf0'/>",
+            "<rect x='70' y='139' width='16' height='16' rx='4' fill='#079455'/>",
+            "<text x='96' y='148' class='label'>5 intact false absences</text>",
+            "<text x='96' y='170' class='small muted'>binary positives: should become present</text>",
+            "<rect x='420' y='139' width='16' height='16' rx='4' fill='#dc6803'/>",
+            "<text x='446' y='148' class='label'>2 partial pseudogene traps</text>",
+            "<text x='446' y='170' class='small muted'>biological evidence, not clean binary presence</text>",
+            "<rect x='802' y='139' width='16' height='16' rx='4' fill='#98a2b3'/>",
+            "<text x='828' y='148' class='label'>8 true absences</text>",
+            "<text x='828' y='170' class='small muted'>binary negatives: should stay absent</text>",
+            "<text x='42' y='235' class='section'>POLICY PERFORMANCE</text>",
+            "<text x='70' y='262' class='tiny muted'>Policy</text>",
+            "<text x='350' y='262' class='tiny muted'>Precision</text>",
+            "<text x='545' y='262' class='tiny muted'>Recall</text>",
+            "<text x='740' y='262' class='tiny muted'>F1</text>",
+            "<text x='940' y='262' class='tiny muted'>Confusion</text>",
+        ]
     )
 
-    for gi, row in enumerate(metrics):
-        group_x = left + 55 + gi * group_width
-        for mi, key in enumerate(("precision", "recall", "f1")):
-            value = plot_value(row[key])
-            x = group_x + mi * (bar_width + bar_gap)
-            yy = y(value)
-            height_bar = bottom - yy
-            lines.append(
-                f"<rect x='{x}' y='{yy:.1f}' width='{bar_width}' height='{height_bar:.1f}' rx='3' fill='{colors[key]}'/>"
-            )
-            label = "n/a" if row[key] is None else f"{float(row[key]):.2f}"
-            lines.append(
-                f"<text x='{x + bar_width / 2:.1f}' y='{yy - 7:.1f}' text-anchor='middle' class='small'>{label}</text>"
-            )
-        policy = html.escape(str(row["policy"]))
-        center = group_x + (3 * bar_width + 2 * bar_gap) / 2
+    policy_notes = {
+        "strict": "annotation/synteny-grade only",
+        "balanced": "paper-ready binary matrix",
+        "sensitive": "exploratory, accepts partial evidence",
+    }
+    row_y = {"strict": 278, "balanced": 346, "sensitive": 414}
+    for row in metrics:
+        policy = str(row["policy"])
+        y = row_y[policy]
+        klass = "balanced" if policy == "balanced" else "row"
         lines.append(
-            f"<text x='{center:.1f}' y='{bottom + 25}' text-anchor='middle' class='label'>{policy}</text>"
+            f"<rect x='{panel_x}' y='{y}' width='{panel_w}' height='54' rx='12' class='{klass}'/>"
         )
+        lines.append(
+            f"<text x='70' y='{y + 23}' class='label'>{html.escape(policy)}</text>"
+        )
+        lines.append(
+            f"<text x='70' y='{y + 42}' class='tiny muted'>{html.escape(policy_notes[policy])}</text>"
+        )
+        if policy == "balanced":
+            lines.append(
+                f"<rect x='190' y='{y + 12}' width='104' height='22' rx='11' fill='#079455'/>"
+            )
+            lines.append(
+                f"<text x='242' y='{y + 27}' text-anchor='middle' class='tiny white'>recommended</text>"
+            )
+        lines.extend(metric_bar(350, y + 21, row["precision"]))
+        lines.extend(metric_bar(545, y + 21, row["recall"]))
+        lines.extend(metric_bar(740, y + 21, row["f1"]))
         confusion = f"TP {row['tp']}  FP {row['fp']}  FN {row['fn']}"
         lines.append(
-            f"<text x='{center:.1f}' y='{bottom + 44}' text-anchor='middle' class='small'>{confusion}</text>"
+            f"<text x='940' y='{y + 26}' class='small strong'>{html.escape(confusion)}</text>"
+        )
+        lines.append(
+            f"<text x='940' y='{y + 44}' class='tiny muted'>TN {row['tn']}</text>"
         )
 
-    legend_x = width - 290
-    for i, key in enumerate(("precision", "recall", "f1")):
-        x = legend_x + i * 92
-        lines.append(f"<rect x='{x}' y='24' width='13' height='13' rx='2' fill='{colors[key]}'/>")
-        lines.append(f"<text x='{x + 19}' y='35' class='small'>{labels[key]}</text>")
-
-    footer = (
-        "Generated by benchmarks/synthetic_benchmark.py; balanced keeps "
-        "pseudogenes in the multistate audit instead of the binary matrix."
-    )
-    lines.append(
-        f"<text x='{left}' y='{height - 24}' class='small'>{html.escape(footer)}</text>"
+    lines.extend(
+        [
+            "<line x1='42' x2='1078' y1='494' y2='494' stroke='#eaecf0'/>",
+            (
+                "<text x='42' y='512' class='tiny muted'>Generated by benchmarks/synthetic_benchmark.py. "
+                "The balanced policy preserves disrupted homologues in the multistate audit instead of the binary matrix.</text>"
+            ),
+        ]
     )
     lines.append("</svg>")
 
