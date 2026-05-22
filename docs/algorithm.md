@@ -172,14 +172,16 @@ When `--synteny` is enabled and GFF files are loaded, each rescue is validated a
 
 For the rescued gene at position (contig, start, end) in the target genome:
 1. Build a small side-specific context window around the rescued locus: up to two upstream and two downstream CDSs mapped to Panaroo clusters. If the rescue overlaps an annotated CDS, that CDS is used as the centre so short start-site differences and overlapping CDS boundaries do not shift the context.
-2. For up to 5 reference genomes where this cluster IS present:
+2. For every reference genome where this cluster IS present, in deterministic genome order:
    a. Find the reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes)
    b. Build the same side-specific context window around the reference gene
    c. Compare side-specific flanking cluster assignments
-3. If any upstream context cluster or any downstream context cluster matches on the same side in any reference → PASS
+3. If both sides are comparable, require at least one upstream and one downstream match on the same side. If only one side is comparable, require a same-side match on that side.
 4. Otherwise → FAIL
 
 Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty.
+
+PARALOG candidates are more conservative: if they do not have explicit `synteny=PASS`, they are written to `paralog_rejected_report.tsv` and are not inserted into the corrected matrix.
 
 ### Confidence adjustment
 
@@ -194,7 +196,7 @@ Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are no
 Multiple rescues can overlap on the genome (e.g., a DROPPED and a PARALOG rescue at the same locus). Conflicts are resolved by:
 
 1. Sort rescues by (genome, contig, start position)
-2. For overlapping rescues on the same contig: keep the one with higher confidence
+2. For substantial overlaps on the same contig (≥50% of the shorter interval): keep the one with higher confidence
 3. Single-pass O(n) sweep with a removal bitmap
 
 ---
@@ -235,9 +237,13 @@ One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, 
 
 Written only when `--synteny` rejects at least one candidate. It uses the same schema as `rescue_report.tsv`, but these rows are audit records only and are not inserted into `gene_presence_absence_recore.csv`.
 
+### paralog_rejected_report.tsv
+
+Written only when PARALOG candidates lack explicit synteny support. It uses the same schema as `rescue_report.tsv`, but these rows are audit records only and are not inserted into `gene_presence_absence_recore.csv`.
+
 ### orthology_evidence.tsv
 
-One row per accepted rescue plus rejected synteny candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, annotation-matched cluster, synteny state, confidence, coordinates, and rejection reason.
+One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, annotation-matched cluster, synteny state, confidence, coordinates, and rejection reason.
 
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 

@@ -199,6 +199,7 @@ recore_output/
 ├── rescue_report.tsv                  # Per-rescue details
 ├── orthology_evidence.tsv             # Accepted and rejected candidate evidence
 ├── synteny_rejected_report.tsv        # Explicit synteny FAIL candidates, if any
+├── paralog_rejected_report.tsv        # PARALOG hits without synteny support, if any
 ├── cluster_locus_context.tsv          # Per-cluster locus-context rows (if GFFs are loaded)
 ├── cluster_locus_summary.tsv          # Cluster-level context stability flags (if GFFs are loaded)
 ├── cluster_relationships.tsv          # Inter-cluster rescue/NSC relationships

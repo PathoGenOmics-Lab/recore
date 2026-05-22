@@ -489,7 +489,7 @@ pub fn load_genome_contig_names(path: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-pub type GffRecord = (String, u64, u64, char, String);
+pub type GffRecord = (String, u64, u64, char, String, Vec<String>);
 
 /// If a single-contig GFF and single-contig FASTA use different contig names,
 /// rewrite GFF seqids to the FASTA contig name used by minimap2 hits.
@@ -558,18 +558,57 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         let end: u64 = fields[4].parse().unwrap_or(0); // end is already exclusive after -1+1
         let strand = fields[6].chars().next().unwrap_or('+');
 
-        let mut gene_id = String::new();
+        let mut id = String::new();
+        let mut locus_tag = String::new();
+        let mut gene_name = String::new();
+        let mut name = String::new();
+        let mut protein_id = String::new();
+        let mut old_locus_tag = String::new();
         for attr in fields[8].split(';') {
             let attr = attr.trim();
             if let Some(val) = attr.strip_prefix("ID=") {
-                gene_id = val.to_string();
-                break;
+                id = val.to_string();
             } else if let Some(val) = attr.strip_prefix("locus_tag=") {
-                gene_id = val.to_string();
+                locus_tag = val.to_string();
+            } else if let Some(val) = attr.strip_prefix("gene=") {
+                gene_name = val.to_string();
+            } else if let Some(val) = attr.strip_prefix("Name=") {
+                name = val.to_string();
+            } else if let Some(val) = attr.strip_prefix("protein_id=") {
+                protein_id = val.to_string();
+            } else if let Some(val) = attr.strip_prefix("old_locus_tag=") {
+                old_locus_tag = val.to_string();
             }
         }
 
-        genes.push((contig, start, end, strand, gene_id));
+        let gene_id = [
+            locus_tag.as_str(),
+            gene_name.as_str(),
+            name.as_str(),
+            id.as_str(),
+            protein_id.as_str(),
+            old_locus_tag.as_str(),
+        ]
+        .into_iter()
+        .find(|v| !v.is_empty())
+        .unwrap_or("")
+        .to_string();
+
+        let mut aliases = Vec::new();
+        for value in [
+            id.as_str(),
+            locus_tag.as_str(),
+            gene_name.as_str(),
+            name.as_str(),
+            protein_id.as_str(),
+            old_locus_tag.as_str(),
+        ] {
+            if !value.is_empty() && !aliases.iter().any(|x: &String| x == value) {
+                aliases.push(value.to_string());
+            }
+        }
+
+        genes.push((contig, start, end, strand, gene_id, aliases));
     }
 
     Ok(genes)
@@ -786,8 +825,22 @@ mod tests {
     #[test]
     fn test_normalize_single_contig_gff_to_fasta() {
         let mut records = vec![
-            ("contig_1".to_string(), 0, 10, '+', "gene1".to_string()),
-            ("contig_1".to_string(), 20, 30, '+', "gene2".to_string()),
+            (
+                "contig_1".to_string(),
+                0,
+                10,
+                '+',
+                "gene1".to_string(),
+                vec!["gene1".to_string()],
+            ),
+            (
+                "contig_1".to_string(),
+                20,
+                30,
+                '+',
+                "gene2".to_string(),
+                vec!["gene2".to_string()],
+            ),
         ];
         let remap = normalize_gff_records_to_fasta(&mut records, &[String::from("AS00146")]);
         assert_eq!(
@@ -795,6 +848,19 @@ mod tests {
             Some(("contig_1".to_string(), "AS00146".to_string(), 2))
         );
         assert!(records.iter().all(|record| record.0 == "AS00146"));
+    }
+
+    #[test]
+    fn test_parse_gff_genes_prefers_locus_tag_and_keeps_aliases() {
+        let gff = write_temp(
+            "##gff-version 3\n\
+             chr\tRefSeq\tCDS\t10\t99\t.\t+\t0\tID=cds-Rv0001;locus_tag=Rv0001;gene=dnaA;Name=chromosomal_replication_initiator\n",
+        );
+        let genes = parse_gff_genes(gff.path()).unwrap();
+        assert_eq!(genes.len(), 1);
+        assert_eq!(genes[0].4, "Rv0001");
+        assert!(genes[0].5.iter().any(|alias| alias == "cds-Rv0001"));
+        assert!(genes[0].5.iter().any(|alias| alias == "dnaA"));
     }
 
     #[test]

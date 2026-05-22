@@ -129,11 +129,24 @@ pub struct GffIndex {
     pub genes: Vec<GffGene>,
     contig_ranges: HashMap<String, (usize, usize)>,
     gene_id_index: HashMap<String, usize>,
+    gene_aliases: HashMap<String, Vec<String>>,
 }
 
 impl GffIndex {
+    #[allow(dead_code)]
     pub fn build(mut genes: Vec<GffGene>) -> Self {
-        genes.sort_by(|a, b| a.contig.cmp(&b.contig).then(a.start.cmp(&b.start)));
+        Self::build_with_aliases(
+            genes
+                .drain(..)
+                .map(|gene| (gene, Vec::new()))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn build_with_aliases(mut records: Vec<(GffGene, Vec<String>)>) -> Self {
+        records.sort_by(|a, b| a.0.contig.cmp(&b.0.contig).then(a.0.start.cmp(&b.0.start)));
+
+        let genes: Vec<GffGene> = records.iter().map(|(gene, _)| gene.clone()).collect();
 
         let mut contig_ranges = HashMap::new();
         if !genes.is_empty() {
@@ -150,9 +163,18 @@ impl GffIndex {
         }
 
         let mut gene_id_index = HashMap::new();
-        for (i, g) in genes.iter().enumerate() {
+        let mut gene_aliases = HashMap::new();
+        for (i, (g, aliases)) in records.iter().enumerate() {
             if !g.gene_id.is_empty() {
                 gene_id_index.insert(g.gene_id.clone(), i);
+                let mut all_aliases = vec![g.gene_id.clone()];
+                for alias in aliases {
+                    if !alias.is_empty() && !all_aliases.iter().any(|x| x == alias) {
+                        gene_id_index.entry(alias.clone()).or_insert(i);
+                        all_aliases.push(alias.clone());
+                    }
+                }
+                gene_aliases.insert(g.gene_id.clone(), all_aliases);
             }
         }
 
@@ -160,11 +182,25 @@ impl GffIndex {
             genes,
             contig_ranges,
             gene_id_index,
+            gene_aliases,
         }
     }
 
     pub fn get_by_id(&self, gene_id: &str) -> Option<&GffGene> {
         self.gene_id_index.get(gene_id).map(|&i| &self.genes[i])
+    }
+
+    pub fn cluster_for_gene(
+        &self,
+        gene: &GffGene,
+        gene_to_cluster: &HashMap<String, ClusterIdx>,
+    ) -> Option<ClusterIdx> {
+        gene_to_cluster.get(&gene.gene_id).copied().or_else(|| {
+            self.gene_aliases
+                .get(&gene.gene_id)
+                .and_then(|aliases| aliases.iter().find_map(|alias| gene_to_cluster.get(alias)))
+                .copied()
+        })
     }
 
     pub fn overlapping(&self, contig: &str, query_start: u64, query_end: u64) -> Vec<&GffGene> {
@@ -630,9 +666,11 @@ pub fn classify_hits(
 
     let mut sorted_hits: Vec<&Hit> = hits.iter().collect();
     sorted_hits.sort_by(|a, b| {
-        b.query_length
-            .cmp(&a.query_length)
-            .then_with(|| b.score().total_cmp(&a.score()))
+        b.score()
+            .total_cmp(&a.score())
+            .then_with(|| b.query_coverage().total_cmp(&a.query_coverage()))
+            .then_with(|| b.identity().total_cmp(&a.identity()))
+            .then_with(|| b.query_length.cmp(&a.query_length))
             .then(a.target.cmp(&b.target))
             .then(a.target_start.cmp(&b.target_start))
             .then(a.target_end.cmp(&b.target_end))
@@ -1096,6 +1134,10 @@ pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
                 break;
             }
 
+            if !is_substantial_overlap(ri, rj) {
+                continue;
+            }
+
             if ri.confidence >= rj.confidence {
                 to_remove[j] = true;
             } else {
@@ -1113,6 +1155,17 @@ pub fn resolve_conflicts(rescues: &mut Vec<RescueEvent>) {
     });
 }
 
+fn is_substantial_overlap(a: &RescueEvent, b: &RescueEvent) -> bool {
+    let overlap = a.end.min(b.end).saturating_sub(a.start.max(b.start));
+    if overlap == 0 {
+        return false;
+    }
+    let a_len = a.end.saturating_sub(a.start);
+    let b_len = b.end.saturating_sub(b.start);
+    let shorter = a_len.min(b_len);
+    shorter > 0 && (overlap as f64 / shorter as f64) >= 0.50
+}
+
 // ── Synteny validation ──
 
 #[derive(Debug, Default)]
@@ -1127,13 +1180,21 @@ impl SyntenyContext {
     }
 
     fn side_matches(&self, other: &SyntenyContext) -> bool {
-        clusters_overlap(&self.upstream, &other.upstream)
-            || clusters_overlap(&self.downstream, &other.downstream)
+        let up_matches = cluster_overlap_count(&self.upstream, &other.upstream);
+        let down_matches = cluster_overlap_count(&self.downstream, &other.downstream);
+        let up_comparable = !self.upstream.is_empty() && !other.upstream.is_empty();
+        let down_comparable = !self.downstream.is_empty() && !other.downstream.is_empty();
+
+        if up_comparable && down_comparable {
+            return up_matches > 0 && down_matches > 0;
+        }
+
+        up_matches + down_matches > 0
     }
 }
 
-fn clusters_overlap(a: &[ClusterIdx], b: &[ClusterIdx]) -> bool {
-    a.iter().any(|x| b.iter().any(|y| x == y))
+fn cluster_overlap_count(a: &[ClusterIdx], b: &[ClusterIdx]) -> usize {
+    a.iter().filter(|x| b.iter().any(|y| *x == y)).count()
 }
 
 fn synteny_context(
@@ -1148,12 +1209,12 @@ fn synteny_context(
     let (upstream, downstream) =
         gff.context_window(contig, start, end, center_gene_id, SYNTENY_CONTEXT_GENES);
     for gene in upstream {
-        if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
+        if let Some(cluster) = gff.cluster_for_gene(gene, gene_to_cluster) {
             context.upstream.push(cluster);
         }
     }
     for gene in downstream {
-        if let Some(cluster) = gene_to_cluster.get(&gene.gene_id).copied() {
+        if let Some(cluster) = gff.cluster_for_gene(gene, gene_to_cluster) {
             context.downstream.push(cluster);
         }
     }
@@ -1218,7 +1279,9 @@ pub fn validate_synteny(
     }
 
     let mut synteny_match = false;
-    for &ref_gi in pa.present_genomes(ci).iter().take(5) {
+    let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
+    ref_genomes.sort_by_key(|gi| gi.val());
+    for ref_gi in ref_genomes {
         let Some(ref_gff) = gff_indices.get(&ref_gi) else {
             continue;
         };
@@ -1674,6 +1737,139 @@ mod tests {
     }
 
     #[test]
+    fn test_synteny_uses_all_present_genomes_deterministically() {
+        let pa = PresenceAbsence::new_for_test(
+            vec![
+                "target_gene".into(),
+                "shared_up".into(),
+                "shared_down".into(),
+                "other_up".into(),
+                "other_down".into(),
+            ],
+            vec![
+                "ref0".into(),
+                "ref1".into(),
+                "ref2".into(),
+                "ref3".into(),
+                "ref4".into(),
+                "ref5".into(),
+                "target".into(),
+            ],
+            vec![
+                vec![
+                    "g0".into(),
+                    "g1".into(),
+                    "g2".into(),
+                    "g3".into(),
+                    "g4".into(),
+                    "g5".into(),
+                    "".into(),
+                ],
+                vec![
+                    "".into(),
+                    "".into(),
+                    "".into(),
+                    "".into(),
+                    "".into(),
+                    "up5".into(),
+                    "up_target".into(),
+                ],
+                vec![
+                    "".into(),
+                    "".into(),
+                    "".into(),
+                    "".into(),
+                    "".into(),
+                    "down5".into(),
+                    "down_target".into(),
+                ],
+                vec![
+                    "xup0".into(),
+                    "xup1".into(),
+                    "xup2".into(),
+                    "xup3".into(),
+                    "xup4".into(),
+                    "".into(),
+                    "".into(),
+                ],
+                vec![
+                    "xdown0".into(),
+                    "xdown1".into(),
+                    "xdown2".into(),
+                    "xdown3".into(),
+                    "xdown4".into(),
+                    "".into(),
+                    "".into(),
+                ],
+            ],
+        );
+
+        fn genes(up: &str, center: &str, down: &str) -> GffIndex {
+            GffIndex::build(vec![
+                GffGene {
+                    contig: "chr".into(),
+                    start: 100,
+                    end: 200,
+                    strand: '+',
+                    gene_id: up.into(),
+                },
+                GffGene {
+                    contig: "chr".into(),
+                    start: 200,
+                    end: 300,
+                    strand: '+',
+                    gene_id: center.into(),
+                },
+                GffGene {
+                    contig: "chr".into(),
+                    start: 300,
+                    end: 400,
+                    strand: '+',
+                    gene_id: down.into(),
+                },
+            ])
+        }
+
+        let mut gff_indices = HashMap::new();
+        for gi in 0..5 {
+            gff_indices.insert(
+                GenomeIdx(gi),
+                genes(
+                    &format!("xup{}", gi),
+                    &format!("g{}", gi),
+                    &format!("xdown{}", gi),
+                ),
+            );
+        }
+        gff_indices.insert(GenomeIdx(5), genes("up5", "g5", "down5"));
+        gff_indices.insert(GenomeIdx(6), genes("up_target", "candidate", "down_target"));
+
+        let mut g2c = HashMap::new();
+        for gi in 0..7 {
+            g2c.insert(GenomeIdx(gi), build_gene_to_cluster(&pa, GenomeIdx(gi)));
+        }
+
+        let mut rescue = RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(6),
+            rescue_type: RescueType::Dropped,
+            identity: 99.0,
+            coverage: 99.0,
+            contig: "chr".into(),
+            start: 200,
+            end: 300,
+            strand: '+',
+            annotation_match: Some("candidate".into()),
+            confidence: 1.0,
+            synteny_ok: None,
+            fragment_evidence: FragmentEvidence::default(),
+        };
+
+        validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
+        assert_eq!(rescue.synteny_ok, Some(true));
+    }
+
+    #[test]
     fn test_detect_start_variant_with_gff() {
         let genes = vec![GffGene {
             contig: "c".into(),
@@ -1817,6 +2013,44 @@ mod tests {
                 strand: '+',
                 annotation_match: None,
                 confidence: 0.85,
+                synteny_ok: None,
+                fragment_evidence: FragmentEvidence::default(),
+            },
+        ];
+        resolve_conflicts(&mut rescues);
+        assert_eq!(rescues.len(), 2);
+    }
+
+    #[test]
+    fn test_conflict_resolution_keeps_minor_overlaps() {
+        let mut rescues = vec![
+            RescueEvent {
+                cluster_idx: ClusterIdx(0),
+                genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
+                identity: 99.0,
+                coverage: 100.0,
+                contig: "c1".into(),
+                start: 100,
+                end: 500,
+                strand: '+',
+                annotation_match: None,
+                confidence: 0.99,
+                synteny_ok: None,
+                fragment_evidence: FragmentEvidence::default(),
+            },
+            RescueEvent {
+                cluster_idx: ClusterIdx(1),
+                genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
+                identity: 98.0,
+                coverage: 100.0,
+                contig: "c1".into(),
+                start: 490,
+                end: 900,
+                strand: '+',
+                annotation_match: None,
+                confidence: 0.98,
                 synteny_ok: None,
                 fragment_evidence: FragmentEvidence::default(),
             },
@@ -1993,6 +2227,58 @@ mod tests {
         let r = result.unwrap();
         assert!(matches!(r.rescue_type, RescueType::Dropped));
         assert!(r.confidence > 0.9);
+    }
+
+    #[test]
+    fn test_classify_prefers_best_evidence_over_longest_allele() {
+        let long_lower_score = Hit {
+            query: "cluster1~~~ALLELE~0".into(),
+            cluster: "cluster1".into(),
+            query_length: 1200,
+            query_start: 0,
+            query_end: 960,
+            strand: '+',
+            target: "long_hit".into(),
+            target_start: 100,
+            target_end: 1060,
+            matches: 864,
+            alignment_length: 960,
+            mapq: 60,
+        };
+        let short_better_score = Hit {
+            query: "cluster1~~~ALLELE~1".into(),
+            cluster: "cluster1".into(),
+            query_length: 900,
+            query_start: 0,
+            query_end: 900,
+            strand: '+',
+            target: "best_hit".into(),
+            target_start: 200,
+            target_end: 1100,
+            matches: 900,
+            alignment_length: 900,
+            mapq: 60,
+        };
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into()],
+            vec!["genome1".into()],
+            vec![vec!["".into()]],
+        );
+        let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+        let result = classify_hits(
+            &[long_lower_score, short_better_score],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            None,
+            &g2c,
+            80.0,
+        )
+        .unwrap();
+
+        assert_eq!(result.contig, "best_hit");
+        assert!((result.identity - 100.0).abs() < 0.01);
+        assert!((result.coverage - 100.0).abs() < 0.01);
     }
 
     #[test]

@@ -71,18 +71,31 @@ look like sequence rescues but fail the local genomic-context check.
 
 ---
 
+## paralog_rejected_report.tsv
+
+Written only when one or more PARALOG candidates lack explicit synteny support.
+The schema is identical to `rescue_report.tsv`, but these rows are audit
+records: they are not added to `gene_presence_absence_recore.csv` and are not
+written to corrected GFF output.
+
+This is the conservative guardrail for multi-copy families: sequence similarity
+alone is not allowed to rescue a missing gene when the annotation says the hit
+belongs to a different cluster.
+
+---
+
 ## orthology_evidence.tsv
 
 Written for every run. One row per accepted rescue plus every rejected synteny
-candidate.
+or paralog candidate.
 
 | Column | Description |
 |--------|-------------|
 | `decision` | `accepted` or `rejected` |
-| `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, or `rejected_incompatible_context` |
+| `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
 | `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
-| `rejection_reason` | Reason rejected, currently `synteny_fail` |
+| `rejection_reason` | Reason rejected, e.g. `synteny_fail` or `paralog_without_synteny` |
 | `fragment_note` | Fragment interpretation, if applicable |
 
 Use this table as the primary audit trail for why a candidate entered, or did

@@ -86,6 +86,7 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 3. Filter to genomes with FASTA files ──
     let mut searchable_genomes: Vec<(GenomeIdx, Vec<ClusterIdx>)> = Vec::new();
     let mut missing_genomes = 0usize;
+    let mut missing_fasta_gaps = 0usize;
     let mut missing_names: Vec<String> = Vec::new();
     for (gi, cluster_indices) in gaps_by_genome {
         let genome_name = pa.genome_name(gi);
@@ -93,6 +94,7 @@ pub fn run(args: &Args) -> Result<()> {
             searchable_genomes.push((gi, cluster_indices));
         } else {
             missing_genomes += 1;
+            missing_fasta_gaps += cluster_indices.len();
             if args.verbose {
                 missing_names.push(genome_name.to_string());
             }
@@ -107,6 +109,10 @@ pub fn run(args: &Args) -> Result<()> {
             debug!("  Missing FASTA: {}", name);
         }
     }
+    let searchable_gaps: usize = searchable_genomes
+        .iter()
+        .map(|(_, clusters)| clusters.len())
+        .sum();
 
     // ── 4. Load GFF annotations ──
     let mut gff_paths: HashMap<GenomeIdx, PathBuf> = HashMap::new();
@@ -140,17 +146,22 @@ pub fn run(args: &Args) -> Result<()> {
                             }
                         }
                     }
-                    let genes: Vec<GffGene> = raw_genes
+                    let genes: Vec<(GffGene, Vec<String>)> = raw_genes
                         .into_iter()
-                        .map(|(contig, start, end, strand, gene_id)| GffGene {
-                            contig,
-                            start,
-                            end,
-                            strand,
-                            gene_id,
+                        .map(|(contig, start, end, strand, gene_id, aliases)| {
+                            (
+                                GffGene {
+                                    contig,
+                                    start,
+                                    end,
+                                    strand,
+                                    gene_id,
+                                },
+                                aliases,
+                            )
                         })
                         .collect();
-                    data.insert(gi, GffIndex::build(genes));
+                    data.insert(gi, GffIndex::build_with_aliases(genes));
                     gff_paths.insert(gi, path.clone());
                 }
                 Err(e) => warn!("Cannot parse GFF for {}: {}", genome_name, e),
@@ -395,6 +406,24 @@ pub fn run(args: &Args) -> Result<()> {
         }
     }
 
+    // Paralog-only sequence hits are useful audit evidence, but they are not
+    // orthology evidence unless the local gene context explicitly supports
+    // the same locus.
+    let before_paralog_rejection = rescues.len();
+    let old_rescues = std::mem::take(&mut rescues);
+    let (paralog_rejected, kept): (Vec<_>, Vec<_>) = old_rescues
+        .into_iter()
+        .partition(is_paralog_without_synteny_support);
+    rescues = kept;
+    if !paralog_rejected.is_empty() {
+        info!(
+            "Paralog rejection: {} → {} rescues ({} paralog-only candidates written to paralog_rejected_report.tsv)",
+            before_paralog_rejection,
+            rescues.len(),
+            paralog_rejected.len()
+        );
+    }
+
     // ── 9. Conflict resolution ──
     let before_conflicts = rescues.len();
     resolve_conflicts(&mut rescues);
@@ -514,6 +543,12 @@ pub fn run(args: &Args) -> Result<()> {
             .cmp(&b.cluster_idx)
             .then(a.genome_idx.cmp(&b.genome_idx))
     });
+    let mut paralog_rejected = paralog_rejected;
+    paralog_rejected.sort_by(|a, b| {
+        a.cluster_idx
+            .cmp(&b.cluster_idx)
+            .then(a.genome_idx.cmp(&b.genome_idx))
+    });
 
     let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
         .iter()
@@ -529,9 +564,18 @@ pub fn run(args: &Args) -> Result<()> {
             "synteny_rejected_report.tsv",
         )?;
     }
+    if !paralog_rejected.is_empty() {
+        write_named_report(
+            &paralog_rejected,
+            &pa,
+            &args.output,
+            "paralog_rejected_report.tsv",
+        )?;
+    }
     write_orthology_evidence(
         &rescues,
         &synteny_rejected,
+        &paralog_rejected,
         &pa,
         &gene_to_cluster_maps,
         &args.output,
@@ -558,6 +602,8 @@ pub fn run(args: &Args) -> Result<()> {
         total_gaps,
         filtered_gaps,
         skipped_by_prevalence,
+        searchable_gaps,
+        missing_fasta_gaps,
         dropped,
         split,
         fragmented,
@@ -566,6 +612,7 @@ pub fn run(args: &Args) -> Result<()> {
         paralog,
         pseudogene,
         synteny_rejected: synteny_rejected.len(),
+        paralog_rejected: paralog_rejected.len(),
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result
@@ -744,9 +791,14 @@ fn accepted_orthology_status(
     }
 }
 
+fn is_paralog_without_synteny_support(rescue: &RescueEvent) -> bool {
+    matches!(rescue.rescue_type, RescueType::Paralog { .. }) && rescue.synteny_ok != Some(true)
+}
+
 fn write_orthology_evidence(
     rescues: &[RescueEvent],
     synteny_rejected: &[RescueEvent],
+    paralog_rejected: &[RescueEvent],
     pa: &crate::parser::PresenceAbsence,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
     output_dir: &std::path::Path,
@@ -759,24 +811,14 @@ fn write_orthology_evidence(
         "decision\torthology_status\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
     )?;
 
-    for (accepted, rescue) in rescues
-        .iter()
-        .map(|r| (true, r))
-        .chain(synteny_rejected.iter().map(|r| (false, r)))
-    {
+    for rescue in rescues {
         let query_cluster = pa.cluster_name(rescue.cluster_idx);
         let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
-        let status = if accepted {
-            accepted_orthology_status(rescue, query_cluster, &annotation_cluster)
-        } else {
-            "rejected_incompatible_context"
-        };
-        let rejection_reason = if accepted { "" } else { "synteny_fail" };
-        let decision = if accepted { "accepted" } else { "rejected" };
+        let status = accepted_orthology_status(rescue, query_cluster, &annotation_cluster);
         writeln!(
             w,
             "{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
-            decision,
+            "accepted",
             status,
             query_cluster,
             pa.genome_name(rescue.genome_idx),
@@ -795,9 +837,52 @@ fn write_orthology_evidence(
             },
             rescue.annotation_match.as_deref().unwrap_or(""),
             annotation_cluster,
-            rejection_reason,
+            "",
             rescue.fragment_evidence.note.as_deref().unwrap_or(""),
         )?;
+    }
+
+    for (rejected, status, reason) in [
+        (
+            synteny_rejected,
+            "rejected_incompatible_context",
+            "synteny_fail",
+        ),
+        (
+            paralog_rejected,
+            "rejected_paralog_without_synteny",
+            "paralog_without_synteny",
+        ),
+    ] {
+        for rescue in rejected {
+            let query_cluster = pa.cluster_name(rescue.cluster_idx);
+            let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+            writeln!(
+                w,
+                "{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}",
+                "rejected",
+                status,
+                query_cluster,
+                pa.genome_name(rescue.genome_idx),
+                rescue.rescue_type,
+                rescue.identity,
+                rescue.coverage,
+                rescue.contig,
+                rescue.start + 1,
+                rescue.end,
+                rescue.strand,
+                rescue.confidence,
+                match rescue.synteny_ok {
+                    Some(true) => "PASS",
+                    Some(false) => "FAIL",
+                    None => "",
+                },
+                rescue.annotation_match.as_deref().unwrap_or(""),
+                annotation_cluster,
+                reason,
+                rescue.fragment_evidence.note.as_deref().unwrap_or(""),
+            )?;
+        }
     }
     w.flush()?;
     Ok(())
@@ -822,13 +907,14 @@ struct ClusterContextSummary {
 }
 
 fn context_signature(
+    gff: &GffIndex,
     genes: &[&GffGene],
     gene_to_cluster: &HashMap<String, ClusterIdx>,
     pa: &crate::parser::PresenceAbsence,
 ) -> String {
     let names: Vec<&str> = genes
         .iter()
-        .filter_map(|gene| gene_to_cluster.get(&gene.gene_id).copied())
+        .filter_map(|gene| gff.cluster_for_gene(gene, gene_to_cluster))
         .map(|ci| pa.cluster_name(ci))
         .collect();
     if names.is_empty() {
@@ -894,8 +980,8 @@ fn write_cluster_locus_contexts(
                 Some(gene.gene_id.as_str()),
                 2,
             );
-            let upstream_sig = context_signature(&upstream, g2c, pa);
-            let downstream_sig = context_signature(&downstream, g2c, pa);
+            let upstream_sig = context_signature(gff, &upstream, g2c, pa);
+            let downstream_sig = context_signature(gff, &downstream, g2c, pa);
             let key = (upstream_sig.clone(), downstream_sig.clone());
             *context_counts.entry(key).or_insert(0) += 1;
             n_mapped += 1;
@@ -1365,6 +1451,8 @@ struct SummaryStats {
     total_gaps: usize,
     filtered_gaps: usize,
     skipped_by_prevalence: usize,
+    searchable_gaps: usize,
+    missing_fasta_gaps: usize,
     dropped: usize,
     split: usize,
     fragmented: usize,
@@ -1373,6 +1461,7 @@ struct SummaryStats {
     paralog: usize,
     pseudogene: usize,
     synteny_rejected: usize,
+    paralog_rejected: usize,
     synteny_enabled: bool,
     nsc_clusters: usize,
     nsc_merged_genes: usize,
@@ -1426,16 +1515,23 @@ fn write_summary(
     writeln!(w, "Clusters:              {}", pa.n_clusters())?;
     writeln!(w, "Genomes:               {}", pa.n_genomes())?;
     writeln!(w, "Total gaps:            {}", stats.total_gaps)?;
-    writeln!(w, "Gaps searched:         {}", stats.filtered_gaps)?;
+    writeln!(w, "Gaps passing filter:   {}", stats.filtered_gaps)?;
+    writeln!(w, "Gaps searched:         {}", stats.searchable_gaps)?;
+    if stats.missing_fasta_gaps > 0 {
+        writeln!(w, "Gaps skipped (FASTA):  {}", stats.missing_fasta_gaps)?;
+    }
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;
     writeln!(w, "Rescued:               {}", rescues.len())?;
     if stats.synteny_rejected > 0 {
         writeln!(w, "Rejected (synteny):    {}", stats.synteny_rejected)?;
     }
+    if stats.paralog_rejected > 0 {
+        writeln!(w, "Rejected (paralog):    {}", stats.paralog_rejected)?;
+    }
     writeln!(
         w,
         "Remaining gaps:        {}",
-        stats.filtered_gaps - rescues.len()
+        stats.searchable_gaps.saturating_sub(rescues.len())
     )?;
     writeln!(w)?;
     let core_diff = core_after as i64 - stats.core_before as i64;
@@ -1476,6 +1572,11 @@ fn write_summary(
             writeln!(w, "  REJECTED_FAIL: {}", stats.synteny_rejected)?;
         }
     }
+    if stats.paralog_rejected > 0 {
+        writeln!(w)?;
+        writeln!(w, "Orthology rejection:")?;
+        writeln!(w, "  PARALOG_WITHOUT_SYNTENY: {}", stats.paralog_rejected)?;
+    }
     if stats.nsc_clusters > 0 {
         writeln!(w)?;
         writeln!(w, "Nucleotide similarity clustering:")?;
@@ -1489,4 +1590,57 @@ fn write_summary(
     }
     w.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rescue_with_type(rescue_type: RescueType, synteny_ok: Option<bool>) -> RescueEvent {
+        RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(0),
+            rescue_type,
+            identity: 90.0,
+            coverage: 90.0,
+            contig: "chr".into(),
+            start: 0,
+            end: 100,
+            strand: '+',
+            annotation_match: None,
+            confidence: 0.8,
+            synteny_ok,
+            fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        }
+    }
+
+    #[test]
+    fn paralog_requires_explicit_synteny_support() {
+        let no_synteny = rescue_with_type(
+            RescueType::Paralog {
+                other_cluster: "other".into(),
+            },
+            None,
+        );
+        assert!(is_paralog_without_synteny_support(&no_synteny));
+
+        let failed_synteny = rescue_with_type(
+            RescueType::Paralog {
+                other_cluster: "other".into(),
+            },
+            Some(false),
+        );
+        assert!(is_paralog_without_synteny_support(&failed_synteny));
+
+        let passed_synteny = rescue_with_type(
+            RescueType::Paralog {
+                other_cluster: "other".into(),
+            },
+            Some(true),
+        );
+        assert!(!is_paralog_without_synteny_support(&passed_synteny));
+
+        let dropped = rescue_with_type(RescueType::Dropped, None);
+        assert!(!is_paralog_without_synteny_support(&dropped));
+    }
 }

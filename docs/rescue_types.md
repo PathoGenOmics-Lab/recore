@@ -97,6 +97,8 @@ geneA   genome4   START_VARIANT:+57bp   99.6   100.0   contig_1   34100   34956 
 
 **Confidence:** `identity × coverage × 0.7` (reduced — this is a cross-match, not a true rescue)
 
+**Matrix behavior:** PARALOG candidates are audit-only unless synteny explicitly passes. Without `synteny=PASS`, they are written to `paralog_rejected_report.tsv` and are not inserted into `gene_presence_absence_recore.csv`.
+
 **Example:**
 ```
 geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   1921800   +   0.628      PE_PGRS47
