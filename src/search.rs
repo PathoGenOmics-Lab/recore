@@ -59,7 +59,7 @@ impl Hit {
 /// 5. Demux hits back to per-(genome, cluster) groups
 /// 6. Filter: only return hits for (cluster, genome) pairs that are actual gaps
 ///
-/// Returns: HashMap<(genome_idx, cluster_name), Vec<Hit>>
+/// Returns: HashMap<(genome_idx, cluster_idx), Vec<Hit>>
 pub fn batch_search(
     queries: &HashMap<String, Vec<Vec<u8>>>,
     genome_files: &HashMap<String, std::path::PathBuf>,
@@ -69,7 +69,7 @@ pub fn batch_search(
     threads: usize,
     min_identity: f64,
     preset: &str,
-) -> Result<HashMap<(usize, String), Vec<Hit>>> {
+) -> Result<HashMap<(usize, usize), Vec<Hit>>> {
     if searchable_genomes.is_empty() {
         return Ok(HashMap::default());
     }
@@ -86,7 +86,7 @@ pub fn batch_search(
 
     // ── 2. Write query FASTA ──
     let mut query_file = NamedTempFile::new().context("Cannot create temp query file")?;
-    let mut name_to_cluster: HashMap<String, String> = HashMap::default();
+    let mut query_to_cluster_idx: HashMap<String, usize> = HashMap::default();
     let mut total_queries = 0usize;
 
     for &ci in &needed_clusters {
@@ -100,7 +100,7 @@ pub fn batch_search(
             } else {
                 format!("{}~~~ALLELE~{}", cluster_name, ai)
             };
-            name_to_cluster.insert(query_name.clone(), cluster_name.clone());
+            query_to_cluster_idx.insert(query_name.clone(), ci);
             writeln!(query_file, ">{}", query_name)?;
             query_file.write_all(seq)?;
             writeln!(query_file)?;
@@ -229,23 +229,16 @@ pub fn batch_search(
         .map(|(i, n)| (n.as_str(), i))
         .collect();
 
-    let cluster_name_to_idx: HashMap<&str, usize> = cluster_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i))
-        .collect();
-
     // ── 7. Stream-parse PAF (no full stdout in RAM) ──
-    let mut hits: HashMap<(usize, String), Vec<Hit>> = HashMap::default();
+    let mut hits: HashMap<(usize, usize), Vec<Hit>> = HashMap::default();
     let mut total_hits = 0usize;
     let mut filtered_hits = 0usize;
 
     for line_result in paf_reader.lines() {
         let line = line_result?;
-        let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 12 {
+        let Some(fields) = paf_required_fields(&line) else {
             continue;
-        }
+        };
         total_hits += 1;
 
         // Parse target: "genome_name|||original_contig rest_of_header"
@@ -265,21 +258,19 @@ pub fn batch_search(
         };
 
         let query_name = fields[0];
-        let cluster_name = name_to_cluster
-            .get(query_name)
-            .map(|s| s.as_str())
-            .unwrap_or(query_name);
+        let Some(&ci) = query_to_cluster_idx.get(query_name) else {
+            continue;
+        };
+        let cluster_name = &cluster_names[ci];
 
         // Filter: only keep hits for actual gaps
-        if let Some(&ci) = cluster_name_to_idx.get(cluster_name) {
-            if !gap_set.contains(&(gi, ci)) {
-                continue;
-            }
+        if !gap_set.contains(&(gi, ci)) {
+            continue;
         }
 
         let hit = Hit {
             query: query_name.to_string(),
-            cluster: cluster_name.to_string(),
+            cluster: cluster_name.clone(),
             query_length: fields[1].parse().unwrap_or(0),
             query_start: fields[2].parse().unwrap_or(0),
             query_end: fields[3].parse().unwrap_or(0),
@@ -297,9 +288,7 @@ pub fn batch_search(
         }
 
         filtered_hits += 1;
-        hits.entry((gi, cluster_name.to_string()))
-            .or_default()
-            .push(hit);
+        hits.entry((gi, ci)).or_default().push(hit);
     }
 
     // Wait for minimap2 to finish and collect stderr
@@ -329,6 +318,24 @@ pub fn batch_search(
     Ok(hits)
 }
 
+fn paf_required_fields(line: &str) -> Option<[&str; 12]> {
+    let mut fields = line.split('\t');
+    Some([
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+    ])
+}
+
 /// Parse a single PAF line into a Hit, resolving genome prefix and cluster name.
 /// Returns None if the line is malformed, has no contig separator, or the genome is unknown.
 /// Exposed for unit testing.
@@ -338,10 +345,7 @@ fn parse_paf_line(
     genome_name_to_idx: &HashMap<&str, usize>,
     name_to_cluster: &HashMap<String, String>,
 ) -> Option<(usize, Hit)> {
-    let fields: Vec<&str> = line.split('\t').collect();
-    if fields.len() < 12 {
-        return None;
-    }
+    let fields = paf_required_fields(line)?;
 
     let target_field = fields[5];
     let sep_pos = target_field.find(CONTIG_SEP)?;

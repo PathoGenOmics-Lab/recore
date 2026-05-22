@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 
 use crate::cli::{Args, MatrixPolicy};
@@ -37,9 +37,6 @@ pub fn run(args: &Args) -> Result<()> {
             alias_resolved
         );
     }
-
-    let cluster_to_idx = pa.cluster_index();
-
     // ── 1b. Cross-validate inputs (includes path traversal checks) ──
     validate_inputs(&pa, &pan_ref, &genome_files)?;
 
@@ -259,10 +256,8 @@ pub fn run(args: &Args) -> Result<()> {
 
     let classify_inputs: Vec<(ClusterIdx, GenomeIdx, &[crate::search::Hit])> = hits_map
         .iter()
-        .filter_map(|((gi_val, cluster_name), hits)| {
-            let ci = *cluster_to_idx.get(cluster_name.as_str())?;
-            let gi = GenomeIdx(*gi_val);
-            Some((ci, gi, hits.as_slice()))
+        .map(|((gi_val, ci_val), hits)| {
+            (ClusterIdx(*ci_val), GenomeIdx(*gi_val), hits.as_slice())
         })
         .collect();
 
@@ -1662,7 +1657,8 @@ fn write_corrected_csv(
                 row[col_idx].push_str("NSC_MERGED");
                 nsc_count += 1;
             } else {
-                row[col_idx].clone_from(&pa.cell(ci, gi).to_owned());
+                row[col_idx].clear();
+                row[col_idx].push_str(pa.cell(ci, gi));
             }
         }
 
@@ -1801,19 +1797,59 @@ fn write_multistate_matrix(
     Ok(())
 }
 
-fn read_text_maybe_gzip(path: &std::path::Path) -> Result<String> {
-    use std::io::Read;
-
+fn copy_text_maybe_gzip_with_header(path: &std::path::Path, writer: &mut impl Write) -> Result<()> {
     let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
-    let mut text = String::new();
-    if path.extension().is_some_and(|e| e == "gz") {
-        let mut decoder = flate2::read::GzDecoder::new(file);
-        decoder.read_to_string(&mut text)?;
+    let mut reader: Box<dyn BufRead> = if path.extension().is_some_and(|e| e == "gz") {
+        Box::new(BufReader::new(flate2::read::GzDecoder::new(file)))
     } else {
-        let mut reader = std::io::BufReader::new(file);
-        reader.read_to_string(&mut text)?;
+        Box::new(BufReader::new(file))
+    };
+
+    let mut prefix = Vec::with_capacity(256);
+    let mut line = Vec::with_capacity(4096);
+    let mut has_gff_header = false;
+    let mut ended_newline = true;
+
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        ended_newline = line.ends_with(b"\n");
+
+        let text = String::from_utf8_lossy(&line);
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            prefix.extend_from_slice(&line);
+            continue;
+        }
+        has_gff_header = trimmed.starts_with("##gff-version");
+
+        prefix.extend_from_slice(&line);
+        break;
     }
-    Ok(text)
+
+    if !has_gff_header {
+        writeln!(writer, "##gff-version 3")?;
+    }
+    writer.write_all(&prefix)?;
+
+    let mut buf = Vec::with_capacity(64 * 1024);
+    loop {
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        ended_newline = buf.ends_with(b"\n");
+        writer.write_all(&buf)?;
+    }
+
+    if !ended_newline {
+        writeln!(writer)?;
+    }
+    Ok(())
 }
 
 fn gff_escape(value: &str) -> String {
@@ -1870,16 +1906,7 @@ fn write_corrected_gffs(
         let mut w = BufWriter::new(file);
 
         if let Some(source_gff) = gff_paths.get(&gi) {
-            let original = read_text_maybe_gzip(source_gff)?;
-            if original.trim_start().starts_with("##gff-version") {
-                write!(w, "{}", original)?;
-            } else {
-                writeln!(w, "##gff-version 3")?;
-                write!(w, "{}", original)?;
-            }
-            if !original.ends_with('\n') {
-                writeln!(w)?;
-            }
+            copy_text_maybe_gzip_with_header(source_gff, &mut w)?;
         } else {
             writeln!(w, "##gff-version 3")?;
         }
@@ -2343,5 +2370,42 @@ mod tests {
             MatrixPolicy::Sensitive,
             "PARTIAL_HOMOLOGY"
         ));
+    }
+
+    #[test]
+    fn gff_stream_copy_adds_missing_header() {
+        let mut input = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            input,
+            "chr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1;Name=gene1"
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        copy_text_maybe_gzip_with_header(input.path(), &mut output).unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert!(text.starts_with("##gff-version 3\n"));
+        assert!(text.contains("ID=gene1"));
+    }
+
+    #[test]
+    fn gff_stream_copy_preserves_existing_header_after_blank_prefix() {
+        let mut input = tempfile::NamedTempFile::new().unwrap();
+        writeln!(input).unwrap();
+        writeln!(input, "##gff-version 3").unwrap();
+        writeln!(
+            input,
+            "chr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1;Name=gene1"
+        )
+        .unwrap();
+
+        let mut output = Vec::new();
+        copy_text_maybe_gzip_with_header(input.path(), &mut output).unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert_eq!(text.matches("##gff-version 3").count(), 1);
+        assert!(text.starts_with('\n'));
+        assert!(text.contains("ID=gene1"));
     }
 }
