@@ -525,7 +525,7 @@ pub fn normalize_gff_records_to_fasta(
 
 /// Open a file with transparent gzip decompression.
 /// If the path ends with `.gz`, decompresses on-the-fly via flate2.
-fn open_maybe_gzip(path: &Path) -> Result<Box<dyn std::io::BufRead>> {
+pub(crate) fn open_maybe_gzip(path: &Path) -> Result<Box<dyn std::io::BufRead>> {
     use std::io::BufReader;
     let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     if path.extension().is_some_and(|e| e == "gz") {
@@ -547,16 +547,38 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         if line.starts_with('#') || !line.contains('\t') {
             continue;
         }
-        let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 9 || fields[2] != "CDS" {
+
+        let mut fields = line.split('\t');
+        let Some(contig_field) = fields.next() else {
+            continue;
+        };
+        let _source = fields.next();
+        let Some(feature_type) = fields.next() else {
+            continue;
+        };
+        if feature_type != "CDS" {
             continue;
         }
+        let Some(start_field) = fields.next() else {
+            continue;
+        };
+        let Some(end_field) = fields.next() else {
+            continue;
+        };
+        let _score = fields.next();
+        let Some(strand_field) = fields.next() else {
+            continue;
+        };
+        let _phase = fields.next();
+        let Some(attributes) = fields.next() else {
+            continue;
+        };
 
-        let contig = fields[0].to_string();
+        let contig = contig_field.to_string();
         // GFF3 is 1-based closed; convert to 0-based half-open to match minimap2 PAF coords
-        let start: u64 = fields[3].parse::<u64>().unwrap_or(1).saturating_sub(1);
-        let end: u64 = fields[4].parse().unwrap_or(0); // end is already exclusive after -1+1
-        let strand = fields[6].chars().next().unwrap_or('+');
+        let start: u64 = start_field.parse::<u64>().unwrap_or(1).saturating_sub(1);
+        let end: u64 = end_field.parse().unwrap_or(0); // end is already exclusive after -1+1
+        let strand = strand_field.chars().next().unwrap_or('+');
 
         let mut id = String::new();
         let mut locus_tag = String::new();
@@ -564,7 +586,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         let mut name = String::new();
         let mut protein_id = String::new();
         let mut old_locus_tag = String::new();
-        for attr in fields[8].split(';') {
+        for attr in attributes.split(';') {
             let attr = attr.trim();
             if let Some(val) = attr.strip_prefix("ID=") {
                 id = val.to_string();

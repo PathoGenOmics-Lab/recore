@@ -5,6 +5,9 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 
+use crate::parser::open_maybe_gzip;
+use crate::types::{ClusterIdx, GenomeIdx};
+
 /// Separator between genome name and original contig name in concatenated targets.
 const CONTIG_SEP: &str = "|||";
 
@@ -63,34 +66,34 @@ impl Hit {
 pub fn batch_search(
     queries: &HashMap<String, Vec<Vec<u8>>>,
     genome_files: &HashMap<String, std::path::PathBuf>,
-    searchable_genomes: &[(usize, Vec<usize>)],
+    searchable_genomes: &[(GenomeIdx, Vec<ClusterIdx>)],
     genome_names: &[String],
     cluster_names: &[String],
     threads: usize,
     min_identity: f64,
     preset: &str,
-) -> Result<HashMap<(usize, usize), Vec<Hit>>> {
+) -> Result<HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>>> {
     if searchable_genomes.is_empty() {
         return Ok(HashMap::default());
     }
 
     // ── 1. Collect unique query clusters needed across all genomes ──
-    let mut needed_cluster_set: ahash::HashSet<usize> = ahash::HashSet::default();
+    let mut needed_cluster_set: ahash::HashSet<ClusterIdx> = ahash::HashSet::default();
     for (_gi, cluster_indices) in searchable_genomes {
         for &ci in cluster_indices {
             needed_cluster_set.insert(ci);
         }
     }
-    let mut needed_clusters: Vec<usize> = needed_cluster_set.into_iter().collect();
+    let mut needed_clusters: Vec<ClusterIdx> = needed_cluster_set.into_iter().collect();
     needed_clusters.sort_unstable();
 
     // ── 2. Write query FASTA ──
     let mut query_file = NamedTempFile::new().context("Cannot create temp query file")?;
-    let mut query_to_cluster_idx: HashMap<String, usize> = HashMap::default();
+    let mut query_to_cluster_idx: HashMap<String, ClusterIdx> = HashMap::default();
     let mut total_queries = 0usize;
 
     for &ci in &needed_clusters {
-        let cluster_name = &cluster_names[ci];
+        let cluster_name = &cluster_names[ci.val()];
         let Some(alleles) = queries.get(cluster_name) else {
             continue;
         };
@@ -119,30 +122,20 @@ pub fn batch_search(
         let mut writer = BufWriter::with_capacity(256 * 1024, &mut target_file);
         let mut genomes_written = 0usize;
 
-        let mut genome_indices_needed: Vec<usize> =
+        let mut genome_indices_needed: Vec<GenomeIdx> =
             searchable_genomes.iter().map(|(gi, _)| *gi).collect();
         genome_indices_needed.sort_unstable();
         genome_indices_needed.dedup();
 
         for &gi in &genome_indices_needed {
-            let genome_name = &genome_names[gi];
+            let genome_name = &genome_names[gi.val()];
             let Some(fasta_path) = genome_files.get(genome_name) else {
                 continue;
             };
 
-            let file = std::fs::File::open(fasta_path)
+            let mut reader = open_maybe_gzip(fasta_path)
                 .with_context(|| format!("Cannot open genome {}", fasta_path.display()))?;
-            let reader = BufReader::with_capacity(128 * 1024, file);
-
-            for line in reader.lines() {
-                let line = line?;
-                if let Some(header) = line.strip_prefix('>') {
-                    writeln!(writer, ">{}{}{}", genome_name, CONTIG_SEP, header)?;
-                } else {
-                    writer.write_all(line.as_bytes())?;
-                    writeln!(writer)?;
-                }
-            }
+            write_prefixed_fasta(&mut reader, &mut writer, genome_name)?;
             genomes_written += 1;
         }
         writer.flush()?;
@@ -198,7 +191,7 @@ pub fn batch_search(
         .context("Failed to spawn minimap2 — is it installed?")?;
 
     let stdout = child.stdout.take().context("No stdout from minimap2")?;
-    let paf_reader = BufReader::with_capacity(256 * 1024, stdout);
+    let mut paf_reader = BufReader::with_capacity(256 * 1024, stdout);
 
     // Capture stderr in a background thread so it doesn't block/deadlock
     let stderr = child.stderr.take();
@@ -206,37 +199,59 @@ pub fn batch_search(
         let Some(stderr) = stderr else {
             return String::new();
         };
-        let reader = BufReader::new(stderr);
-        let mut buf = String::new();
-        for line in reader.lines().map_while(Result::ok) {
-            buf.push_str(&line);
-            buf.push('\n');
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::with_capacity(512);
+        let mut context = String::new();
+        let mut n_context = 0usize;
+        loop {
+            line.clear();
+            let Ok(n) = reader.read_line(&mut line) else {
+                break;
+            };
+            if n == 0 {
+                break;
+            }
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if trimmed.contains("[WARNING]") || trimmed.contains("[W::") {
+                log::warn!("minimap2: {}", trimmed);
+            }
+            if n_context < 5 {
+                context.push_str(trimmed);
+                context.push('\n');
+                n_context += 1;
+            }
         }
-        buf
+        context
     });
 
     // ── 6. Build gap lookup ──
-    let mut gap_set: ahash::HashSet<(usize, usize)> = ahash::HashSet::default();
+    let mut gap_set: ahash::HashSet<(GenomeIdx, ClusterIdx)> = ahash::HashSet::default();
     for (gi, cluster_indices) in searchable_genomes {
         for &ci in cluster_indices {
             gap_set.insert((*gi, ci));
         }
     }
 
-    let genome_name_to_idx: HashMap<&str, usize> = genome_names
+    let genome_name_to_idx: HashMap<&str, GenomeIdx> = genome_names
         .iter()
         .enumerate()
-        .map(|(i, n)| (n.as_str(), i))
+        .map(|(i, n)| (n.as_str(), GenomeIdx(i)))
         .collect();
 
     // ── 7. Stream-parse PAF (no full stdout in RAM) ──
-    let mut hits: HashMap<(usize, usize), Vec<Hit>> = HashMap::default();
+    let mut hits: HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>> = HashMap::default();
     let mut total_hits = 0usize;
     let mut filtered_hits = 0usize;
+    let mut line = String::with_capacity(1024);
 
-    for line_result in paf_reader.lines() {
-        let line = line_result?;
-        let Some(fields) = paf_required_fields(&line) else {
+    loop {
+        line.clear();
+        let n = paf_reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+        let line_trimmed = line.trim_end_matches(['\r', '\n']);
+        let Some(fields) = paf_required_fields(line_trimmed) else {
             continue;
         };
         total_hits += 1;
@@ -261,7 +276,7 @@ pub fn batch_search(
         let Some(&ci) = query_to_cluster_idx.get(query_name) else {
             continue;
         };
-        let cluster_name = &cluster_names[ci];
+        let cluster_name = &cluster_names[ci.val()];
 
         // Filter: only keep hits for actual gaps
         if !gap_set.contains(&(gi, ci)) {
@@ -293,19 +308,14 @@ pub fn batch_search(
 
     // Wait for minimap2 to finish and collect stderr
     let status = child.wait().context("minimap2 process failed")?;
-    let stderr_output = stderr_handle.join().unwrap_or_default();
-
-    // Log warnings from stderr regardless of exit code
-    for line in stderr_output.lines() {
-        if line.contains("[WARNING]") || line.contains("[W::") {
-            log::warn!("minimap2: {}", line);
-        }
-    }
+    let stderr_context = stderr_handle.join().unwrap_or_default();
 
     if !status.success() {
-        // Include first 5 stderr lines in error message for diagnostics
-        let context: String = stderr_output.lines().take(5).collect::<Vec<_>>().join("\n");
-        anyhow::bail!("minimap2 alignment exited with {}\n{}", status, context);
+        anyhow::bail!(
+            "minimap2 alignment exited with {}\n{}",
+            status,
+            stderr_context
+        );
     }
 
     debug!(
@@ -316,6 +326,39 @@ pub fn batch_search(
     );
 
     Ok(hits)
+}
+
+fn write_prefixed_fasta<R: BufRead + ?Sized, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    genome_name: &str,
+) -> Result<()> {
+    let mut line = Vec::with_capacity(8192);
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+
+        if line.starts_with(b">") {
+            let mut header_end = line.len();
+            while header_end > 1 && matches!(line[header_end - 1], b'\n' | b'\r') {
+                header_end -= 1;
+            }
+            writer.write_all(b">")?;
+            writer.write_all(genome_name.as_bytes())?;
+            writer.write_all(CONTIG_SEP.as_bytes())?;
+            writer.write_all(&line[1..header_end])?;
+            writer.write_all(b"\n")?;
+        } else {
+            writer.write_all(&line)?;
+            if !line.ends_with(b"\n") {
+                writer.write_all(b"\n")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn paf_required_fields(line: &str) -> Option<[&str; 12]> {
@@ -563,6 +606,33 @@ mod tests {
             "clA\t1000\t0\t1000\t+\tgenome1|||ctg1 length=5000\t5000000\t100\t1100\t990\t1000\t60";
         let (_, hit) = parse_paf_line(line, &g2i, &n2c).unwrap();
         assert_eq!(hit.target, "ctg1");
+    }
+
+    #[test]
+    fn test_write_prefixed_fasta_reuses_input_lines() {
+        let input = b">ctg1 description\nACGT\n>ctg2\nTTAA";
+        let mut reader = std::io::Cursor::new(input);
+        let mut output = Vec::new();
+
+        write_prefixed_fasta(&mut reader, &mut output, "genome1").unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            text,
+            ">genome1|||ctg1 description\nACGT\n>genome1|||ctg2\nTTAA\n"
+        );
+    }
+
+    #[test]
+    fn test_write_prefixed_fasta_handles_crlf_headers() {
+        let input = b">ctg1 description\r\nACGT\r\n";
+        let mut reader = std::io::Cursor::new(input);
+        let mut output = Vec::new();
+
+        write_prefixed_fasta(&mut reader, &mut output, "genome1").unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert_eq!(text, ">genome1|||ctg1 description\nACGT\r\n");
     }
 
     // ── CONTIG_SEP constant test ──

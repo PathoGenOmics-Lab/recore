@@ -231,16 +231,10 @@ pub fn run(args: &Args) -> Result<()> {
     };
 
     // ── 6. Batch search: ONE minimap2 invocation ──
-    // Adapt types for batch_search (uses usize internally for genome files lookup)
-    let searchable_usize: Vec<(usize, Vec<usize>)> = searchable_genomes
-        .iter()
-        .map(|(gi, cis)| (gi.val(), cis.iter().map(|ci| ci.val()).collect()))
-        .collect();
-
     let hits_map = batch_search(
         &pan_ref,
         &genome_files,
-        &searchable_usize,
+        &searchable_genomes,
         pa.genome_names(),
         pa.cluster_names(),
         args.threads,
@@ -256,9 +250,7 @@ pub fn run(args: &Args) -> Result<()> {
 
     let classify_inputs: Vec<(ClusterIdx, GenomeIdx, &[crate::search::Hit])> = hits_map
         .iter()
-        .map(|((gi_val, ci_val), hits)| {
-            (ClusterIdx(*ci_val), GenomeIdx(*gi_val), hits.as_slice())
-        })
+        .map(|((gi, ci), hits)| (*ci, *gi, hits.as_slice()))
         .collect();
 
     let empty_map: HashMap<String, ClusterIdx> = HashMap::new();
