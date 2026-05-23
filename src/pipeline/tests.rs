@@ -299,6 +299,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("viewer-controls"));
     assert!(text.contains("data-mechanism"));
     assert!(text.contains("data-clear-mechanism"));
+    assert!(text.contains("mechanismFilters = new Set"));
+    assert!(text.contains("mechanismFilters.has"));
+    assert!(text.contains("Click mechanism cards to add/remove"));
     assert!(text.contains("referenceCell"));
     assert!(text.contains("targetReferenceGene"));
     assert!(text.contains("Reference equivalent"));

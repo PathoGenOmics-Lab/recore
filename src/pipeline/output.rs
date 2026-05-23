@@ -1635,7 +1635,7 @@ let renderQueued = false;
 let detailsKey = "";
 let treeMode = "phylogram";
 let referenceOnly = false;
-let mechanismFilter = "";
+let mechanismFilters = new Set();
 let treeRoot = data.tree;
 
 function stateAt(clusterIdx, genomeIdx) {
@@ -1653,8 +1653,18 @@ function countsForCluster(clusterIdx) {
 function passesActiveFilters(idx, includeMechanism = true) {
   const cluster = data.clusters[idx];
   if (referenceOnly && !cluster.referenceAbsent) return false;
-  if (includeMechanism && mechanismFilter && processKind(cluster) !== mechanismFilter) return false;
+  if (includeMechanism && mechanismFilters.size && !mechanismFilters.has(processKind(cluster))) return false;
   return true;
+}
+function mechanismFilterKey() {
+  return [...mechanismFilters].sort().join("|");
+}
+function mechanismFilterSummary() {
+  const filters = [...mechanismFilters].sort();
+  if (!filters.length) return "";
+  const labels = filters.map(processLabel);
+  if (labels.length <= 2) return labels.join(" + ");
+  return `${labels.length} mechanisms`;
 }
 function refreshVisibleClusters() {
   visibleClusters = data.clusters
@@ -1667,8 +1677,8 @@ function refreshVisibleClusters() {
         .map((_, idx) => idx)
         .filter(idx => passesActiveFilters(idx, true));
     }
-    if (!visibleClusters.length && mechanismFilter) {
-      mechanismFilter = "";
+    if (!visibleClusters.length && mechanismFilters.size) {
+      mechanismFilters.clear();
       visibleClusters = data.clusters.map((_, idx) => idx);
     }
   }
@@ -1782,12 +1792,12 @@ function renderProcessLegend() {
   if (!processLegend) return;
   const cluster = data.clusters[selected] || {};
   const selectedMechanism = processKind(cluster);
-  const filterLabel = mechanismFilter
-    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing only ${escapeHtml(processLabel(mechanismFilter))} (${visibleClusters.length} clusters). Clear filter</button>`
-    : `<span>Click a mechanism card to filter the matrix columns.</span>`;
+  const filterLabel = mechanismFilters.size
+    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing ${escapeHtml(mechanismFilterSummary())} (${visibleClusters.length} clusters). Clear filters</button>`
+    : `<span>Click mechanism cards to add/remove matrix-column filters.</span>`;
   const items = visibleProcessCounts().map(([mechanism, row]) => {
     const active = mechanism === selectedMechanism ? " active" : "";
-    const filtered = mechanism === mechanismFilter ? " filtered" : "";
+    const filtered = mechanismFilters.has(mechanism) ? " filtered" : "";
     return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${row.clusters} clusters; ${row.present} present cells. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
   }).join("");
   processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
@@ -2177,7 +2187,7 @@ function renderMatrix(scrollToSelected) {
   }
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
-    ? `${selected}|${referenceOnly}|${mechanismFilter}|${visibleClusters.length}`
+    ? `${selected}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
     : "none";
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
@@ -2275,10 +2285,14 @@ processLegend.addEventListener("click", event => {
   const card = event.target.closest("[data-mechanism]");
   if (!clear && !card) return;
   if (clear) {
-    mechanismFilter = "";
+    mechanismFilters.clear();
   } else {
     const mechanism = card.getAttribute("data-mechanism") || "";
-    mechanismFilter = mechanismFilter === mechanism ? "" : mechanism;
+    if (mechanismFilters.has(mechanism)) {
+      mechanismFilters.delete(mechanism);
+    } else {
+      mechanismFilters.add(mechanism);
+    }
   }
   refreshVisibleClusters();
   populateOptions();

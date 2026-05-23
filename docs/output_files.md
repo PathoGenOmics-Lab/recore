@@ -547,8 +547,8 @@ tips dynamically by the selected cluster state or evolutionary mechanism, and
 lets users click matrix columns to change the selected cluster. The matrix can
 also be recolored by evolutionary mechanism, with a legend explaining each
 observed process from `evolutionary_events.tsv`. MTBC-style genome names can be
-colored by lineage with the mycolorsTB Nature palette. Clicking a mechanism
-card filters the matrix to clusters with that mechanism, and selected-cluster
+colored by lineage with the mycolorsTB Nature palette. Clicking mechanism cards
+adds or removes mechanisms from the matrix-column filter, and selected-cluster
 details show the reference cell/gene or the reference-derived event source when
 available. Dense views can be collapsed or zoomed with the Y-axis slider, column
 zoom slider, mouse wheel over the tree or column header, and fullscreen mode.

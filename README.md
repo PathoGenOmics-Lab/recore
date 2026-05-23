@@ -629,10 +629,10 @@ Recore rescue, NSC support, absence, or the evolutionary mechanism reported in
 palette. The explorer supports phylogram/cladogram switching, fullscreen review,
 reference-absent filtering, mouse-wheel zoom on the tree and column header, a
 Y-axis collapse slider for dense trees, and in-report legends explaining each
-observed evolutionary process. Clicking an evolutionary-mechanism card filters
-the matrix to that mechanism, and the selected-cluster panel reports the
-reference gene/cell or reference-derived event source when Recore can identify
-one.
+observed evolutionary process. Clicking evolutionary-mechanism cards adds or
+removes those mechanisms from the matrix-column filter, and the selected-cluster
+panel reports the reference gene/cell or reference-derived event source when
+Recore can identify one.
 
 Recore also includes lightweight Python utilities for reproducible review:
 
