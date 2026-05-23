@@ -185,6 +185,8 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("rowHeight"));
     assert!(html_report.contains("matrixColorMode"));
     assert!(html_report.contains("processLegend"));
+    assert!(html_report.contains("lineageLegend"));
+    assert!(html_report.contains("Color tips by lineage"));
     assert!(html_report.contains("phylogramMode"));
     assert!(html_report.contains("referenceOnly"));
     assert!(html_report.contains("rebuildBaseMatrix"));

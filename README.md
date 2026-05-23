@@ -624,10 +624,12 @@ is supplied and the tree/matrix is small enough for a browser, the same report
 also embeds an interactive phylogeny plus corrected matrix explorer: choose or
 click a gene cluster to recolor tree tips dynamically by input presence,
 Recore rescue, NSC support, absence, or the evolutionary mechanism reported in
-`evolutionary_events.tsv`. The explorer supports phylogram/cladogram switching,
-fullscreen review, reference-absent filtering, mouse-wheel zoom on the tree and
-column header, a Y-axis collapse slider for dense trees, and an in-report legend
-explaining each observed evolutionary process.
+`evolutionary_events.tsv`. For MTBC-style genome names such as `L4_AS00146` or
+`A4_AS00245`, tips can also be colored by lineage using the mycolorsTB Nature
+palette. The explorer supports phylogram/cladogram switching, fullscreen review,
+reference-absent filtering, mouse-wheel zoom on the tree and column header, a
+Y-axis collapse slider for dense trees, and in-report legends explaining each
+observed evolutionary process.
 
 Recore also includes lightweight Python utilities for reproducible review:
 

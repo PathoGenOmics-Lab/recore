@@ -291,6 +291,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("tipColorMode"));
     assert!(text.contains("matrixColorMode"));
     assert!(text.contains("processLegend"));
+    assert!(text.contains("lineageLegend"));
+    assert!(text.contains("viewer-controls"));
+    assert!(text.contains("Color tips by lineage"));
+    assert!(text.contains("#C94434"));
     assert!(text.contains("Color tips by selected process"));
     assert!(text.contains("Matrix by evolutionary process"));
     assert!(text.contains("clade_associated_gain"));

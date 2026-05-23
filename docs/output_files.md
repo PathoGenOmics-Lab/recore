@@ -546,9 +546,10 @@ matrix rows in tree order, lets the user search/select clusters, recolors tree
 tips dynamically by the selected cluster state or evolutionary mechanism, and
 lets users click matrix columns to change the selected cluster. The matrix can
 also be recolored by evolutionary mechanism, with a legend explaining each
-observed process from `evolutionary_events.tsv`. Dense views can be collapsed or
-zoomed with the Y-axis slider, column zoom slider, mouse wheel over the tree or
-column header, and fullscreen mode.
+observed process from `evolutionary_events.tsv`. MTBC-style genome names can be
+colored by lineage with the mycolorsTB Nature palette. Dense views can be
+collapsed or zoomed with the Y-axis slider, column zoom slider, mouse wheel over
+the tree or column header, and fullscreen mode.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than
