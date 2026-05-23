@@ -252,15 +252,18 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         root: PhyloNode {
             label: None,
             genome_idx: None,
+            branch_length: None,
             children: vec![
                 PhyloNode {
                     label: Some("g1".into()),
                     genome_idx: Some(GenomeIdx(0)),
+                    branch_length: None,
                     children: Vec::new(),
                 },
                 PhyloNode {
                     label: Some("g2".into()),
                     genome_idx: Some(GenomeIdx(1)),
+                    branch_length: None,
                     children: Vec::new(),
                 },
             ],
@@ -287,6 +290,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("tipColorMode"));
     assert!(text.contains("tipLabels"));
     assert!(text.contains("rebuildBaseMatrix"));
+    assert!(text.contains("phylogramMode"));
+    assert!(text.contains("referenceOnly"));
+    assert!(text.contains("explorerFullscreen"));
+    assert!(text.contains("\"referenceGenome\":null"));
     assert!(text.contains("\"states\":[\"PA\",\"AP\"]"));
     assert!(text.contains("matrixCanvas"));
 }
@@ -681,6 +688,18 @@ fn newick_fitch_detects_clade_gain() {
     assert_eq!(summary.losses, 0);
     assert!(summary.carrier_monophyly);
     assert_eq!(summary.pattern, "lineage_specific_gain");
+}
+
+#[test]
+fn newick_parser_preserves_branch_lengths() {
+    let root = NewickParser::new("(s1:0.25,(s2:1e-3,s3:0.4):0.5);")
+        .parse()
+        .unwrap();
+
+    assert_eq!(root.branch_length, None);
+    assert!((root.children[0].branch_length.unwrap() - 0.25).abs() < 1e-12);
+    assert!((root.children[1].branch_length.unwrap() - 0.5).abs() < 1e-12);
+    assert!((root.children[1].children[0].branch_length.unwrap() - 0.001).abs() < 1e-12);
 }
 
 #[test]

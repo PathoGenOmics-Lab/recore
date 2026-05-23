@@ -54,6 +54,10 @@ and Recore uses semantic versioning.
   dense trees, supports mouse inspection on the tree and column header, and can
   recolor tips by selected cluster state, rescue burden, absence burden, or any
   correction burden.
+- The embedded viewer now preserves Newick branch lengths, roots the displayed
+  tree on the L8 outgroup when present, switches between phylogram and
+  cladogram modes, supports fullscreen exploration, and can restrict columns to
+  clusters absent from the selected reference genome.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

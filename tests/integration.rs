@@ -182,6 +182,8 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("window.recoreExplorerData"));
     assert!(html_report.contains("columnHeaderCanvas"));
     assert!(html_report.contains("tipColorMode"));
+    assert!(html_report.contains("phylogramMode"));
+    assert!(html_report.contains("referenceOnly"));
     assert!(html_report.contains("rebuildBaseMatrix"));
 
     // ── Verify corrected GFF ──

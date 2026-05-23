@@ -6,6 +6,7 @@ use crate::relationships::ClusterComponentInfo;
 pub(super) struct PhyloNode {
     pub(super) label: Option<String>,
     pub(super) genome_idx: Option<GenomeIdx>,
+    pub(super) branch_length: Option<f64>,
     pub(super) children: Vec<PhyloNode>,
 }
 
@@ -100,10 +101,11 @@ impl<'a> NewickParser<'a> {
                 }
             }
             let label = self.parse_optional_label();
-            self.skip_branch_length();
+            let branch_length = self.parse_branch_length()?;
             Ok(PhyloNode {
                 label,
                 genome_idx: None,
+                branch_length,
                 children,
             })
         } else {
@@ -111,10 +113,11 @@ impl<'a> NewickParser<'a> {
             if label.as_deref().unwrap_or("").is_empty() {
                 anyhow::bail!("Expected Newick leaf label at byte {}", self.pos);
             }
-            self.skip_branch_length();
+            let branch_length = self.parse_branch_length()?;
             Ok(PhyloNode {
                 label,
                 genome_idx: None,
+                branch_length,
                 children: Vec::new(),
             })
         }
@@ -150,18 +153,30 @@ impl<'a> NewickParser<'a> {
         }
     }
 
-    fn skip_branch_length(&mut self) {
+    fn parse_branch_length(&mut self) -> Result<Option<f64>> {
         self.skip_ignored();
         if self.peek() != Some(':') {
-            return;
+            return Ok(None);
         }
         self.pos += 1;
+        let start = self.pos;
         while let Some(ch) = self.peek() {
             if matches!(ch, ',' | ')' | ';' | '[') || ch.is_whitespace() {
                 break;
             }
             self.pos += ch.len_utf8();
         }
+        let raw = self.input[start..self.pos].trim();
+        if raw.is_empty() {
+            anyhow::bail!("Expected Newick branch length at byte {}", start);
+        }
+        let branch_length = raw
+            .parse::<f64>()
+            .with_context(|| format!("Invalid Newick branch length '{raw}'"))?;
+        if !branch_length.is_finite() {
+            anyhow::bail!("Invalid non-finite Newick branch length '{raw}'");
+        }
+        Ok(Some(branch_length))
     }
 
     fn skip_ignored(&mut self) {
