@@ -288,7 +288,8 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("columnHeaderCanvas"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
-    assert!(text.contains("min='0.25'"));
+    assert!(text.contains("Column zoom <input id='cellSize' type='range' min='0.25'"));
+    assert!(text.contains("Y collapse/zoom <input id='rowHeight' type='range' min='1'"));
     assert!(text.contains("step='0.25'"));
     assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));

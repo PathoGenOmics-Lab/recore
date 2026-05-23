@@ -1498,7 +1498,7 @@ fn phylo_matrix_explorer_html(
     );
     html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
     html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='2' max='18' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
     html.push_str("<script>window.recoreExplorerData=");
     html.push_str(&data_json);
     html.push_str(
@@ -1948,11 +1948,11 @@ function populateOptions() {
 }
 function currentCellSize() {
   const value = Number(sizeControl.value || 8);
-  return Math.max(2, Math.min(18, value));
+  return Math.max(0.25, Math.min(18, value));
 }
 function currentRowHeight() {
   const value = Number(rowHeightControl.value || 8);
-  return Math.max(0.25, Math.min(18, value));
+  return Math.max(1, Math.min(18, value));
 }
 function updateCellGeometry() {
   const rows = leafOrder.length;
@@ -1962,15 +1962,10 @@ function updateCellGeometry() {
   const maxHByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, rows)));
   cellH = Math.min(currentRowHeight(), maxHByDim);
   cellW = Math.min(Math.max(1, Math.round(colSize * 0.82)), maxWByDim);
-  if (cols <= 260) {
-    cellW = Math.max(cellW, Math.min(14, maxWByDim));
-  } else if (cols <= 700) {
-    cellW = Math.max(cellW, Math.min(6, maxWByDim));
-  }
   const pixelBudget = rows * cols * cellH * cellW;
   if (pixelBudget > maxCanvasPixels) {
     const scale = Math.sqrt(maxCanvasPixels / pixelBudget);
-    cellH = Math.max(0.25, cellH * scale);
+    cellH = Math.max(1, Math.floor(cellH * scale));
     cellW = Math.max(1, Math.floor(cellW * scale));
   }
   treeHeight = Math.max(70, Math.ceil(rows * cellH));
@@ -2322,8 +2317,8 @@ function wheelZoom(event, forcedAxis = "") {
   event.stopPropagation();
   const delta = event.deltaY < 0 ? 1 : -1;
   const changed = columnZoom
-    ? adjustRange(sizeControl, delta, 2, 18)
-    : adjustRange(rowHeightControl, delta, 0.25, 18);
+    ? adjustRange(sizeControl, delta, 0.25, 18)
+    : adjustRange(rowHeightControl, delta, 1, 18);
   if (changed) {
     resetMatrixCache();
     render(false);
