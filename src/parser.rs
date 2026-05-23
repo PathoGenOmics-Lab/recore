@@ -353,6 +353,8 @@ pub fn parse_pan_reference(
 pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
     let extensions = [".fasta", ".fa", ".fna", ".fasta.gz", ".fa.gz", ".fna.gz"];
     let mut files: HashMap<String, PathBuf> = HashMap::new();
+    let mut as_id_candidates: HashMap<String, PathBuf> = HashMap::new();
+    let mut ambiguous_as_ids: HashSet<String> = HashSet::new();
 
     for entry in
         fs::read_dir(dir).with_context(|| format!("Cannot read directory {}", dir.display()))?
@@ -377,7 +379,26 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
         }
 
         if name != filename {
-            files.entry(name).or_insert(path);
+            files.entry(name.clone()).or_insert_with(|| path.clone());
+            if let Some(as_id) = extract_as_id(&name) {
+                if as_id != name {
+                    match as_id_candidates.get(as_id) {
+                        Some(existing) if existing != &path => {
+                            ambiguous_as_ids.insert(as_id.to_string());
+                        }
+                        Some(_) => {}
+                        None => {
+                            as_id_candidates.insert(as_id.to_string(), path.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (as_id, path) in as_id_candidates {
+        if !ambiguous_as_ids.contains(&as_id) {
+            files.entry(as_id).or_insert(path);
         }
     }
 
@@ -395,6 +416,7 @@ pub fn extract_as_id(name: &str) -> Option<&str> {
         if bytes[i] == b'A'
             && bytes[i + 1] == b'S'
             && bytes[i + 2..i + 7].iter().all(u8::is_ascii_digit)
+            && bytes.get(i + 7).map_or(true, |ch| !ch.is_ascii_digit())
         {
             return Some(&name[i..i + 7]);
         }
@@ -442,6 +464,26 @@ pub fn find_annotation_file(ann_dir: &Path, genome_name: &str) -> Option<PathBuf
                 return Some(path);
             }
         }
+    }
+
+    let as_id = extract_as_id(genome_name)?;
+    let mut matches = Vec::new();
+    let entries = fs::read_dir(ann_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let filename = path.file_name()?.to_string_lossy();
+        let valid_suffix = [".gff", ".gff3", ".gff.gz", ".gff3.gz"]
+            .iter()
+            .any(|suffix| filename.ends_with(suffix));
+        if valid_suffix && extract_as_id(&filename).is_some_and(|candidate| candidate == as_id) {
+            matches.push(path);
+        }
+    }
+    if matches.len() == 1 {
+        return matches.pop();
     }
     None
 }
@@ -576,8 +618,16 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
 
         let contig = contig_field.to_string();
         // GFF3 is 1-based closed; convert to 0-based half-open to match minimap2 PAF coords
-        let start: u64 = start_field.parse::<u64>().unwrap_or(1).saturating_sub(1);
-        let end: u64 = end_field.parse().unwrap_or(0); // end is already exclusive after -1+1
+        let Ok(start_1based) = start_field.parse::<u64>() else {
+            continue;
+        };
+        let Ok(end) = end_field.parse::<u64>() else {
+            continue;
+        };
+        if start_1based == 0 || end < start_1based {
+            continue;
+        }
+        let start = start_1based - 1;
         let strand = strand_field.chars().next().unwrap_or('+');
 
         let mut id = String::new();
@@ -839,6 +889,7 @@ mod tests {
         assert_eq!(extract_as_id("AS00146"), Some("AS00146"));
         assert_eq!(extract_as_id("L4_AS00146"), Some("AS00146"));
         assert_eq!(extract_as_id("prefix_AS00146_suffix"), Some("AS00146"));
+        assert_eq!(extract_as_id("AS001461"), None);
         assert_eq!(extract_as_id("L4_00146"), None);
     }
 
@@ -848,6 +899,49 @@ mod tests {
         files.insert("AS00146".to_string(), PathBuf::from("AS00146.fna"));
         let resolved = resolve_genome_file(&files, "L4_AS00146").unwrap();
         assert_eq!(resolved, &PathBuf::from("AS00146.fna"));
+    }
+
+    #[test]
+    fn test_find_genome_files_indexes_embedded_as_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("L4_AS00146.fna");
+        std::fs::write(&path, b">ctg\nATGC\n").unwrap();
+
+        let files = find_genome_files(dir.path()).unwrap();
+        assert_eq!(files.get("L4_AS00146"), Some(&path));
+        assert_eq!(files.get("AS00146"), Some(&path));
+    }
+
+    #[test]
+    fn test_find_genome_files_keeps_ambiguous_as_id_unaliased() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_a = dir.path().join("L4_AS00146.fna");
+        let path_b = dir.path().join("other_AS00146.fna");
+        std::fs::write(&path_a, b">ctg\nATGC\n").unwrap();
+        std::fs::write(&path_b, b">ctg\nATGC\n").unwrap();
+
+        let files = find_genome_files(dir.path()).unwrap();
+        assert_eq!(files.get("L4_AS00146"), Some(&path_a));
+        assert_eq!(files.get("other_AS00146"), Some(&path_b));
+        assert_eq!(files.get("AS00146"), None);
+    }
+
+    #[test]
+    fn test_find_annotation_file_by_embedded_as_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("L4_AS00146.gff3");
+        std::fs::write(&path, b"##gff-version 3\n").unwrap();
+
+        assert_eq!(find_annotation_file(dir.path(), "AS00146"), Some(path));
+    }
+
+    #[test]
+    fn test_find_annotation_file_ignores_ambiguous_embedded_as_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("L4_AS00146.gff3"), b"##gff-version 3\n").unwrap();
+        std::fs::write(dir.path().join("other_AS00146.gff3"), b"##gff-version 3\n").unwrap();
+
+        assert_eq!(find_annotation_file(dir.path(), "AS00146"), None);
     }
 
     #[test]
@@ -906,6 +1000,21 @@ mod tests {
             .6
             .iter()
             .any(|label| label == "hypothetical%20protein"));
+    }
+
+    #[test]
+    fn test_parse_gff_genes_skips_invalid_coordinates() {
+        let gff = write_temp(
+            "##gff-version 3\n\
+             chr\tRefSeq\tCDS\tbad\t99\t.\t+\t0\tID=bad_start;locus_tag=bad_start\n\
+             chr\tRefSeq\tCDS\t50\t10\t.\t+\t0\tID=inverted;locus_tag=inverted\n\
+             chr\tRefSeq\tCDS\t10\t99\t.\t+\t0\tID=good;locus_tag=good\n",
+        );
+        let genes = parse_gff_genes(gff.path()).unwrap();
+        assert_eq!(genes.len(), 1);
+        assert_eq!(genes[0].4, "good");
+        assert_eq!(genes[0].1, 9);
+        assert_eq!(genes[0].2, 99);
     }
 
     #[test]

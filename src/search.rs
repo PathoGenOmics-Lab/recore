@@ -293,19 +293,9 @@ pub fn batch_search(
             continue;
         }
 
-        let hit = Hit {
-            query: query_name.to_string(),
-            cluster: cluster_name.clone(),
-            query_length: fields[1].parse().unwrap_or(0),
-            query_start: fields[2].parse().unwrap_or(0),
-            query_end: fields[3].parse().unwrap_or(0),
-            strand: fields[4].chars().next().unwrap_or('+'),
-            target: original_contig.to_string(),
-            target_start: fields[7].parse().unwrap_or(0),
-            target_end: fields[8].parse().unwrap_or(0),
-            matches: fields[9].parse().unwrap_or(0),
-            alignment_length: fields[10].parse().unwrap_or(0),
-            mapq: fields[11].parse().unwrap_or(0),
+        let Some(hit) = hit_from_paf_fields(&fields, query_name, cluster_name, original_contig)
+        else {
+            continue;
         };
 
         if hit.identity() < min_identity {
@@ -389,6 +379,60 @@ fn paf_required_fields(line: &str) -> Option<[&str; 12]> {
     ])
 }
 
+fn parse_u64_field(value: &str) -> Option<u64> {
+    value.parse().ok()
+}
+
+fn parse_u32_field(value: &str) -> Option<u32> {
+    value.parse().ok()
+}
+
+fn hit_from_paf_fields(
+    fields: &[&str; 12],
+    query_name: &str,
+    cluster_name: &str,
+    original_contig: &str,
+) -> Option<Hit> {
+    let query_length = parse_u64_field(fields[1])?;
+    let query_start = parse_u64_field(fields[2])?;
+    let query_end = parse_u64_field(fields[3])?;
+    let strand = match fields[4] {
+        "+" => '+',
+        "-" => '-',
+        _ => return None,
+    };
+    let target_length = parse_u64_field(fields[6])?;
+    let target_start = parse_u64_field(fields[7])?;
+    let target_end = parse_u64_field(fields[8])?;
+    let matches = parse_u64_field(fields[9])?;
+    let alignment_length = parse_u64_field(fields[10])?;
+    let mapq = parse_u32_field(fields[11])?;
+
+    if query_start > query_end
+        || query_end > query_length
+        || target_start > target_end
+        || target_end > target_length
+        || matches > alignment_length
+    {
+        return None;
+    }
+
+    Some(Hit {
+        query: query_name.to_string(),
+        cluster: cluster_name.to_string(),
+        query_length,
+        query_start,
+        query_end,
+        strand,
+        target: original_contig.to_string(),
+        target_start,
+        target_end,
+        matches,
+        alignment_length,
+        mapq,
+    })
+}
+
 /// Parse a single PAF line into a Hit, resolving genome prefix and cluster name.
 /// Returns None if the line is malformed, has no contig separator, or the genome is unknown.
 /// Exposed for unit testing.
@@ -417,20 +461,7 @@ fn parse_paf_line(
         .map(|s| s.as_str())
         .unwrap_or(query_name);
 
-    let hit = Hit {
-        query: query_name.to_string(),
-        cluster: cluster_name.to_string(),
-        query_length: fields[1].parse().unwrap_or(0),
-        query_start: fields[2].parse().unwrap_or(0),
-        query_end: fields[3].parse().unwrap_or(0),
-        strand: fields[4].chars().next().unwrap_or('+'),
-        target: original_contig.to_string(),
-        target_start: fields[7].parse().unwrap_or(0),
-        target_end: fields[8].parse().unwrap_or(0),
-        matches: fields[9].parse().unwrap_or(0),
-        alignment_length: fields[10].parse().unwrap_or(0),
-        mapq: fields[11].parse().unwrap_or(0),
-    };
+    let hit = hit_from_paf_fields(&fields, query_name, cluster_name, original_contig)?;
 
     Some((gi, hit))
 }
@@ -604,6 +635,22 @@ mod tests {
         let g2i = make_genome_idx();
         let n2c = make_name_to_cluster();
         let line = "clA\t1000\t0\t1000\t+\tgenome1|||contig\t5000000";
+        assert!(parse_paf_line(line, &g2i, &n2c).is_none());
+    }
+
+    #[test]
+    fn test_parse_paf_line_rejects_invalid_numeric_fields() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        let line = "clA\t1000\tbad\t1000\t+\tgenome1|||contig\t5000000\t100\t1100\t990\t1000\t60";
+        assert!(parse_paf_line(line, &g2i, &n2c).is_none());
+    }
+
+    #[test]
+    fn test_parse_paf_line_rejects_invalid_coordinate_order() {
+        let g2i = make_genome_idx();
+        let n2c = make_name_to_cluster();
+        let line = "clA\t1000\t900\t100\t+\tgenome1|||contig\t5000000\t100\t1100\t990\t1000\t60";
         assert!(parse_paf_line(line, &g2i, &n2c).is_none());
     }
 
