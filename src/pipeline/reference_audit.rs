@@ -618,7 +618,7 @@ pub(super) fn build_reference_cluster_events(
             let candidate_score = reference_event_score(&candidate_event);
             if best_event
                 .as_ref()
-                .is_none_or(|best| candidate_score > reference_event_score(best))
+                .map_or(true, |best| candidate_score > reference_event_score(best))
             {
                 best_event = Some(candidate_event);
             }

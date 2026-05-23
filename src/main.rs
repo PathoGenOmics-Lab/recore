@@ -1,19 +1,12 @@
-mod cli;
-mod nscluster;
-mod parser;
-mod pipeline;
-mod relationships;
-mod rescue;
-mod search;
-mod types;
+#![forbid(unsafe_code)]
 
 use anyhow::Result;
 use clap::Parser;
 use env_logger::Env;
 use log::info;
 
-use cli::Args;
-use pipeline::run;
+use recore::cli::Args;
+use recore::pipeline::run;
 
 fn main() -> Result<()> {
     let args = Args::parse();

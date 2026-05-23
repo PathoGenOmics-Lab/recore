@@ -702,10 +702,9 @@ pub(super) fn nearest_mobile_element_for_rescue(
             identity: Some(hit.identity),
             coverage: Some(hit.coverage),
         };
-        if best
-            .as_ref()
-            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
-        {
+        if best.as_ref().map_or(true, |current| {
+            mobile_evidence_is_better(&candidate, current)
+        }) {
             best = Some(candidate);
         }
     }
@@ -734,10 +733,9 @@ pub(super) fn nearest_mobile_element_for_rescue(
             identity: None,
             coverage: None,
         };
-        if best
-            .as_ref()
-            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
-        {
+        if best.as_ref().map_or(true, |current| {
+            mobile_evidence_is_better(&candidate, current)
+        }) {
             best = Some(candidate);
         }
     }

@@ -713,7 +713,7 @@ fn classify_single_hit(
             0.0
         };
 
-        if recip > 0.5 && best_gene.is_none_or(|(_, prev)| recip > prev) {
+        if recip > 0.5 && best_gene.map_or(true, |(_, prev)| recip > prev) {
             best_gene = Some((gene, recip));
         }
     }
