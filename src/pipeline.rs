@@ -1504,6 +1504,7 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
 
     let gff_expected = !gff_indices.is_empty();
     let mut review_count = 0usize;
+    let mut fail_count = 0usize;
     for gi_val in 0..pa.n_genomes() {
         let gi = GenomeIdx(gi_val);
         let genome_name = pa.genome_name(gi);
@@ -1544,13 +1545,19 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
             flags.push("nsc_presence_added");
         }
 
-        let status = if flags.iter().any(|flag| flag.contains("missing_fasta")) {
+        let fail = flags.contains(&"missing_fasta_for_searchable_gaps");
+        let review = flags.iter().any(|flag| {
+            !matches!(*flag, "gff_contig_seqid_remapped")
+                && *flag != "missing_fasta_for_searchable_gaps"
+        });
+        let status = if fail {
+            fail_count += 1;
             "fail"
-        } else if flags.is_empty() {
-            "pass"
-        } else {
+        } else if review {
             review_count += 1;
             "review"
+        } else {
+            "pass"
         };
         write_tsv_fields(
             &mut w,
@@ -1571,10 +1578,11 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
         )?;
     }
     w.flush()?;
-    if review_count > 0 {
+    if review_count > 0 || fail_count > 0 {
         info!(
-            "Genome QC: {} genomes carry review/fail flags ({})",
+            "Genome QC: {} review and {} fail genomes ({})",
             review_count,
+            fail_count,
             path.display()
         );
     }

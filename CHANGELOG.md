@@ -39,6 +39,17 @@ and Recore uses semantic versioning.
   `benchmarks/compare_runs.py`, and `benchmarks/recore_report.py`.
 - Output manifest schema version is now `recore.outputs.v4`.
 
+### Fixed
+
+- Dataset self-benchmark reports `precision_proxy=NA` when no negative controls
+  are sampled instead of implying perfect precision.
+- Run comparison now includes cells present in only one run, so cluster/genome
+  set changes are not silently ignored.
+- Successful GFF contig remapping is treated as informational genome QC rather
+  than forcing every remapped genome into `review`.
+- Dollo-like phylogenetic scoring no longer rewards clusters absent from all
+  matched tree tips.
+
 ## [0.2.0] - 2026-05-23
 
 ### Added

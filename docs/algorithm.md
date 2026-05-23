@@ -364,7 +364,9 @@ Written for every run. Recore summarizes each genome's FASTA/GFF availability,
 GFF contig remapping, searchable gaps, accepted rescues, matrix corrections,
 NSC-added presence, synteny rejections, and paralog rejections. The `qc_flags`
 column highlights genomes that may need assembly or annotation review before
-interpreting noisy presence/absence patterns.
+interpreting noisy presence/absence patterns. Successful GFF contig remapping is
+kept as an informational flag and does not by itself move a genome from `pass`
+to `review`.
 
 ### cluster_components.tsv / cluster_component_members.tsv
 

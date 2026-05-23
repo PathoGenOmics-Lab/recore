@@ -395,6 +395,9 @@ metrics.
 | `synteny_rejected`, `paralog_rejected` | Rejected evidence by genome |
 | `qc_status`, `qc_flags` | `pass`, `review`, or `fail` plus semicolon-separated flags |
 
+`gff_contig_seqid_remapped` is informational when remapping succeeds; it is
+kept in `qc_flags` but does not by itself trigger `review`.
+
 ---
 
 ## summary.txt

@@ -14,6 +14,7 @@ import argparse
 import csv
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -260,6 +261,16 @@ def write_metrics(path: Path, row: dict[str, str]) -> None:
         writer.writerow(row)
 
 
+def prepare_workdir(path: Path, keep_workdir: bool) -> None:
+    path = path.resolve()
+    protected = {ROOT.resolve(), ROOT.parent.resolve(), Path("/").resolve(), Path.home().resolve()}
+    if path.exists() and not keep_workdir:
+        if path in protected:
+            raise SystemExit(f"ERROR: refusing to clean protected workdir: {path}")
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-p", "--presence-absence", required=True, type=Path)
@@ -284,9 +295,10 @@ def main() -> int:
     parser.add_argument("--reference-genome")
     parser.add_argument("--tree", type=Path)
     parser.add_argument("--mobile-element-reference", type=Path)
+    parser.add_argument("--keep-workdir", action="store_true")
     args = parser.parse_args()
 
-    args.workdir.mkdir(parents=True, exist_ok=True)
+    prepare_workdir(args.workdir, args.keep_workdir)
     input_dir = args.workdir / "input"
     output_dir = args.workdir / "output"
     input_dir.mkdir(exist_ok=True)
@@ -301,6 +313,8 @@ def main() -> int:
         args.min_prevalence,
         args.seed,
     )
+    if not positives:
+        raise SystemExit("ERROR: no positive cells selected; lower --min-prevalence or --n-positive.")
     masked = {(cluster, genome) for cluster, genome, _ in positives}
     for row in rows:
         cluster = row["Gene"]
@@ -323,7 +337,11 @@ def main() -> int:
     fn = len(positives) - tp
     negative_corrected = sum(1 for cluster, genome, _ in negatives if corrected.get((cluster, genome), False))
     recall = tp / len(positives) if positives else 0.0
-    precision_proxy = tp / (tp + negative_corrected) if tp + negative_corrected else 0.0
+    precision_proxy = (
+        f"{tp / (tp + negative_corrected):.4f}"
+        if negatives and (tp + negative_corrected)
+        else "NA"
+    )
 
     calibration_path = args.workdir / "self_benchmark_calibration.tsv"
     bins_path = args.workdir / "self_benchmark_score_bins.tsv"
@@ -340,7 +358,7 @@ def main() -> int:
         "false_negative_not_recovered": str(fn),
         "negative_controls_corrected_proxy": str(negative_corrected),
         "masked_positive_recall": f"{recall:.4f}",
-        "precision_proxy": f"{precision_proxy:.4f}",
+        "precision_proxy": precision_proxy,
         "runtime_seconds": f"{runtime:.2f}",
         "workdir": str(args.workdir),
         "output_dir": str(output_dir),

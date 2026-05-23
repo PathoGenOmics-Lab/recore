@@ -73,6 +73,10 @@ def read_evolution(run_dir: Path) -> dict[str, dict[str, str]]:
 
 
 def classify_change(old_state: str, new_state: str) -> str:
+    if old_state == "MISSING_CELL":
+        return "new_only_cell"
+    if new_state == "MISSING_CELL":
+        return "old_only_cell"
     old_present = old_state not in {"", "ABSENT"}
     new_present = new_state not in {"", "ABSENT"}
     if old_state == new_state:
@@ -94,7 +98,8 @@ def main() -> int:
     args.outdir.mkdir(parents=True, exist_ok=True)
     old_genomes, old_states = read_states(args.old)
     new_genomes, new_states = read_states(args.new)
-    common = sorted(set(old_states) & set(new_states))
+    common = set(old_states) & set(new_states)
+    all_cells = sorted(set(old_states) | set(new_states))
 
     cell_counts = Counter()
     cluster_counts: dict[str, Counter] = defaultdict(Counter)
@@ -102,9 +107,9 @@ def main() -> int:
     with cell_path.open("w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t")
         writer.writerow(["gene_cluster", "genome", "old_state", "new_state", "change_class"])
-        for cluster, genome in common:
-            old_state = old_states[(cluster, genome)]
-            new_state = new_states[(cluster, genome)]
+        for cluster, genome in all_cells:
+            old_state = old_states.get((cluster, genome), "MISSING_CELL")
+            new_state = new_states.get((cluster, genome), "MISSING_CELL")
             change = classify_change(old_state, new_state)
             if change != "same":
                 writer.writerow([cluster, genome, old_state, new_state, change])
@@ -114,10 +119,25 @@ def main() -> int:
     cluster_path = args.outdir / "run_comparison_clusters.tsv"
     with cluster_path.open("w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t")
-        writer.writerow(["gene_cluster", "same", "new_correction", "lost_correction", "state_changed", "changed_cells"])
+        writer.writerow([
+            "gene_cluster",
+            "same",
+            "new_correction",
+            "lost_correction",
+            "state_changed",
+            "old_only_cell",
+            "new_only_cell",
+            "changed_cells",
+        ])
         for cluster in sorted(cluster_counts):
             counts = cluster_counts[cluster]
-            changed = counts["new_correction"] + counts["lost_correction"] + counts["state_changed"]
+            changed = (
+                counts["new_correction"]
+                + counts["lost_correction"]
+                + counts["state_changed"]
+                + counts["old_only_cell"]
+                + counts["new_only_cell"]
+            )
             if changed:
                 writer.writerow([
                     cluster,
@@ -125,6 +145,8 @@ def main() -> int:
                     counts["new_correction"],
                     counts["lost_correction"],
                     counts["state_changed"],
+                    counts["old_only_cell"],
+                    counts["new_only_cell"],
                     changed,
                 ])
 
@@ -164,8 +186,20 @@ def main() -> int:
         writer.writerow(["new_dir", str(args.new)])
         writer.writerow(["old_genomes", len(old_genomes)])
         writer.writerow(["new_genomes", len(new_genomes)])
-        writer.writerow(["compared_cells", len(common)])
-        for key in ["same", "new_correction", "lost_correction", "state_changed"]:
+        writer.writerow(["old_only_genomes", ";".join(sorted(set(old_genomes) - set(new_genomes)))])
+        writer.writerow(["new_only_genomes", ";".join(sorted(set(new_genomes) - set(old_genomes)))])
+        writer.writerow(["old_cells", len(old_states)])
+        writer.writerow(["new_cells", len(new_states)])
+        writer.writerow(["common_cells", len(common)])
+        writer.writerow(["union_cells", len(all_cells)])
+        for key in [
+            "same",
+            "new_correction",
+            "lost_correction",
+            "state_changed",
+            "old_only_cell",
+            "new_only_cell",
+        ]:
             writer.writerow([key, cell_counts[key]])
 
     print(f"Wrote {cell_path}")

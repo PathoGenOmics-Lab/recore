@@ -97,7 +97,9 @@ Outputs in the workdir:
 - Recore output directory for the masked run
 
 The negative-control cells are a proxy only: original matrix absences can still
-include true false absences.
+include true false absences. `precision_proxy` is reported as `NA` when no
+negative-control cells are available. Existing workdirs are cleaned by default
+to avoid stale files; add `--keep-workdir` for manual inspection/reuse.
 
 ## Run comparison and reporting
 
@@ -106,6 +108,10 @@ Compare two Recore output directories:
 ```bash
 python3 benchmarks/compare_runs.py --old old_recore_output --new new_recore_output -o compare_out
 ```
+
+The comparison uses the union of matrix cells, so clusters or genomes present
+in only one run are reported as `old_only_cell` / `new_only_cell` instead of
+being silently ignored.
 
 Generate a compact Markdown/HTML report:
 

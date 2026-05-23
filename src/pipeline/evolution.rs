@@ -1175,7 +1175,7 @@ fn penalized_phylo_summary(phylo: &PhyloPatternSummary) -> PenalizedPhyloSummary
     if phylo.present_tips == 0 {
         return PenalizedPhyloSummary {
             model: "absent_from_tree",
-            score: 1.0,
+            score: 0.5,
             ..PenalizedPhyloSummary::default()
         };
     }
