@@ -164,7 +164,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(summary.contains("Rescued:"));
     assert!(summary.contains("Core genome"));
     let manifest = fs::read_to_string(output_dir.join("run_manifest.json")).unwrap();
-    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v1\""));
+    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v5\""));
     assert!(manifest.contains("\"matrix_policy\": \"Balanced\""));
     assert!(manifest.contains("\"matrix_corrected_total\""));
 

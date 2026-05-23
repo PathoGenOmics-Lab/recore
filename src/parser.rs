@@ -657,21 +657,21 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         for attr in attributes.split(';') {
             let attr = attr.trim();
             if let Some(val) = attr.strip_prefix("ID=") {
-                id = val.to_string();
+                id = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("locus_tag=") {
-                locus_tag = val.to_string();
+                locus_tag = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("gene=") {
-                gene_name = val.to_string();
+                gene_name = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("Name=") {
-                name = val.to_string();
+                name = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("protein_id=") {
-                protein_id = val.to_string();
+                protein_id = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("old_locus_tag=") {
-                old_locus_tag = val.to_string();
+                old_locus_tag = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("product=") {
-                product = val.to_string();
+                product = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("Note=") {
-                note = val.to_string();
+                note = decode_gff3_value(val);
             }
         }
 
@@ -715,6 +715,35 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
     Ok(genes)
 }
 
+fn decode_gff3_value(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(value.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = bytes[i + 1];
+            let lo = bytes[i + 2];
+            if let (Some(hi), Some(lo)) = (hex_value(hi), hex_value(lo)) {
+                out.push(hi << 4 | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Check if a name is safe to use in file path construction.
 /// Rejects names containing path separators, parent directory references, or null bytes.
 fn is_safe_name(name: &str) -> bool {
@@ -739,6 +768,17 @@ pub fn validate_inputs(
     use log::warn;
 
     // ── Security: validate genome names for path traversal ──
+    if pa.n_genomes() == 0 {
+        anyhow::bail!("Presence/absence CSV has no genome columns");
+    }
+    if pa.n_clusters() == 0 {
+        anyhow::bail!("Presence/absence CSV has no cluster rows");
+    }
+    if pan_ref.is_empty() {
+        anyhow::bail!("pan_genome_reference FASTA has no usable sequences");
+    }
+
+    let mut seen_genomes: HashSet<&str> = HashSet::new();
     for gi_val in 0..pa.n_genomes() {
         let gi = GenomeIdx(gi_val);
         let name = pa.genome_name(gi);
@@ -748,9 +788,16 @@ pub fn validate_inputs(
                 name
             );
         }
+        if !seen_genomes.insert(name) {
+            anyhow::bail!(
+                "Duplicate genome column in presence/absence CSV: {:?}",
+                name
+            );
+        }
     }
 
     // ── Security: validate cluster names ──
+    let mut seen_clusters: HashSet<&str> = HashSet::new();
     for ci_val in 0..pa.n_clusters() {
         let ci = ClusterIdx(ci_val);
         let name = pa.cluster_name(ci);
@@ -759,6 +806,9 @@ pub fn validate_inputs(
                 "Unsafe cluster name in CSV: {:?} (contains path separators or traversal patterns)",
                 name
             );
+        }
+        if !seen_clusters.insert(name) {
+            anyhow::bail!("Duplicate cluster name in presence/absence CSV: {:?}", name);
         }
     }
 
@@ -1015,7 +1065,19 @@ mod tests {
         assert!(genes[0]
             .6
             .iter()
-            .any(|label| label == "hypothetical%20protein"));
+            .any(|label| label == "hypothetical protein"));
+    }
+
+    #[test]
+    fn test_parse_gff_decodes_percent_encoded_identifiers() {
+        let gff = write_temp(
+            "##gff-version 3\n\
+             chr\tRefSeq\tCDS\t10\t99\t.\t+\t0\tID=cds-Rv%3A0001;locus_tag=Rv%3A0001;product=foo%20bar\n",
+        );
+        let genes = parse_gff_genes(gff.path()).unwrap();
+        assert_eq!(genes[0].4, "Rv:0001");
+        assert!(genes[0].5.iter().any(|alias| alias == "Rv:0001"));
+        assert!(genes[0].6.iter().any(|label| label == "foo bar"));
     }
 
     #[test]
@@ -1052,6 +1114,33 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Unsafe genome name"));
+    }
+
+    #[test]
+    fn test_validate_inputs_rejects_duplicate_names() {
+        let pan_ref: HashMap<String, Vec<Vec<u8>>> = {
+            let mut m = HashMap::new();
+            m.insert("cluster1".into(), vec![b"ATGC".to_vec()]);
+            m.insert("cluster2".into(), vec![b"ATGC".to_vec()]);
+            m
+        };
+        let genome_files: HashMap<String, PathBuf> = HashMap::new();
+
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into()],
+            vec!["g1".into(), "g1".into()],
+            vec![vec!["gene1".into(), "".into()]],
+        );
+        let err = validate_inputs(&pa, &pan_ref, &genome_files).unwrap_err();
+        assert!(err.to_string().contains("Duplicate genome column"));
+
+        let pa = PresenceAbsence::new_for_test(
+            vec!["cluster1".into(), "cluster1".into()],
+            vec!["g1".into()],
+            vec![vec!["gene1".into()], vec!["gene2".into()]],
+        );
+        let err = validate_inputs(&pa, &pan_ref, &genome_files).unwrap_err();
+        assert!(err.to_string().contains("Duplicate cluster name"));
     }
 
     #[test]

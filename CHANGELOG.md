@@ -52,6 +52,12 @@ and Recore uses semantic versioning.
 - Evolutionary event calls now expose ambiguous Fitch root states, carrier-MRCA
   size/purity, and Dollo origin size/purity, avoiding overconfident ancestral
   loss calls for dispersed tie-break patterns.
+- Corrected matrices now recompute `No. isolates`, `No. sequences`, and
+  `Avg sequences per isolate` from the final multicopy-aware cell values.
+- Input validation now rejects empty matrices, empty reference FASTA files, and
+  duplicate genome or cluster names before running expensive searches.
+- GFF3 percent-encoded attributes are decoded before gene/alias/product matching.
+- The integration test now checks the current output schema version.
 
 ## [0.2.0] - 2026-05-23
 

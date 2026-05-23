@@ -97,6 +97,40 @@ fn rescue_orf_signal_flags_disrupted_and_frame_review_spans() {
 }
 
 #[test]
+fn corrected_csv_recomputes_multicopy_metadata_counts() {
+    let mut input = tempfile::NamedTempFile::new().unwrap();
+    writeln!(
+        input,
+        "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,Avg sequences per isolate,g1,g2,g3"
+    )
+    .unwrap();
+    writeln!(input, "clA,clA,prod,2,3,1.5,a1;a2,b1,").unwrap();
+    let pa = parse_presence_absence(input.path()).unwrap();
+    let rescue = RescueEvent {
+        cluster_idx: ClusterIdx(0),
+        genome_idx: GenomeIdx(2),
+        contig: "ctg".into(),
+        start: 9,
+        end: 99,
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let mut rescue_map = HashMap::new();
+    rescue_map.insert((rescue.cluster_idx, rescue.genome_idx), &rescue);
+    let out = tempfile::tempdir().unwrap();
+
+    write_corrected_csv(&pa, &rescue_map, out.path(), &None).unwrap();
+
+    let mut reader =
+        csv::Reader::from_path(out.path().join("gene_presence_absence_recore.csv")).unwrap();
+    let row = reader.records().next().unwrap().unwrap();
+    let headers = reader.headers().unwrap().clone();
+    let idx = |name: &str| headers.iter().position(|h| h == name).unwrap();
+    assert_eq!(&row[idx("No. isolates")], "3");
+    assert_eq!(&row[idx("No. sequences")], "4");
+    assert_eq!(&row[idx("Avg sequences per isolate")], "1.333");
+}
+
+#[test]
 fn paralog_requires_explicit_synteny_support() {
     let no_synteny = rescue_with_type(
         RescueType::Paralog {

@@ -54,8 +54,8 @@ pub(super) fn write_corrected_csv(
             }
         }
 
-        let mut rescue_count = 0usize;
-        let mut nsc_count = 0usize;
+        let mut isolate_count = 0usize;
+        let mut sequence_count = 0usize;
         for (gi_val, &col_idx) in pa.genome_col_indices().iter().enumerate() {
             let gi = GenomeIdx(gi_val);
             if let Some(r) = rescue_map.get(&(ci, gi)) {
@@ -65,40 +65,56 @@ pub(super) fn write_corrected_csv(
                 write!(rescue_buf, "RESCUED:{}:{}-{}", r.contig, r.start + 1, r.end)
                     .expect("write to String is infallible");
                 row[col_idx].clone_from(&rescue_buf);
-                rescue_count += 1;
+                isolate_count += 1;
+                sequence_count += 1;
             } else if nsc_presence.contains(&(ci_val, gi_val)) {
                 // Gene absent in this cluster but present in a merged NSC member
                 row[col_idx].clear();
                 row[col_idx].push_str("NSC_MERGED");
-                nsc_count += 1;
+                isolate_count += 1;
+                sequence_count += 1;
             } else {
                 row[col_idx].clear();
-                row[col_idx].push_str(pa.cell(ci, gi));
+                let cell = pa.cell(ci, gi);
+                row[col_idx].push_str(cell);
+                if !cell.trim().is_empty() {
+                    isolate_count += 1;
+                    sequence_count += cell_sequence_count(cell);
+                }
             }
         }
 
-        let total_new = rescue_count + nsc_count;
-        if total_new > 0 {
-            let new_count = pa.present_count(ci) + total_new;
-            use std::fmt::Write as FmtWrite;
-            if let Some(col) = isolates_col {
-                row[col].clear();
-                write!(row[col], "{}", new_count).expect("write to String is infallible");
-            }
-            if let Some(col) = sequences_col {
-                row[col].clear();
-                write!(row[col], "{}", new_count).expect("write to String is infallible");
-            }
-            if let Some(col) = avg_seq_col {
-                row[col].clear();
-                write!(row[col], "1.00").expect("write to String is infallible");
-            }
+        use std::fmt::Write as FmtWrite;
+        if let Some(col) = isolates_col {
+            row[col].clear();
+            write!(row[col], "{}", isolate_count).expect("write to String is infallible");
+        }
+        if let Some(col) = sequences_col {
+            row[col].clear();
+            write!(row[col], "{}", sequence_count).expect("write to String is infallible");
+        }
+        if let Some(col) = avg_seq_col {
+            row[col].clear();
+            let avg = if isolate_count > 0 {
+                sequence_count as f64 / isolate_count as f64
+            } else {
+                0.0
+            };
+            write!(row[col], "{avg:.3}").expect("write to String is infallible");
         }
 
         csv_writer.write_record(row.iter().map(|s| s.as_str()))?;
     }
     csv_writer.flush()?;
     Ok(())
+}
+
+fn cell_sequence_count(cell: &str) -> usize {
+    cell.split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .count()
+        .max(usize::from(!cell.trim().is_empty()))
 }
 
 pub(super) struct MultistateMatrixInputs<'a> {

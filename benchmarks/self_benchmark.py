@@ -55,13 +55,20 @@ def read_matrix(path: Path) -> tuple[list[str], list[str], list[dict[str, str]]]
 
 
 def update_metadata(row: dict[str, str], genomes: list[str]) -> None:
-    present = sum(1 for genome in genomes if row.get(genome, "").strip())
+    present = 0
+    sequences = 0
+    for genome in genomes:
+        cell = row.get(genome, "").strip()
+        if not cell:
+            continue
+        present += 1
+        sequences += max(1, len([part for part in cell.split(";") if part.strip()]))
     if "No. isolates" in row:
         row["No. isolates"] = str(present)
     if "No. sequences" in row:
-        row["No. sequences"] = str(present)
+        row["No. sequences"] = str(sequences)
     if "Avg sequences per isolate" in row:
-        row["Avg sequences per isolate"] = f"{present:.3f}" if present else "0"
+        row["Avg sequences per isolate"] = f"{sequences / present:.3f}" if present else "0"
 
 
 def write_matrix(path: Path, headers: list[str], genomes: list[str], rows: list[dict[str, str]]) -> None:

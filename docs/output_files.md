@@ -282,7 +282,7 @@ Drop-in replacement for Panaroo's `gene_presence_absence.csv`. Identical format 
 
 3. **NSC-merged cells** (only if `--nscluster`): Cells where a merged cluster would have added presence become `NSC_MERGED`.
 
-4. **Metadata columns updated**: `No. isolates`, `No. sequences`, and `Avg sequences per isolate` are updated to reflect the new presence count.
+4. **Metadata columns updated**: `No. isolates`, `No. sequences`, and `Avg sequences per isolate` are recomputed from the final cells. Multicopy cells separated by `;` count as multiple sequences but one isolate.
 
 5. **NSC clusters removed**: Panaroo clusters that were merged by NSC into a representative cluster are dropped entirely (their rows are absent from the output).
 
