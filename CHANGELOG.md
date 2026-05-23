@@ -47,6 +47,9 @@ and Recore uses semantic versioning.
 - The HTML report layout was redesigned as a more mature audit document, with
   a sober header, executive summary, clearer review metrics, and richer
   selected-cluster details in the explorer.
+- The embedded tree/matrix viewer now uses an aligned vertical viewport,
+  synchronized matrix column header, adjustable cell size, row/column hover
+  highlighting, and per-cell tooltips.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

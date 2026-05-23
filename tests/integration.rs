@@ -180,6 +180,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("Top candidate clusters"));
     assert!(html_report.contains("Phylogeny and corrected matrix explorer"));
     assert!(html_report.contains("window.recoreExplorerData"));
+    assert!(html_report.contains("columnHeaderCanvas"));
 
     // ── Verify corrected GFF ──
     let gff_content =
