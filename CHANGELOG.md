@@ -58,6 +58,10 @@ and Recore uses semantic versioning.
   tree on the L8 outgroup when present, switches between phylogram and
   cladogram modes, supports fullscreen exploration, and can restrict columns to
   clusters absent from the selected reference genome.
+- The embedded viewer can now zoom/collapse matrix rows and columns with
+  sliders or mouse wheel modifiers, and can color both tree tips and matrix
+  cells by evolutionary mechanism with an in-report explanation for each
+  observed process.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

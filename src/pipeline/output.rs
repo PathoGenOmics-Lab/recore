@@ -1014,6 +1014,72 @@ struct CandidateReportRow {
     wording: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ExplorerEvolutionRow {
+    mechanism: String,
+    detail: String,
+    support: String,
+    phylo: String,
+    wording: String,
+}
+
+fn explorer_evolution_rows(
+    path: &std::path::Path,
+) -> Result<HashMap<String, ExplorerEvolutionRow>> {
+    let mut rows = HashMap::new();
+    if !path.exists() {
+        return Ok(rows);
+    }
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    let headers = reader.headers()?.clone();
+    let idx = |name: &str| headers.iter().position(|header| header == name);
+    let Some(cluster_idx) = idx("gene_cluster") else {
+        return Ok(rows);
+    };
+    let mechanism_idx = idx("molecular_mechanism");
+    let detail_idx = idx("mechanism_detail");
+    let support_idx = idx("support_level");
+    let phylo_idx = idx("phylogenetic_pattern");
+    let wording_idx = idx("recommended_wording");
+
+    for record in reader.records() {
+        let record = record?;
+        let cluster = record.get(cluster_idx).unwrap_or("").trim();
+        if cluster.is_empty() {
+            continue;
+        }
+        rows.insert(
+            cluster.to_string(),
+            ExplorerEvolutionRow {
+                mechanism: mechanism_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                detail: detail_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                support: support_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                phylo: phylo_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                wording: wording_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+            },
+        );
+    }
+    Ok(rows)
+}
+
 fn top_candidate_rows(path: &std::path::Path, limit: usize) -> Result<Vec<CandidateReportRow>> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -1216,6 +1282,7 @@ fn build_explorer_data_json(
     nsc_result: &Option<nscluster::NsClusterResult>,
     tree: &PhyloTree,
     reference_gi: Option<GenomeIdx>,
+    evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
 ) -> Option<String> {
     use std::fmt::Write as _;
 
@@ -1283,26 +1350,41 @@ fn build_explorer_data_json(
         } else {
             present_after as f64 / pa.n_genomes() as f64
         };
+        let cluster_name = pa.cluster_name(ci);
+        let evolution = evolution_rows
+            .get(cluster_name)
+            .cloned()
+            .unwrap_or_default();
         if let Some(reference_state) = reference_state {
             write!(
                 out,
-                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":{},\"referenceAbsent\":{}}}",
-                json_script_escape(pa.cluster_name(ci)),
+                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":{},\"referenceAbsent\":{},\"mechanism\":{},\"mechanismDetail\":{},\"support\":{},\"phylo\":{},\"wording\":{}}}",
+                json_script_escape(cluster_name),
                 json_script_escape(annotation),
                 present_after,
                 prevalence,
                 json_script_escape(&reference_state.to_string()),
-                if reference_state == 'A' { "true" } else { "false" }
+                if reference_state == 'A' { "true" } else { "false" },
+                json_script_escape(&evolution.mechanism),
+                json_script_escape(&evolution.detail),
+                json_script_escape(&evolution.support),
+                json_script_escape(&evolution.phylo),
+                json_script_escape(&evolution.wording)
             )
             .expect("write to String is infallible");
         } else {
             write!(
                 out,
-                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":null,\"referenceAbsent\":false}}",
-                json_script_escape(pa.cluster_name(ci)),
+                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":null,\"referenceAbsent\":false,\"mechanism\":{},\"mechanismDetail\":{},\"support\":{},\"phylo\":{},\"wording\":{}}}",
+                json_script_escape(cluster_name),
                 json_script_escape(annotation),
                 present_after,
-                prevalence
+                prevalence,
+                json_script_escape(&evolution.mechanism),
+                json_script_escape(&evolution.detail),
+                json_script_escape(&evolution.support),
+                json_script_escape(&evolution.phylo),
+                json_script_escape(&evolution.wording)
             )
             .expect("write to String is infallible");
         }
@@ -1335,6 +1417,7 @@ fn phylo_matrix_explorer_html(
     nsc_result: &Option<nscluster::NsClusterResult>,
     phylo_tree: Option<&PhyloTree>,
     reference_gi: Option<GenomeIdx>,
+    evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
 ) -> String {
     let Some(tree) = phylo_tree else {
         return explorer_unavailable_html(
@@ -1369,8 +1452,14 @@ fn phylo_matrix_explorer_html(
         ));
     }
 
-    let Some(data_json) = build_explorer_data_json(pa, rescue_map, nsc_result, tree, reference_gi)
-    else {
+    let Some(data_json) = build_explorer_data_json(
+        pa,
+        rescue_map,
+        nsc_result,
+        tree,
+        reference_gi,
+        evolution_rows,
+    ) else {
         return explorer_unavailable_html(
             "The tree could not be converted into a matched-tip browser explorer.",
         );
@@ -1381,8 +1470,8 @@ fn phylo_matrix_explorer_html(
         "<section id='matrixExplorer' class='panel full explorer' style='margin-top:14px'>",
     );
     html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
-    html.push_str("<div class='explorer-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Cell size <input id='cellSize' type='range' min='2' max='16' value='8'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='matrixStatus' class='matrix-status muted'>Hover over the tree or matrix to inspect a genome/cluster cell.</div>");
+    html.push_str("<div class='explorer-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='2' max='18' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button><span id='clusterInfo' class='muted'></span></div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
     html.push_str("<script>window.recoreExplorerData=");
     html.push_str(&data_json);
     html.push_str(
@@ -1392,10 +1481,48 @@ if (!data || !data.clusters.length) return;
 const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", A:"#ffffff"};
 const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
 const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC", A:"absent"};
+const processColors = {
+  clade_associated_gain:"#079455",
+  ancestral_retained_no_disruption:"#155eef",
+  duplication_or_paralog_expansion:"#7a5af8",
+  deletion_loss_candidate:"#b42318",
+  reference_or_lineage_loss_candidate:"#d92d20",
+  clean_insertion_or_acquisition_candidate:"#079455",
+  IS_interruption_supported:"#f79009",
+  pseudogenization:"#b54708",
+  gene_fragmentation_or_structural_break:"#dc6803",
+  partial_reference_homology:"#0e9384",
+  reference_gene_allelic_derivative:"#2970ff",
+  reference_gene_disruption_or_truncation:"#c11574",
+  translocation_or_context_shift_candidate:"#9e77ed",
+  annotation_or_clustering_artifact:"#667085",
+  unstable_or_homoplastic_accessory_signal:"#dd2590",
+  unresolved_accessory_variation:"#475467",
+};
+const processDescriptions = {
+  clade_associated_gain:"Legacy label for a clade-associated accessory gain; inspect current mechanism fields for final wording.",
+  ancestral_retained_no_disruption:"Conserved ancestral presence across the assessed tree; not an obvious gain/loss event.",
+  duplication_or_paralog_expansion:"Signal compatible with copy-number expansion or paralogous locus complexity.",
+  deletion_loss_candidate:"Cluster is absent in a pattern compatible with deletion or lineage loss.",
+  reference_or_lineage_loss_candidate:"Reference or a lineage appears to have lost a locus present elsewhere.",
+  clean_insertion_or_acquisition_candidate:"Presence pattern is consistent with a gain/acquisition/insertion candidate.",
+  IS_interruption_supported:"Loss/disruption is supported by nearby mobile element or insertion-sequence evidence.",
+  pseudogenization:"Evidence suggests gene disruption, frameshift, internal stop, or degraded ORF.",
+  gene_fragmentation_or_structural_break:"Partial homology or split alignment suggests fragmentation or a local structural break.",
+  partial_reference_homology:"Cluster has partial similarity to a reference locus rather than being fully novel.",
+  reference_gene_allelic_derivative:"Cluster likely represents an allelic or event-derived version of a reference gene.",
+  reference_gene_disruption_or_truncation:"Reference-like sequence is present but length/frame evidence suggests disruption or truncation.",
+  translocation_or_context_shift_candidate:"Sequence appears real but its genomic context differs from the reference locus.",
+  annotation_or_clustering_artifact:"Pattern is more likely driven by annotation or clustering behavior than biology.",
+  unstable_or_homoplastic_accessory_signal:"Patchy pattern with repeated appearances/disappearances; treat cautiously.",
+  unresolved_accessory_variation:"Accessory signal remains unresolved from the available matrix/tree/evidence.",
+};
 const select = document.getElementById("clusterSelect");
 const search = document.getElementById("clusterSearch");
 const sizeControl = document.getElementById("cellSize");
+const rowHeightControl = document.getElementById("rowHeight");
 const colorMode = document.getElementById("tipColorMode");
+const matrixColorMode = document.getElementById("matrixColorMode");
 const labelToggle = document.getElementById("tipLabels");
 const referenceButton = document.getElementById("referenceOnly");
 const fullscreenButton = document.getElementById("explorerFullscreen");
@@ -1404,6 +1531,7 @@ const cladogramButton = document.getElementById("cladogramMode");
 const explorerSection = document.getElementById("matrixExplorer");
 const info = document.getElementById("clusterInfo");
 const details = document.getElementById("clusterDetails");
+const processLegend = document.getElementById("processLegend");
 const status = document.getElementById("matrixStatus");
 const svg = document.getElementById("treeSvg");
 const headerCanvas = document.getElementById("columnHeaderCanvas");
@@ -1413,8 +1541,11 @@ const ctx = canvas.getContext("2d");
 const baseCanvas = document.createElement("canvas");
 const baseCtx = baseCanvas.getContext("2d");
 const matrixPane = document.getElementById("matrixPane");
+const treePane = document.getElementById("treePane");
 const headerScroller = document.getElementById("headerScroller");
+const viewerBody = document.getElementById("viewerBody");
 const tooltip = document.getElementById("matrixTooltip");
+const defaultStatus = "Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.";
 let selected = 0;
 let hoverRow = -1;
 let hoverCol = -1;
@@ -1427,6 +1558,8 @@ let maxDistance = 0;
 let treeHeight = 0;
 const treeWidth = 410;
 const headerH = 88;
+const maxCanvasDim = 32000;
+const maxCanvasPixels = 90000000;
 let cellH = 12;
 let cellW = 8;
 let baseCellH = 0;
@@ -1434,6 +1567,7 @@ let baseCellW = 0;
 let baseValid = false;
 let treeDirty = true;
 let renderQueued = false;
+let detailsKey = "";
 let treeMode = "phylogram";
 let referenceOnly = false;
 let treeRoot = data.tree;
@@ -1499,11 +1633,60 @@ function gradientColor(value, maxValue, low, high) {
   const rgb = a.map((v, i) => Math.round(v + (b[i] - v) * t));
   return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
+function processColor(mechanism) {
+  if (processColors[mechanism]) return processColors[mechanism];
+  let hash = 0;
+  const text = mechanism || "unresolved_accessory_variation";
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  const hue = hash % 360;
+  return `hsl(${hue} 58% 43%)`;
+}
+function processKind(cluster) {
+  return (cluster && cluster.mechanism) || "unresolved_accessory_variation";
+}
+function processLabel(mechanism) {
+  return (mechanism || "unresolved_accessory_variation").replace(/_/g, " ");
+}
+function processDescription(mechanism) {
+  return processDescriptions[mechanism] || "Evolutionary process not explicitly classified; inspect TSV evidence before interpretation.";
+}
+function visibleProcessCounts() {
+  const counts = new Map();
+  visibleClusters.forEach(idx => {
+    const mechanism = processKind(data.clusters[idx]);
+    const row = counts.get(mechanism) || {clusters:0, present:0};
+    row.clusters += 1;
+    row.present += Number(data.clusters[idx]?.present || 0);
+    counts.set(mechanism, row);
+  });
+  return [...counts.entries()].sort((a, b) =>
+    b[1].clusters - a[1].clusters || processLabel(a[0]).localeCompare(processLabel(b[0]))
+  );
+}
+function renderProcessLegend() {
+  if (!processLegend) return;
+  const cluster = data.clusters[selected] || {};
+  const selectedMechanism = processKind(cluster);
+  const items = visibleProcessCounts().map(([mechanism, row]) => {
+    const active = mechanism === selectedMechanism ? " active" : "";
+    return `<div class="process-item${active}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${row.clusters} clusters; ${row.present} present cells. ${escapeHtml(processDescription(mechanism))}</small></div></div>`;
+  }).join("");
+  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span></div><div class="process-list">${items}</div>`;
+}
 function tipStyle(genomeIdx) {
   const mode = colorMode.value;
   if (mode === "cluster") {
     const state = stateAt(selected, genomeIdx);
     return {fill: colors[state], stroke: strokes[state], title: labels[state]};
+  }
+  if (mode === "process") {
+    const cluster = data.clusters[selected] || {};
+    const state = stateAt(selected, genomeIdx);
+    const mechanism = processKind(cluster);
+    const color = processColor(mechanism);
+    return state === "A"
+      ? {fill: "#ffffff", stroke: "#d0d5dd", title: `${processLabel(mechanism)} absent`}
+      : {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
   }
   const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
   if (mode === "rescue") {
@@ -1640,14 +1823,26 @@ function populateOptions() {
 }
 function currentCellSize() {
   const value = Number(sizeControl.value || 8);
-  return Math.max(2, Math.min(16, value));
+  return Math.max(2, Math.min(18, value));
+}
+function currentRowHeight() {
+  const value = Number(rowHeightControl.value || 8);
+  return Math.max(1, Math.min(18, value));
 }
 function updateCellGeometry() {
   const rows = leafOrder.length;
   const cols = visibleClusters.length;
-  const size = currentCellSize();
-  cellH = size;
-  cellW = Math.max(2, Math.round(size * 0.82));
+  const colSize = currentCellSize();
+  const maxWByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, cols)));
+  const maxHByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, rows)));
+  cellH = Math.min(currentRowHeight(), maxHByDim);
+  cellW = Math.min(Math.max(1, Math.round(colSize * 0.82)), maxWByDim);
+  const pixelBudget = rows * cols * cellH * cellW;
+  if (pixelBudget > maxCanvasPixels) {
+    const scale = Math.sqrt(maxCanvasPixels / pixelBudget);
+    cellH = Math.max(1, Math.floor(cellH * scale));
+    cellW = Math.max(1, Math.floor(cellW * scale));
+  }
   treeHeight = Math.max(70, rows * cellH);
   return {rows, cols};
 }
@@ -1677,7 +1872,7 @@ function drawNode(node, parts, xScale) {
   } else {
     const style = tipStyle(node.genome);
     const label = data.genomes[node.genome] || node.label || "";
-    const radius = Math.max(3, Math.min(5, cellH / 2 - 1));
+    const radius = Math.max(0.8, Math.min(5, cellH / 2 - 1));
     parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="1.2"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
     if (labelToggle.checked && leafOrder.length <= 1500 && cellH >= 4) {
       parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
@@ -1732,6 +1927,12 @@ function renderColumnHeader() {
   headerCtx.clearRect(0, 0, headerCanvas.width, headerCanvas.height);
   headerCtx.fillStyle = "#f8fafc";
   headerCtx.fillRect(0, 0, headerCanvas.width, headerH);
+  if (matrixColorMode.value === "process") {
+    visibleClusters.forEach((clusterIdx, c) => {
+      headerCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
+      headerCtx.fillRect(c * cellW, 0, Math.max(1, cellW), 7);
+    });
+  }
   if (hoverCol >= 0) {
     headerCtx.fillStyle = "#fff7ed";
     headerCtx.fillRect(hoverCol * cellW, 0, cellW, headerH);
@@ -1756,8 +1957,11 @@ function renderColumnHeader() {
       headerCtx.restore();
     });
   } else {
-    headerCtx.fillStyle = "#98a2b3";
     for (let c = 0; c < cols; c += 5) {
+      const clusterIdx = originalClusterAtVisibleColumn(c);
+      headerCtx.fillStyle = matrixColorMode.value === "process"
+        ? processColor(processKind(data.clusters[clusterIdx]))
+        : "#98a2b3";
       headerCtx.fillRect(c * cellW, headerH - 12, Math.max(1, cellW), 8);
     }
   }
@@ -1773,7 +1977,12 @@ function rebuildBaseMatrix() {
     const genomeIdx = leafOrder[r];
     for (let c = 0; c < cols; c += 1) {
       const clusterIdx = originalClusterAtVisibleColumn(c);
-      baseCtx.fillStyle = colors[stateAt(clusterIdx, genomeIdx)] || colors.A;
+      const state = stateAt(clusterIdx, genomeIdx);
+      if (matrixColorMode.value === "process" && state !== "A") {
+        baseCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
+      } else {
+        baseCtx.fillStyle = colors[state] || colors.A;
+      }
       baseCtx.fillRect(c * cellW, r * cellH, Math.max(1, cellW - 1), Math.max(1, cellH - 1));
     }
   }
@@ -1825,13 +2034,25 @@ function renderMatrix(scrollToSelected) {
     headerScroller.scrollLeft = matrixPane.scrollLeft;
   }
   const cluster = data.clusters[selected];
-  if (cluster) {
+  const nextDetailsKey = cluster
+    ? `${selected}|${referenceOnly}|${visibleClusters.length}`
+    : "none";
+  if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
+    const mechanism = processKind(cluster);
+    const support = cluster.support ? `<span>support ${escapeHtml(cluster.support)}</span>` : "";
+    const phylo = cluster.phylo ? `<span>phylogeny ${escapeHtml(cluster.phylo)}</span>` : "";
+    const detail = cluster.mechanismDetail ? `<span>${escapeHtml(cluster.mechanismDetail)}</span>` : "";
+    const wording = cluster.wording ? `<div class="process-wording">${escapeHtml(cluster.wording)}</div>` : "";
     info.textContent = `${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)`;
-    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div>`;
-  } else {
+    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div><div class="process-note"><span class="process-chip" style="--process-color:${processColor(mechanism)}"><i></i>${escapeHtml(processLabel(mechanism))}</span><span>${escapeHtml(processDescription(mechanism))}</span></div><div class="process-meta">${support}${phylo}${detail}</div>${wording}`;
+    renderProcessLegend();
+    detailsKey = nextDetailsKey;
+  } else if (nextDetailsKey !== detailsKey) {
     info.textContent = "";
     details.textContent = "No cluster selected.";
+    processLegend.innerHTML = "";
+    detailsKey = nextDetailsKey;
   }
 }
 function render(scrollToSelected = false) {
@@ -1880,12 +2101,15 @@ refreshVisibleClusters();
 if (leafOrder.length > 1500) {
   labelToggle.checked = false;
   sizeControl.value = "2";
+  rowHeightControl.value = "2";
 } else if (leafOrder.length > 800) {
   labelToggle.checked = false;
   sizeControl.value = "3";
+  rowHeightControl.value = "3";
 } else if (leafOrder.length > 300) {
   labelToggle.checked = false;
   sizeControl.value = "4";
+  rowHeightControl.value = "4";
 }
 populateOptions();
 render(true);
@@ -1916,8 +2140,38 @@ document.addEventListener("fullscreenchange", () => {
     : "Fullscreen explorer";
 });
 sizeControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
+rowHeightControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
+matrixColorMode.addEventListener("change", () => { resetMatrixCache(); render(false); });
 matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });
 headerScroller.addEventListener("scroll", () => { matrixPane.scrollLeft = headerScroller.scrollLeft; });
+function adjustRange(control, delta, min, max) {
+  const value = Number(control.value || min);
+  const next = Math.max(min, Math.min(max, value + delta));
+  if (next === value) return false;
+  control.value = String(next);
+  return true;
+}
+function wheelZoom(event, forcedAxis = "") {
+  const columnZoom = forcedAxis === "column" || event.shiftKey;
+  const rowZoom = forcedAxis === "row" || event.ctrlKey || event.metaKey || event.altKey;
+  if (!columnZoom && !rowZoom) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const delta = event.deltaY < 0 ? 1 : -1;
+  const changed = columnZoom
+    ? adjustRange(sizeControl, delta, 2, 18)
+    : adjustRange(rowHeightControl, delta, 1, 18);
+  if (changed) {
+    resetMatrixCache();
+    render(false);
+  }
+}
+viewerBody.addEventListener("wheel", wheelZoom, {passive:false});
+if (treePane) treePane.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
+svg.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
+headerScroller.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
+headerCanvas.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
+matrixPane.addEventListener("wheel", wheelZoom, {passive:false});
 svg.addEventListener("mousemove", event => {
   const rect = svg.getBoundingClientRect();
   const r = Math.floor((event.clientY - rect.top) / cellH);
@@ -1937,7 +2191,7 @@ svg.addEventListener("mousemove", event => {
   setHover(r, -1, detail);
 });
 svg.addEventListener("mouseleave", () => {
-  setHover(-1, -1, "Hover over the tree or matrix to inspect a genome/cluster cell.");
+  setHover(-1, -1, defaultStatus);
 });
 headerCanvas.addEventListener("mousemove", event => {
   const rect = headerCanvas.getBoundingClientRect();
@@ -1948,7 +2202,7 @@ headerCanvas.addEventListener("mousemove", event => {
   setHover(-1, c, `${cluster.name}: ${cluster.annotation || "No annotation provided"}`);
 });
 headerCanvas.addEventListener("mouseleave", () => {
-  setHover(-1, -1, "Hover over the tree or matrix to inspect a genome/cluster cell.");
+  setHover(-1, -1, defaultStatus);
 });
 headerCanvas.addEventListener("click", event => {
   const rect = headerCanvas.getBoundingClientRect();
@@ -1969,16 +2223,17 @@ canvas.addEventListener("mousemove", event => {
   const genomeIdx = leafOrder[r];
   const state = stateAt(clusterIdx, genomeIdx);
   const cluster = data.clusters[clusterIdx];
-  setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}`);
+  const mechanism = processKind(cluster);
+  setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}; ${processLabel(mechanism)}`);
   const paneRect = matrixPane.getBoundingClientRect();
   tooltip.style.display = "block";
   tooltip.style.left = `${event.clientX - paneRect.left + matrixPane.scrollLeft + 12}px`;
   tooltip.style.top = `${event.clientY - paneRect.top + 12}px`;
-  tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(cluster.annotation || "")}</span>`;
+  tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(processLabel(mechanism))}</span><br><span>${escapeHtml(cluster.annotation || "")}</span>`;
 });
 canvas.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
-  setHover(-1, -1, "Hover over the tree or matrix to inspect a genome/cluster cell.");
+  setHover(-1, -1, defaultStatus);
 });
 canvas.addEventListener("click", event => {
   const rect = canvas.getBoundingClientRect();
@@ -2039,6 +2294,7 @@ pub(super) fn write_html_report(
     )?;
     let qc = count_tsv_column(&output_dir.join("genome_qc.tsv"), "qc_status")?;
     let top_candidates = top_candidate_rows(&output_dir.join("evolutionary_events.tsv"), 12)?;
+    let explorer_evolution = explorer_evolution_rows(&output_dir.join("evolutionary_events.tsv"))?;
 
     let mut html = String::new();
     html.push_str("<!doctype html><html lang='en'><head><meta charset='utf-8'>");
@@ -2062,7 +2318,7 @@ pub(super) fn write_html_report(
         .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:750;background:#eef4ff;color:#1849a9;border:1px solid #d1e0ff}.badge.review{background:#fff6ed;color:var(--amber);border-color:#fedf89}.badge.filter{background:#fef3f2;color:var(--red);border-color:#fecdca}.badge.pass{background:#ecfdf3;color:var(--green);border-color:#abefc6}
         .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
         .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
-        .explorer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}
+        .explorer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}.process-note{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;color:#344054;font-size:12px}.process-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px;font-size:11px;font-weight:750;color:#344054}.process-chip i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--process-color)}.process-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:11px}.process-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-wording{margin-top:7px;color:#344054;font-size:12px}.process-legend{display:grid;gap:8px;margin-top:10px}.process-selected{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:#344054;font-size:12px}.process-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.process-item{display:grid;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:start;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px}.process-item.active{border-color:#84adff;background:#eef4ff}.process-swatch{width:11px;height:11px;border-radius:3px;margin-top:3px}.process-item strong{display:block;font-size:12px}.process-item small{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.35}
         .viewer{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:88px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
         footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
         @media(max-width:1100px){.explorer-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
@@ -2259,6 +2515,7 @@ pub(super) fn write_html_report(
         nsc_result,
         phylo_tree,
         reference_gi,
+        &explorer_evolution,
     ));
 
     html.push_str("<section class='panel full' style='margin-top:14px'><h2>Files to inspect</h2><div class='files'>");

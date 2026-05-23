@@ -622,7 +622,11 @@ clusters, and links to the exact TSV files behind the summary. When `--tree`
 is supplied and the tree/matrix is small enough for a browser, the same report
 also embeds an interactive phylogeny plus corrected matrix explorer: choose or
 click a gene cluster to recolor tree tips dynamically by input presence,
-Recore rescue, NSC support, or absence.
+Recore rescue, NSC support, absence, or the evolutionary mechanism reported in
+`evolutionary_events.tsv`. The explorer supports phylogram/cladogram switching,
+fullscreen review, reference-absent filtering, mouse-wheel zoom on the tree and
+column header, a Y-axis collapse slider for dense trees, and an in-report legend
+explaining each observed evolutionary process.
 
 Recore also includes lightweight Python utilities for reproducible review:
 

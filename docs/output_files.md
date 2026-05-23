@@ -543,8 +543,12 @@ When `--tree` is supplied and the matched tree/matrix is small enough for a
 responsive browser view, the report also embeds a phylogeny plus corrected
 matrix explorer. The explorer prunes the tree to matched matrix tips, keeps
 matrix rows in tree order, lets the user search/select clusters, recolors tree
-tips dynamically by the selected cluster state, and lets users click matrix
-columns to change the selected cluster.
+tips dynamically by the selected cluster state or evolutionary mechanism, and
+lets users click matrix columns to change the selected cluster. The matrix can
+also be recolored by evolutionary mechanism, with a legend explaining each
+observed process from `evolutionary_events.tsv`. Dense views can be collapsed or
+zoomed with the Y-axis slider, column zoom slider, mouse wheel over the tree or
+column header, and fullscreen mode.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than
