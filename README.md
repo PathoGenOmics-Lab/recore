@@ -634,10 +634,13 @@ removes those mechanisms from the matrix-column filter, and the selected-cluster
 panel reports the reference gene/cell or reference-derived event source when
 Recore can identify one. When `cluster_synteny_blocks.tsv` is available, the
 viewer also opens a split panel showing the top unique five-neighbour synteny
-blocks for the selected gene cluster, with the focal cluster highlighted and
-shared neighbouring clusters connected between adjacent block rows. The synteny
-panel can be hidden from the viewer controls when the tree plus matrix needs the
-full available width.
+blocks for the selected gene cluster. The selected synteny marks its carrier
+tips on the tree, row 2 shows the inferred H37Rv/reference context from shared
+neighbours, gene arrows keep strand orientation, labels prefer reference locus
+IDs, and tooltips expose representative coordinates and gene length. Shared
+neighbouring clusters are connected only between adjacent block rows. The
+synteny panel can be hidden from the viewer controls when the tree plus matrix
+needs the full available width.
 
 Recore also includes lightweight Python utilities for reproducible review:
 

@@ -897,8 +897,17 @@ pub fn run(args: &Args) -> Result<()> {
     let context_summaries = if !gff_indices.is_empty() {
         let (context_rows, summaries) =
             write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
-        let block_rows =
-            write_cluster_synteny_blocks(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
+        let synteny_reference_gi = args
+            .reference_genome
+            .as_deref()
+            .and_then(|name| resolve_reference_genome(&pa, name));
+        let block_rows = write_cluster_synteny_blocks(
+            &pa,
+            &gff_indices,
+            &gene_to_cluster_maps,
+            synteny_reference_gi,
+            &args.output,
+        )?;
         info!(
             "Cluster locus context audit: {} context rows and {} block rows across {} clusters",
             context_rows,

@@ -652,6 +652,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         let mut name = String::new();
         let mut protein_id = String::new();
         let mut old_locus_tag = String::new();
+        let mut dbxref = String::new();
         let mut product = String::new();
         let mut note = String::new();
         for attr in attributes.split(';') {
@@ -668,6 +669,8 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
                 protein_id = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("old_locus_tag=") {
                 old_locus_tag = decode_gff3_value(val);
+            } else if let Some(val) = attr.strip_prefix("Dbxref=") {
+                dbxref = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("product=") {
                 product = decode_gff3_value(val);
             } else if let Some(val) = attr.strip_prefix("Note=") {
@@ -689,6 +692,17 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         .to_string();
 
         let mut aliases = Vec::new();
+        let dbxref_aliases: Vec<String> = dbxref
+            .split(',')
+            .filter_map(|entry| {
+                entry
+                    .trim()
+                    .strip_prefix("AMAP_ids:")
+                    .or_else(|| entry.trim().strip_prefix("GeneID:"))
+                    .or_else(|| entry.trim().strip_prefix("locus_tag:"))
+                    .map(str::to_string)
+            })
+            .collect();
         for value in [
             id.as_str(),
             locus_tag.as_str(),
@@ -699,6 +713,11 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         ] {
             if !value.is_empty() && !aliases.iter().any(|x: &String| x == value) {
                 aliases.push(value.to_string());
+            }
+        }
+        for value in dbxref_aliases {
+            if !value.is_empty() && !aliases.iter().any(|x: &String| x == &value) {
+                aliases.push(value);
             }
         }
 

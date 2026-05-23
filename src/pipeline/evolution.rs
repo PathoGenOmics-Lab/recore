@@ -1,4 +1,4 @@
-use super::reference_audit::ReferenceClusterEvent;
+use super::reference_audit::{display_reference_gene_id, ReferenceClusterEvent};
 use super::*;
 use crate::relationships::ClusterComponentInfo;
 
@@ -1708,6 +1708,44 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
 pub(super) struct ContextAccumulator {
     pub(super) count: usize,
     pub(super) examples: Vec<String>,
+    carrier_genomes: Vec<String>,
+    representative: Option<SyntenyBlockRepresentative>,
+}
+
+#[derive(Debug, Clone)]
+struct SyntenyGeneRecord {
+    cluster: String,
+    gene_id: String,
+    contig: String,
+    start: u64,
+    end: u64,
+    strand: char,
+    length: u64,
+}
+
+#[derive(Debug, Clone)]
+struct SyntenyBlockRepresentative {
+    genome: String,
+    gene_id: String,
+    contig: String,
+    start: u64,
+    end: u64,
+    strand: char,
+    length: u64,
+    genes: Vec<SyntenyGeneRecord>,
+}
+
+#[derive(Debug, Clone)]
+struct ReferenceBoundaryContext {
+    genes: Vec<SyntenyGeneRecord>,
+    cluster_ids: Vec<ClusterIdx>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ReferenceBoundaryIndex {
+    contexts: Vec<ReferenceBoundaryContext>,
+    by_cluster: HashMap<ClusterIdx, Vec<usize>>,
+    by_focal: HashMap<ClusterIdx, Vec<SyntenyGeneRecord>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1756,6 +1794,226 @@ pub(super) fn context_interpretation(
     } else {
         "possible_multilocus_or_paralog"
     }
+}
+
+fn synteny_gene_record(
+    gff: &GffIndex,
+    gene: &GffGene,
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    pa: &crate::parser::PresenceAbsence,
+) -> SyntenyGeneRecord {
+    let cluster = gff
+        .cluster_for_gene(gene, gene_to_cluster)
+        .map(|ci| pa.cluster_name(ci).to_string())
+        .unwrap_or_else(|| "NA".to_string());
+    let display_gene_id = gff
+        .aliases_for_gene(gene)
+        .into_iter()
+        .map(display_reference_gene_id)
+        .find(|id| id.starts_with("Rv"))
+        .unwrap_or_else(|| display_reference_gene_id(&gene.gene_id));
+    SyntenyGeneRecord {
+        cluster,
+        gene_id: display_gene_id,
+        contig: gene.contig.clone(),
+        start: gene.start + 1,
+        end: gene.end,
+        strand: gene.strand,
+        length: gene.end.saturating_sub(gene.start),
+    }
+}
+
+fn synteny_gap_record(contig: &str, start_0based: u64, end_0based: u64) -> SyntenyGeneRecord {
+    let low = start_0based.min(end_0based);
+    let high = start_0based.max(end_0based);
+    let start = low.saturating_add(1);
+    let (end, length) = if low == high {
+        (start, 0)
+    } else {
+        (high, high.saturating_sub(low))
+    };
+    SyntenyGeneRecord {
+        cluster: "__GAP__".to_string(),
+        gene_id: "H37Rv_context_slot".to_string(),
+        contig: contig.to_string(),
+        start,
+        end,
+        strand: '.',
+        length,
+    }
+}
+
+fn ordered_synteny_gene_records(
+    gff: &GffIndex,
+    upstream: &[&GffGene],
+    center: Option<&GffGene>,
+    downstream: &[&GffGene],
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    pa: &crate::parser::PresenceAbsence,
+) -> Vec<SyntenyGeneRecord> {
+    let mut records =
+        Vec::with_capacity(upstream.len() + downstream.len() + usize::from(center.is_some()));
+    for gene in upstream.iter().rev() {
+        records.push(synteny_gene_record(gff, gene, gene_to_cluster, pa));
+    }
+    if let Some(gene) = center {
+        records.push(synteny_gene_record(gff, gene, gene_to_cluster, pa));
+    }
+    for gene in downstream {
+        records.push(synteny_gene_record(gff, gene, gene_to_cluster, pa));
+    }
+    records
+}
+
+fn encode_synteny_gene_records(records: &[SyntenyGeneRecord]) -> String {
+    records
+        .iter()
+        .map(|record| {
+            format!(
+                "{},{},{},{},{},{},{}",
+                record.cluster,
+                record.gene_id,
+                record.strand,
+                record.contig,
+                record.start,
+                record.end,
+                record.length
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn build_reference_boundary_index(
+    gff: &GffIndex,
+    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    pa: &crate::parser::PresenceAbsence,
+    n_neighbors: usize,
+) -> ReferenceBoundaryIndex {
+    let mut index = ReferenceBoundaryIndex::default();
+    if gff.genes.is_empty() {
+        return index;
+    }
+
+    let mut range_start = 0usize;
+    while range_start < gff.genes.len() {
+        let contig = gff.genes[range_start].contig.clone();
+        let mut range_end = range_start + 1;
+        while range_end < gff.genes.len() && gff.genes[range_end].contig == contig {
+            range_end += 1;
+        }
+        let slice = &gff.genes[range_start..range_end];
+        for (gene_idx, gene) in slice.iter().enumerate() {
+            let Some(focal_ci) = gff.cluster_for_gene(gene, gene_to_cluster) else {
+                continue;
+            };
+            index.by_focal.entry(focal_ci).or_insert_with(|| {
+                let upstream: Vec<&GffGene> =
+                    slice[..gene_idx].iter().rev().take(n_neighbors).collect();
+                let downstream: Vec<&GffGene> =
+                    slice[gene_idx + 1..].iter().take(n_neighbors).collect();
+                ordered_synteny_gene_records(
+                    gff,
+                    &upstream,
+                    Some(gene),
+                    &downstream,
+                    gene_to_cluster,
+                    pa,
+                )
+            });
+        }
+        for boundary in 0..=slice.len() {
+            let upstream: Vec<&GffGene> =
+                slice[..boundary].iter().rev().take(n_neighbors).collect();
+            let downstream: Vec<&GffGene> = slice[boundary..].iter().take(n_neighbors).collect();
+            let gap_start = if boundary > 0 {
+                slice[boundary - 1].end
+            } else {
+                slice.first().map(|gene| gene.start).unwrap_or(0)
+            };
+            let gap_end = if boundary < slice.len() {
+                slice[boundary].start
+            } else {
+                slice.last().map(|gene| gene.end).unwrap_or(gap_start)
+            };
+            let mut genes = ordered_synteny_gene_records(
+                gff,
+                &upstream,
+                None,
+                &downstream,
+                gene_to_cluster,
+                pa,
+            );
+            let gap_idx = upstream.len();
+            genes.insert(gap_idx, synteny_gap_record(&contig, gap_start, gap_end));
+            let mut cluster_ids: Vec<ClusterIdx> = upstream
+                .iter()
+                .chain(downstream.iter())
+                .filter_map(|gene| gff.cluster_for_gene(gene, gene_to_cluster))
+                .collect();
+            cluster_ids.sort_unstable();
+            cluster_ids.dedup();
+            let context_idx = index.contexts.len();
+            for ci in &cluster_ids {
+                index.by_cluster.entry(*ci).or_default().push(context_idx);
+            }
+            index
+                .contexts
+                .push(ReferenceBoundaryContext { genes, cluster_ids });
+        }
+        range_start = range_end;
+    }
+    index
+}
+
+fn parse_context_cluster_indices(
+    upstream: &str,
+    downstream: &str,
+    name_to_idx: &HashMap<String, ClusterIdx>,
+) -> Vec<ClusterIdx> {
+    let mut out: Vec<ClusterIdx> = upstream
+        .split('|')
+        .chain(downstream.split('|'))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "NA")
+        .filter_map(|name| name_to_idx.get(name).copied())
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn best_reference_context(
+    index: &ReferenceBoundaryIndex,
+    focal_cluster: ClusterIdx,
+    target_clusters: &[ClusterIdx],
+) -> Vec<SyntenyGeneRecord> {
+    if let Some(centered_context) = index.by_focal.get(&focal_cluster) {
+        return centered_context.clone();
+    }
+    if target_clusters.is_empty() || index.contexts.is_empty() {
+        return Vec::new();
+    }
+    let mut candidate_counts: HashMap<usize, usize> = HashMap::default();
+    for ci in target_clusters {
+        if let Some(boundaries) = index.by_cluster.get(ci) {
+            for boundary_idx in boundaries {
+                *candidate_counts.entry(*boundary_idx).or_default() += 1;
+            }
+        }
+    }
+    let Some((best_idx, _)) = candidate_counts.into_iter().max_by(|a, b| {
+        a.1.cmp(&b.1).then_with(|| {
+            index.contexts[a.0]
+                .cluster_ids
+                .len()
+                .cmp(&index.contexts[b.0].cluster_ids.len())
+                .reverse()
+        })
+    }) else {
+        return Vec::new();
+    };
+    index.contexts[best_idx].genes.clone()
 }
 
 pub(super) fn write_cluster_locus_contexts(
@@ -1904,9 +2162,15 @@ pub(super) fn write_cluster_synteny_blocks(
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    reference_gi: Option<GenomeIdx>,
     output_dir: &std::path::Path,
 ) -> Result<usize> {
     let mut block_rows: BTreeMap<(usize, String, String), ContextAccumulator> = BTreeMap::new();
+    let reference_boundary_index = reference_gi
+        .and_then(|gi| gff_indices.get(&gi).zip(gene_to_cluster_maps.get(&gi)))
+        .map(|(gff, g2c)| build_reference_boundary_index(gff, g2c, pa, 5))
+        .unwrap_or_default();
+    let cluster_index = pa.cluster_index();
 
     for ci_val in 0..pa.n_clusters() {
         let ci = ClusterIdx(ci_val);
@@ -1937,9 +2201,29 @@ pub(super) fn write_cluster_synteny_blocks(
                 .entry((ci.val(), upstream_sig, downstream_sig))
                 .or_default();
             row.count += 1;
+            row.carrier_genomes.push(pa.genome_name(gi).to_string());
             if row.examples.len() < 5 {
                 row.examples
                     .push(format!("{}:{}", pa.genome_name(gi), gene.gene_id));
+            }
+            if row.representative.is_none() {
+                row.representative = Some(SyntenyBlockRepresentative {
+                    genome: pa.genome_name(gi).to_string(),
+                    gene_id: gene.gene_id.clone(),
+                    contig: gene.contig.clone(),
+                    start: gene.start + 1,
+                    end: gene.end,
+                    strand: gene.strand,
+                    length: gene.end.saturating_sub(gene.start),
+                    genes: ordered_synteny_gene_records(
+                        gff,
+                        &upstream,
+                        Some(gene),
+                        &downstream,
+                        g2c,
+                        pa,
+                    ),
+                });
             }
         }
     }
@@ -1949,7 +2233,7 @@ pub(super) fn write_cluster_synteny_blocks(
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes"
+        "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes\tcarrier_genomes\trepresentative_genome\trepresentative_gene\trepresentative_contig\trepresentative_start\trepresentative_end\trepresentative_strand\trepresentative_length_bp\trepresentative_block_genes\treference_block_genes"
     )?;
 
     let mut rows_by_cluster: BTreeMap<usize, Vec<(String, String, ContextAccumulator)>> =
@@ -1980,6 +2264,14 @@ pub(super) fn write_cluster_synteny_blocks(
             } else {
                 "alternative_synteny_block"
             };
+            let representative = acc.representative.as_ref();
+            let target_clusters =
+                parse_context_cluster_indices(&upstream, &downstream, &cluster_index);
+            let reference_genes = best_reference_context(
+                &reference_boundary_index,
+                ClusterIdx(ci_val),
+                &target_clusters,
+            );
             write_tsv_fields(
                 &mut w,
                 &[
@@ -1991,6 +2283,32 @@ pub(super) fn write_cluster_synteny_blocks(
                     downstream,
                     interpretation.to_string(),
                     acc.examples.join(";"),
+                    acc.carrier_genomes.join(";"),
+                    representative
+                        .map(|rep| rep.genome.clone())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| rep.gene_id.clone())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| rep.contig.clone())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| rep.start.to_string())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| rep.end.to_string())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| rep.strand.to_string())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| rep.length.to_string())
+                        .unwrap_or_default(),
+                    representative
+                        .map(|rep| encode_synteny_gene_records(&rep.genes))
+                        .unwrap_or_default(),
+                    encode_synteny_gene_records(&reference_genes),
                 ],
             )?;
             written += 1;

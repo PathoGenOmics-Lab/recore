@@ -256,6 +256,10 @@ biological.
 
 Written when GFF annotations are loaded. This is an audit-only synteny-block
 summary using up to five upstream and five downstream cluster neighbours.
+When a reference genome is supplied, each block also stores a representative
+gene-level neighbourhood and the best matching reference/H37Rv neighbourhood
+inferred from shared flanking clusters, even when the focal cluster itself is
+absent from the reference.
 
 | Column | Description |
 |--------|-------------|
@@ -265,6 +269,10 @@ summary using up to five upstream and five downstream cluster neighbours.
 | `upstream_block_5`, `downstream_block_5` | Cluster-name signatures for the wider flanking block |
 | `block_interpretation` | `single_synteny_block`, `dominant_block_minor_alternatives`, or `alternative_synteny_block` |
 | `example_genomes` | Up to five genome:gene examples |
+| `carrier_genomes` | All genomes carrying that exact block signature |
+| `representative_*` | Genome, gene ID, contig, 1-based coordinates, strand, and length for one representative focal gene |
+| `representative_block_genes` | Semicolon-separated gene records for the representative block as `cluster,gene_id,strand,contig,start,end,length` |
+| `reference_block_genes` | Same gene-record encoding for the inferred reference context; includes an `__GAP__` marker when the focal cluster is absent between shared neighbours |
 
 ---
 
@@ -555,10 +563,14 @@ zoom slider, mouse wheel over the tree or column header, and fullscreen mode.
 When `cluster_synteny_blocks.tsv` is present, the explorer uses a split view:
 the left side keeps the tree plus matrix, and the right side draws up to ten
 ranked unique five-neighbour synteny blocks for the selected gene cluster. The
-selected cluster is highlighted, the example locus is connected to its gene
-arrow, and shared neighbouring clusters are connected between adjacent synteny
-rows. A viewer control can hide this synteny panel, expanding the phylogeny plus
-matrix to the full available width for dense matrix inspection.
+selected block marks its carrier genomes on the tree, the focal cluster is
+highlighted, gene arrows carry strand orientation, and row 2 shows the inferred
+reference/H37Rv context from shared neighbours. Labels prefer reference locus
+IDs where available, and each gene tooltip includes cluster, locus, coordinates,
+strand, and length. Shared neighbouring clusters are connected only between
+adjacent synteny rows. A viewer control can hide this synteny panel, expanding
+the phylogeny plus matrix to the full available width for dense matrix
+inspection.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than

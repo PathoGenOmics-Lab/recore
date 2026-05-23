@@ -72,6 +72,10 @@ and Recore uses semantic versioning.
   synteny panel for the selected gene cluster, drawing ranked unique
   five-neighbour blocks with the focal cluster highlighted and shared neighbours
   connected between adjacent rows.
+- Synteny blocks now include carrier genomes, representative gene coordinates,
+  strand, length, gene-level block records, and an inferred reference/H37Rv
+  context from shared neighbours; selecting a synteny block marks its carrier
+  tips on the embedded tree.
 - The synteny panel can now be hidden from the embedded viewer controls so the
   tree plus matrix expand to the full available width during dense inspection.
 - Output manifest schema version is now `recore.outputs.v6`.
