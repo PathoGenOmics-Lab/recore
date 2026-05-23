@@ -70,6 +70,49 @@ Output:
 This is a regression benchmark for Recore's locus-context and audit logic, not
 a species-specific biological truth set.
 
+## Dataset self benchmark
+
+`self_benchmark.py` masks real present cells from a user-provided matrix,
+runs Recore on the masked matrix, and estimates how often those known-present
+cells are recovered. It also writes score-calibration bins from
+`orthology_confidence_score`.
+
+```bash
+python3 benchmarks/self_benchmark.py \
+  -p /path/to/gene_presence_absence.csv \
+  -r /path/to/pan_genome_reference.fa \
+  -g /path/to/genomes \
+  -a /path/to/annotations \
+  --threads 8 \
+  --multi-allele \
+  --nscluster \
+  --minimap2 /path/to/minimap2
+```
+
+Outputs in the workdir:
+
+- `self_benchmark_truth.tsv`
+- `self_benchmark_calibration.tsv`
+- `self_benchmark_score_bins.tsv`
+- Recore output directory for the masked run
+
+The negative-control cells are a proxy only: original matrix absences can still
+include true false absences.
+
+## Run comparison and reporting
+
+Compare two Recore output directories:
+
+```bash
+python3 benchmarks/compare_runs.py --old old_recore_output --new new_recore_output -o compare_out
+```
+
+Generate a compact Markdown/HTML report:
+
+```bash
+python3 benchmarks/recore_report.py recore_output
+```
+
 ## AMAP performance benchmark
 
 `amap_performance_benchmark.py` profiles Recore on the full local AMAP

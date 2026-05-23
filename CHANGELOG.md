@@ -29,7 +29,15 @@ and Recore uses semantic versioning.
 - `evolutionary_events.tsv` now includes phylogenetic blink flags,
   evolutionary signal scores, highlight priorities, and cluster-component
   context for each cluster.
-- Output manifest schema version is now `recore.outputs.v3`.
+- `evolutionary_events.tsv` now includes Dollo-like penalized phylogenetic
+  scores and violation counts.
+- `cluster_synteny_blocks.tsv` reports wider five-neighbour synteny blocks for
+  audit-only structural/context review.
+- `genome_qc.tsv` reports per-genome FASTA/GFF availability, remapping,
+  rescue burden, matrix-correction burden, and rejection burden.
+- Added reproducible utilities: `benchmarks/self_benchmark.py`,
+  `benchmarks/compare_runs.py`, and `benchmarks/recore_report.py`.
+- Output manifest schema version is now `recore.outputs.v4`.
 
 ## [0.2.0] - 2026-05-23
 

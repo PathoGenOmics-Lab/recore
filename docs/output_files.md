@@ -190,6 +190,7 @@ corrected binary state for each cluster.
 | `phylogenetic_pattern` | `ancestral_retained`, `ancestral_loss`, `lineage_specific_gain`, `clade_associated_presence`, `recurrent_gain`, `recurrent_loss`, `homoplastic_gain_loss`, `singleton_or_noise`, `dispersed_gain_loss`, or `not_assessed_no_tree` |
 | `phylogenetic_reliability` | `high`, `moderate`, `low`, or `not_assessed`, based on tree pattern and parsimony changes |
 | `phylogenetic_blink_flag` | `low_blink`, `moderate_blink`, `high_blink`, or `not_assessed`; high blink marks clusters with singleton/dispersed/homoplastic behaviour that should be filtered or reviewed before highlighting |
+| `penalized_phylo_model`, `penalized_phylo_score`, `dollo_loss_count`, `dollo_violation_count` | Dollo-like penalized model: one gain plus losses is rewarded, repeated independent gains reduce the score |
 | `ancestral_state` | Parsimony root state: `present`, `absent`, or `unknown` |
 | `phylogenetic_changes`, `phylogenetic_gains`, `phylogenetic_losses` | Parsimony counts on the matched tree |
 | `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one clade, and the largest carrier-only clade fraction |
@@ -245,6 +246,22 @@ Written when GFF annotations are loaded. One row per cluster.
 Clusters flagged as `possible_multilocus_or_paralog` are not automatically
 changed, but they should be reviewed before treating accessory-gene calls as
 biological.
+
+---
+
+## cluster_synteny_blocks.tsv
+
+Written when GFF annotations are loaded. This is an audit-only synteny-block
+summary using up to five upstream and five downstream cluster neighbours.
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Panaroo cluster name |
+| `block_rank` | Rank by number of supporting genomes |
+| `n_genomes`, `fraction_of_present` | Support for this block among genomes where the cluster is present |
+| `upstream_block_5`, `downstream_block_5` | Cluster-name signatures for the wider flanking block |
+| `block_interpretation` | `single_synteny_block`, `dominant_block_minor_alternatives`, or `alternative_synteny_block` |
+| `example_genomes` | Up to five genome:gene examples |
 
 ---
 
@@ -363,6 +380,23 @@ highlighting can deprioritize redundant aliases or paralog components.
 
 ---
 
+## genome_qc.tsv
+
+Written for every run. One row per genome with rescue and annotation burden
+metrics.
+
+| Column | Description |
+|--------|-------------|
+| `genome` | Matrix genome column |
+| `fasta_found`, `gff_found` | Whether matching FASTA/GFF inputs were available |
+| `gff_contig_remapped_records` | Number of GFF records remapped to FASTA contig names |
+| `gaps_passing_filter` | Missing cells searched or eligible for search after prevalence filtering |
+| `accepted_rescues`, `matrix_corrected_rescues`, `nsc_added_presence` | Evidence and matrix-correction burden by genome |
+| `synteny_rejected`, `paralog_rejected` | Rejected evidence by genome |
+| `qc_status`, `qc_flags` | `pass`, `review`, or `fail` plus semicolon-separated flags |
+
+---
+
 ## summary.txt
 
 Human-readable run summary. Example:
@@ -415,7 +449,7 @@ Nucleotide similarity clustering:
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v3`);
+- `schema_version` (`recore.outputs.v4`);
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;

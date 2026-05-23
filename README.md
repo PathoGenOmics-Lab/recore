@@ -365,9 +365,11 @@ recore_output/
 ├── paralog_rejected_report.tsv             # PARALOG candidates lacking synteny support
 ├── cluster_locus_context.tsv               # per-cluster locus-context rows when GFFs are loaded
 ├── cluster_locus_summary.tsv               # cluster-level context stability flags
+├── cluster_synteny_blocks.tsv              # 5-neighbour synteny block audit
 ├── cluster_relationships.tsv               # SPLIT/PARALOG/annotation-match/NSC relationships
 ├── cluster_components.tsv                  # connected components of related clusters
 ├── cluster_component_members.tsv           # per-cluster component role and recommendation
+├── genome_qc.tsv                           # per-genome rescue/annotation/QC burden
 ├── nscluster_report.tsv                    # NSC groups when --nscluster is enabled
 ├── corrected_gff/                          # optional GFF3 files with appended Recore CDSs
 ├── run_manifest.json                       # version, schema, parameters, inputs, and run counts
@@ -411,6 +413,7 @@ Key columns in `evolutionary_events.tsv`:
 | `phylogenetic_pattern` | parsimony pattern from the optional tree: retained, loss, gain, recurrent, homoplastic, singleton/noise, or not assessed |
 | `phylogenetic_reliability` | high/moderate/low reliability label from tree pattern and parsimony changes |
 | `phylogenetic_blink_flag` | explicit low/moderate/high flag for repeated gain/loss or singleton-like blinking patterns |
+| `penalized_phylo_model` / `penalized_phylo_score` | Dollo-like penalized model that rewards one gain plus losses and penalizes repeated independent gains |
 | `molecular_mechanism` | conservative interpretation combining rescue evidence, reference audit, context stability, mobile-element evidence, and NSC status |
 | `mechanism_detail` | compact reason for the mechanism call, including `nsc_representative` or `nsc_member_merged_into_representative` when relevant |
 | `support_level` | confidence tier for wording, not a functional validation claim |
@@ -567,6 +570,17 @@ The guard is reported in `orthology_evidence.tsv` as
 `adaptive_identity_floor`, `adaptive_coverage_floor`,
 `adaptive_sequence_pass`, `orthology_confidence_score`,
 `orthology_confidence_tier`, and `risk_flags`.
+
+### Run Review Utilities
+
+Recore includes lightweight Python utilities for reproducible review:
+
+- `benchmarks/self_benchmark.py`: masks known-present cells, reruns Recore, and
+  estimates dataset-specific masked-positive recall plus score calibration bins.
+- `benchmarks/compare_runs.py`: compares two Recore output directories and
+  labels unchanged, new, lost, and changed matrix calls.
+- `benchmarks/recore_report.py`: creates a compact Markdown/HTML report with
+  headline counts, QC, priorities, and top candidate clusters.
 
 ### Evolutionary Event Interpretation
 

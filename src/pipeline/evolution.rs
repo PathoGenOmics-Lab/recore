@@ -30,6 +30,14 @@ pub(super) struct PhyloPatternSummary {
 }
 
 #[derive(Debug, Clone, Default)]
+pub(super) struct PenalizedPhyloSummary {
+    pub(super) model: &'static str,
+    pub(super) dollo_loss_count: usize,
+    pub(super) dollo_violation_count: usize,
+    pub(super) score: f64,
+}
+
+#[derive(Debug, Clone, Default)]
 pub(super) struct FitchNodeSummary {
     pub(super) state_set: u8,
     pub(super) matched_tips: usize,
@@ -1156,8 +1164,54 @@ fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
     }
 }
 
+fn penalized_phylo_summary(phylo: &PhyloPatternSummary) -> PenalizedPhyloSummary {
+    if !phylo.assessed {
+        return PenalizedPhyloSummary {
+            model: "not_assessed",
+            score: 0.5,
+            ..PenalizedPhyloSummary::default()
+        };
+    }
+    if phylo.present_tips == 0 {
+        return PenalizedPhyloSummary {
+            model: "absent_from_tree",
+            score: 1.0,
+            ..PenalizedPhyloSummary::default()
+        };
+    }
+
+    let allowed_gains = if phylo.present_tips > 0 { 1 } else { 0 };
+    let dollo_violation_count = phylo.gains.saturating_sub(allowed_gains);
+    let dollo_loss_count = phylo.losses;
+    let blink_penalty = match phylogenetic_blink_flag(phylo) {
+        "high_blink" => 0.25,
+        "moderate_blink" => 0.10,
+        _ => 0.0,
+    };
+    let score = (1.0
+        - dollo_violation_count as f64 * 0.18
+        - dollo_loss_count as f64 * 0.03
+        - blink_penalty)
+        .clamp(0.0, 1.0);
+    let model = if dollo_violation_count == 0 {
+        "dollo_compatible"
+    } else if dollo_violation_count <= 2 && score >= 0.45 {
+        "dollo_minor_violations"
+    } else {
+        "dollo_incompatible"
+    };
+
+    PenalizedPhyloSummary {
+        model,
+        dollo_loss_count,
+        dollo_violation_count,
+        score,
+    }
+}
+
 fn evolutionary_signal_score(
     phylo: &PhyloPatternSummary,
+    penalized_phylo: &PenalizedPhyloSummary,
     mechanism: &MechanismCall,
     context: Option<&ClusterContextSummary>,
     component: Option<&ClusterComponentInfo>,
@@ -1202,6 +1256,7 @@ fn evolutionary_signal_score(
         "moderate_blink" => score -= 0.10,
         _ => {}
     }
+    score += (penalized_phylo.score - 0.5) * 0.20;
     score.clamp(0.0, 1.0)
 }
 
@@ -1263,7 +1318,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tpenalized_phylo_model\tpenalized_phylo_score\tdollo_loss_count\tdollo_violation_count\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -1301,6 +1356,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
             })
             .unwrap_or("not_assessed");
         let phylo = summarize_phylogenetic_pattern(inputs.phylo_tree, &present_by_genome);
+        let penalized_phylo = penalized_phylo_summary(&phylo);
         let accepted = &accepted_by_cluster[ci_val];
         let synteny_rejected = &synteny_by_cluster[ci_val];
         let paralog_rejected = &paralog_by_cluster[ci_val];
@@ -1336,6 +1392,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
             .and_then(|info| info.as_ref());
         let signal_score = evolutionary_signal_score(
             &phylo,
+            &penalized_phylo,
             &mechanism,
             contexts_by_cluster[ci_val],
             component,
@@ -1403,6 +1460,22 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 phylo.pattern.to_string(),
                 phylogenetic_reliability(&phylo).to_string(),
                 phylogenetic_blink_flag(&phylo).to_string(),
+                penalized_phylo.model.to_string(),
+                if phylo.assessed {
+                    format!("{:.3}", penalized_phylo.score)
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    penalized_phylo.dollo_loss_count.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    penalized_phylo.dollo_violation_count.to_string()
+                } else {
+                    String::new()
+                },
                 phylo.root_state.to_string(),
                 if phylo.assessed {
                     phylo.parsimony_changes.to_string()
@@ -1673,4 +1746,104 @@ pub(super) fn write_cluster_locus_contexts(
     summary_w.flush()?;
 
     Ok((written_context_rows, summaries))
+}
+
+pub(super) fn write_cluster_synteny_blocks(
+    pa: &crate::parser::PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    output_dir: &std::path::Path,
+) -> Result<usize> {
+    let mut block_rows: BTreeMap<(usize, String, String), ContextAccumulator> = BTreeMap::new();
+
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        let mut genomes = pa.present_genomes(ci).to_vec();
+        genomes.sort_by_key(|gi| gi.val());
+
+        for gi in genomes {
+            let Some(gff) = gff_indices.get(&gi) else {
+                continue;
+            };
+            let Some(g2c) = gene_to_cluster_maps.get(&gi) else {
+                continue;
+            };
+            let Some(gene) = gff_gene_for_cell(gff, pa.cell(ci, gi)) else {
+                continue;
+            };
+
+            let (upstream, downstream) = gff.context_window(
+                &gene.contig,
+                gene.start,
+                gene.end,
+                Some(gene.gene_id.as_str()),
+                5,
+            );
+            let upstream_sig = context_signature(gff, &upstream, g2c, pa);
+            let downstream_sig = context_signature(gff, &downstream, g2c, pa);
+            let row = block_rows
+                .entry((ci.val(), upstream_sig, downstream_sig))
+                .or_default();
+            row.count += 1;
+            if row.examples.len() < 5 {
+                row.examples
+                    .push(format!("{}:{}", pa.genome_name(gi), gene.gene_id));
+            }
+        }
+    }
+
+    let path = output_dir.join("cluster_synteny_blocks.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(
+        w,
+        "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes"
+    )?;
+
+    let mut rows_by_cluster: BTreeMap<usize, Vec<(String, String, ContextAccumulator)>> =
+        BTreeMap::new();
+    for ((ci, upstream, downstream), acc) in block_rows {
+        rows_by_cluster
+            .entry(ci)
+            .or_default()
+            .push((upstream, downstream, acc));
+    }
+
+    let mut written = 0usize;
+    for (ci_val, mut rows) in rows_by_cluster {
+        rows.sort_by(|a, b| {
+            b.2.count
+                .cmp(&a.2.count)
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        let present = pa.present_count(ClusterIdx(ci_val)).max(1);
+        let n_blocks = rows.len();
+        for (rank, (upstream, downstream, acc)) in rows.into_iter().enumerate() {
+            let fraction = acc.count as f64 / present as f64;
+            let interpretation = if n_blocks <= 1 {
+                "single_synteny_block"
+            } else if rank == 0 && fraction >= 0.80 {
+                "dominant_block_minor_alternatives"
+            } else {
+                "alternative_synteny_block"
+            };
+            write_tsv_fields(
+                &mut w,
+                &[
+                    pa.cluster_name(ClusterIdx(ci_val)).to_string(),
+                    (rank + 1).to_string(),
+                    acc.count.to_string(),
+                    format!("{:.3}", fraction),
+                    upstream,
+                    downstream,
+                    interpretation.to_string(),
+                    acc.examples.join(";"),
+                ],
+            )?;
+            written += 1;
+        }
+    }
+    w.flush()?;
+    Ok(written)
 }

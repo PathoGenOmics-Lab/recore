@@ -29,8 +29,8 @@ mod reference_audit;
 
 use self::evolution::{
     load_phylo_tree, nsc_presence_updates, search_mobile_element_reference,
-    write_cluster_locus_contexts, write_evolutionary_events, EvolutionaryEventInputs,
-    MobileElementSearchInput,
+    write_cluster_locus_contexts, write_cluster_synteny_blocks, write_evolutionary_events,
+    EvolutionaryEventInputs, MobileElementSearchInput,
 };
 use self::output::{
     count_core_after, count_soft_core_after, write_corrected_csv, write_corrected_gffs,
@@ -222,6 +222,10 @@ pub fn run(args: &Args) -> Result<()> {
         .iter()
         .map(|(_, clusters)| clusters.len())
         .sum();
+    let mut gaps_passing_filter_by_genome = vec![0usize; n_genomes];
+    for (gi, clusters) in &searchable_genomes {
+        gaps_passing_filter_by_genome[gi.val()] = clusters.len();
+    }
 
     // ── 4. Load GFF annotations ──
     let mut gff_paths: HashMap<GenomeIdx, PathBuf> = HashMap::new();
@@ -837,6 +841,7 @@ pub fn run(args: &Args) -> Result<()> {
         matrix_policy_corrects(args.matrix_policy, state)
             && quality_allows_matrix_correction(state, &quality)
     }));
+    let nsc_presence = nsc_presence_updates(&pa, &nsc_result, &matrix_rescue_map);
 
     write_report(&rescues, &pa, &args.output)?;
     if !synteny_rejected.is_empty() {
@@ -886,9 +891,12 @@ pub fn run(args: &Args) -> Result<()> {
     let context_summaries = if !gff_indices.is_empty() {
         let (context_rows, summaries) =
             write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
+        let block_rows =
+            write_cluster_synteny_blocks(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
         info!(
-            "Cluster locus context audit: {} context rows across {} clusters",
+            "Cluster locus context audit: {} context rows and {} block rows across {} clusters",
             context_rows,
+            block_rows,
             summaries.len()
         );
         summaries
@@ -919,6 +927,19 @@ pub fn run(args: &Args) -> Result<()> {
     if n_components > 0 {
         info!("Cluster components: {} non-singleton groups", n_components);
     }
+    write_genome_qc(GenomeQcInputs {
+        pa: &pa,
+        genome_files: &genome_files,
+        gff_indices: &gff_indices,
+        gff_contig_remaps: &gff_contig_remaps,
+        gaps_passing_filter_by_genome: &gaps_passing_filter_by_genome,
+        rescues: &rescues,
+        synteny_rejected: &synteny_rejected,
+        paralog_rejected: &paralog_rejected,
+        matrix_rescue_map: &matrix_rescue_map,
+        nsc_presence: &nsc_presence,
+        output_dir: &args.output,
+    })?;
     write_evolutionary_events(EvolutionaryEventInputs {
         pa: &pa,
         matrix_rescue_map: &matrix_rescue_map,
@@ -961,7 +982,7 @@ pub fn run(args: &Args) -> Result<()> {
         paralog_rejected: paralog_rejected.len(),
         matrix_policy: args.matrix_policy,
         matrix_corrected: matrix_rescue_map.len(),
-        nsc_matrix_corrected: nsc_presence_updates(&pa, &nsc_result, &matrix_rescue_map).len(),
+        nsc_matrix_corrected: nsc_presence.len(),
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result
@@ -1414,6 +1435,150 @@ fn recommended_wording(state: &str, accepted: bool) -> &'static str {
         }
         _ => "Review before publication.",
     }
+}
+
+struct GenomeQcInputs<'a> {
+    pa: &'a crate::parser::PresenceAbsence,
+    genome_files: &'a HashMap<String, PathBuf>,
+    gff_indices: &'a HashMap<GenomeIdx, GffIndex>,
+    gff_contig_remaps: &'a [(String, String, String, usize)],
+    gaps_passing_filter_by_genome: &'a [usize],
+    rescues: &'a [RescueEvent],
+    synteny_rejected: &'a [RescueEvent],
+    paralog_rejected: &'a [RescueEvent],
+    matrix_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    nsc_presence: &'a ahash::HashSet<(usize, usize)>,
+    output_dir: &'a std::path::Path,
+}
+
+fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
+    let GenomeQcInputs {
+        pa,
+        genome_files,
+        gff_indices,
+        gff_contig_remaps,
+        gaps_passing_filter_by_genome,
+        rescues,
+        synteny_rejected,
+        paralog_rejected,
+        matrix_rescue_map,
+        nsc_presence,
+        output_dir,
+    } = inputs;
+
+    let mut accepted_by_genome = vec![0usize; pa.n_genomes()];
+    for rescue in rescues {
+        accepted_by_genome[rescue.genome_idx.val()] += 1;
+    }
+    let mut synteny_rejected_by_genome = vec![0usize; pa.n_genomes()];
+    for rescue in synteny_rejected {
+        synteny_rejected_by_genome[rescue.genome_idx.val()] += 1;
+    }
+    let mut paralog_rejected_by_genome = vec![0usize; pa.n_genomes()];
+    for rescue in paralog_rejected {
+        paralog_rejected_by_genome[rescue.genome_idx.val()] += 1;
+    }
+    let mut matrix_corrected_by_genome = vec![0usize; pa.n_genomes()];
+    for rescue in matrix_rescue_map.values() {
+        matrix_corrected_by_genome[rescue.genome_idx.val()] += 1;
+    }
+    let mut nsc_added_by_genome = vec![0usize; pa.n_genomes()];
+    for &(_, gi_val) in nsc_presence {
+        if let Some(count) = nsc_added_by_genome.get_mut(gi_val) {
+            *count += 1;
+        }
+    }
+
+    let mut remap_records_by_genome: HashMap<&str, usize> = HashMap::new();
+    for (genome, _from, _to, n_records) in gff_contig_remaps {
+        *remap_records_by_genome.entry(genome.as_str()).or_default() += *n_records;
+    }
+
+    let path = output_dir.join("genome_qc.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(
+        w,
+        "genome\tfasta_found\tgff_found\tgff_contig_remapped_records\tgaps_passing_filter\taccepted_rescues\tmatrix_corrected_rescues\tnsc_added_presence\tsynteny_rejected\tparalog_rejected\tqc_status\tqc_flags"
+    )?;
+
+    let gff_expected = !gff_indices.is_empty();
+    let mut review_count = 0usize;
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        let genome_name = pa.genome_name(gi);
+        let fasta_found = genome_files.contains_key(genome_name);
+        let gff_found = gff_indices.contains_key(&gi);
+        let gap_count = gaps_passing_filter_by_genome
+            .get(gi_val)
+            .copied()
+            .unwrap_or(0);
+        let accepted = accepted_by_genome[gi_val];
+        let matrix_corrected = matrix_corrected_by_genome[gi_val];
+        let rejected = synteny_rejected_by_genome[gi_val] + paralog_rejected_by_genome[gi_val];
+        let remapped = remap_records_by_genome
+            .get(genome_name)
+            .copied()
+            .unwrap_or(0);
+
+        let mut flags = Vec::new();
+        if gap_count > 0 && !fasta_found {
+            flags.push("missing_fasta_for_searchable_gaps");
+        }
+        if gff_expected && !gff_found {
+            flags.push("missing_gff");
+        }
+        if remapped > 0 {
+            flags.push("gff_contig_seqid_remapped");
+        }
+        if rejected >= 3 && rejected > accepted {
+            flags.push("rejected_evidence_exceeds_accepted");
+        }
+        if gap_count > 0 && accepted == 0 && rejected == 0 {
+            flags.push("no_rescue_evidence_for_searchable_gaps");
+        }
+        if gap_count > 0 && matrix_corrected > gap_count / 4 && matrix_corrected >= 10 {
+            flags.push("high_matrix_correction_burden");
+        }
+        if nsc_added_by_genome[gi_val] > 0 {
+            flags.push("nsc_presence_added");
+        }
+
+        let status = if flags.iter().any(|flag| flag.contains("missing_fasta")) {
+            "fail"
+        } else if flags.is_empty() {
+            "pass"
+        } else {
+            review_count += 1;
+            "review"
+        };
+        write_tsv_fields(
+            &mut w,
+            &[
+                genome_name.to_string(),
+                fasta_found.to_string(),
+                gff_found.to_string(),
+                remapped.to_string(),
+                gap_count.to_string(),
+                accepted.to_string(),
+                matrix_corrected.to_string(),
+                nsc_added_by_genome[gi_val].to_string(),
+                synteny_rejected_by_genome[gi_val].to_string(),
+                paralog_rejected_by_genome[gi_val].to_string(),
+                status.to_string(),
+                flags.join(";"),
+            ],
+        )?;
+    }
+    w.flush()?;
+    if review_count > 0 {
+        info!(
+            "Genome QC: {} genomes carry review/fail flags ({})",
+            review_count,
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 struct OrthologyEvidenceInputs<'a> {

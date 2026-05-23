@@ -331,6 +331,11 @@ coherence, mechanism support, synteny, locus-context stability, ORF integrity,
 and cluster-component risk so highly dispersed or singleton-like clusters are
 easy to filter before manuscript highlighting.
 
+Recore also reports a Dollo-like penalized model. A single gain followed by
+losses is treated as plausible, while repeated independent gains add
+`dollo_violation_count` and reduce `penalized_phylo_score`. This is deliberately
+an interpretation aid rather than a binary correction rule.
+
 Mobile-element support has two tiers. If `--mobile-element-reference` is
 provided, Recore aligns that nucleotide FASTA of mobile elements, IS, or
 transposase loci against genomes with rescue/disruption evidence and reports
@@ -345,6 +350,21 @@ fragmented or disrupted rescue plus close mobile-element evidence within
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 
 Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context. Synteny validation uses an adaptive 1-to-5-neighbour model, but this summary remains fixed-width so locus stability can be compared across clusters.
+
+### cluster_synteny_blocks.tsv
+
+Written when GFF annotations are loaded. This audit-only table summarizes
+wider five-neighbour upstream/downstream blocks for every resolvable present
+cluster. It is intended for reviewing translocations, tandem duplications, or
+alternative local contexts without changing the correction matrix.
+
+### genome_qc.tsv
+
+Written for every run. Recore summarizes each genome's FASTA/GFF availability,
+GFF contig remapping, searchable gaps, accepted rescues, matrix corrections,
+NSC-added presence, synteny rejections, and paralog rejections. The `qc_flags`
+column highlights genomes that may need assembly or annotation review before
+interpreting noisy presence/absence patterns.
 
 ### cluster_components.tsv / cluster_component_members.tsv
 
