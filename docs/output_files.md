@@ -552,6 +552,12 @@ adds or removes mechanisms from the matrix-column filter, and selected-cluster
 details show the reference cell/gene or the reference-derived event source when
 available. Dense views can be collapsed or zoomed with the Y-axis slider, column
 zoom slider, mouse wheel over the tree or column header, and fullscreen mode.
+When `cluster_synteny_blocks.tsv` is present, the explorer uses a split view:
+the left side keeps the tree plus matrix, and the right side draws up to ten
+ranked unique five-neighbour synteny blocks for the selected gene cluster. The
+selected cluster is highlighted, the example locus is connected to its gene
+arrow, and shared neighbouring clusters are connected between adjacent synteny
+rows.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than

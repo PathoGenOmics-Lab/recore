@@ -632,7 +632,10 @@ Y-axis collapse slider for dense trees, and in-report legends explaining each
 observed evolutionary process. Clicking evolutionary-mechanism cards adds or
 removes those mechanisms from the matrix-column filter, and the selected-cluster
 panel reports the reference gene/cell or reference-derived event source when
-Recore can identify one.
+Recore can identify one. When `cluster_synteny_blocks.tsv` is available, the
+viewer also opens a split panel showing the top unique five-neighbour synteny
+blocks for the selected gene cluster, with the focal cluster highlighted and
+shared neighbouring clusters connected between adjacent block rows.
 
 Recore also includes lightweight Python utilities for reproducible review:
 

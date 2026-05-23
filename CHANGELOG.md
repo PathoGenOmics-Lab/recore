@@ -68,6 +68,10 @@ and Recore uses semantic versioning.
 - Evolutionary mechanism cards in the embedded viewer now support multi-select
   column filtering, and selected-cluster details report the reference gene/cell
   or reference-derived event source when available.
+- The embedded viewer now uses `cluster_synteny_blocks.tsv` to add a split
+  synteny panel for the selected gene cluster, drawing ranked unique
+  five-neighbour blocks with the focal cluster highlighted and shared neighbours
+  connected between adjacent rows.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

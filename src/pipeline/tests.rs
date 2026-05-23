@@ -286,6 +286,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("window.recoreExplorerData"));
     assert!(text.contains("clusterDetails"));
     assert!(text.contains("columnHeaderCanvas"));
+    assert!(text.contains("syntenyPanel"));
+    assert!(text.contains("syntenySvg"));
+    assert!(text.contains("\"synteny\""));
+    assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
     assert!(text.contains("Column zoom <input id='cellSize' type='range' min='0.25'"));
