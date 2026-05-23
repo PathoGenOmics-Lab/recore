@@ -306,6 +306,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("tipLabels"));
     assert!(text.contains("rebuildBaseMatrix"));
     assert!(text.contains("phylogramMode"));
+    assert!(text.contains("const tipX = 14 + usable"));
     assert!(text.contains("referenceOnly"));
     assert!(text.contains("explorerFullscreen"));
     assert!(text.contains("\"referenceGenome\":null"));

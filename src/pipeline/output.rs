@@ -2015,7 +2015,11 @@ function xForNode(node) {
   if (treeMode === "phylogram" && maxDistance > 0) {
     return 14 + node.distance / maxDistance * usable;
   }
-  return 14 + node.depth * Math.max(14, usable / Math.max(1, maxDepth));
+  const tipX = 14 + usable;
+  if (!node.children || !node.children.length) {
+    return tipX;
+  }
+  return 14 + node.depth * (usable / Math.max(1, maxDepth));
 }
 function drawNode(node, parts, xScale) {
   const x = xForNode(node);
