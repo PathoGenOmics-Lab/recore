@@ -82,7 +82,9 @@ Most users should start with:
   like event-derived alleles/fragments of a reference gene
 - `evolutionary_events.tsv` to interpret each cluster as an acquisition,
   loss, IS interruption, pseudogene, paralog/duplication, reference-derived
-  allele, context shift, or unresolved accessory signal
+  allele, context shift, or unresolved accessory signal. When `--nscluster`
+  is enabled, this table also marks both redundant NSC members and the
+  representative cluster that receives the merged presence support.
 
 ## Which Matrix Policy Should I Use?
 
@@ -117,13 +119,30 @@ flowchart LR
     H -->|strict / balanced / sensitive| I["Corrected binary matrix"]
     F --> J["Multistate matrix<br/>and evidence tables"]
     G --> J
+    J --> L["Optional audits<br/>reference genome + NSC + tree + mobile elements"]
     I --> K["Reports + optional corrected GFF"]
+    L --> K
     J --> K
 ```
 
 Key idea: the corrected binary matrix is not the only output. Recore also
 keeps the evidence trail that explains why a cell was corrected, retained as
 audit-only, or rejected.
+
+Optional audit layers add biological interpretation without changing the core
+correction rules:
+
+- `--reference-genome` asks whether a cluster is truly absent from the chosen
+  reference, or whether it looks like a reference-derived allele, fragment, or
+  paralogous signal.
+- `--tree` uses parsimony on the corrected state to describe lineage-specific
+  gains, ancestral losses, recurrent/homoplastic signals, and retained core
+  genes.
+- `--mobile-element-reference` aligns IS/transposase/mobile-element sequences
+  near disrupted evidence so mobile-element support can be sequence-based, not
+  dependent on product names in GFF annotations.
+- `--nscluster` reports nucleotide-redundant clusters, marks redundant members,
+  and marks the representative cluster that carries the merged support.
 
 ## Benchmark
 
@@ -238,6 +257,34 @@ recore \
   -o recore_output/
 ```
 
+### Evolutionary and Mobile-Element Audit
+
+```bash
+recore \
+  -p gene_presence_absence.csv \
+  -r pan_genome_reference.fa \
+  -g genomes/ \
+  -a annotations/ \
+  --synteny \
+  --multi-allele \
+  --nscluster \
+  --matrix-policy balanced \
+  --reference-genome AS00146 \
+  --tree species.tree \
+  --mobile-element-reference mobile_elements.fa \
+  --mobile-element-min-identity 90 \
+  --mobile-element-min-coverage 70 \
+  --mobile-element-window 500 \
+  -t 8 \
+  -o recore_evolutionary_audit/
+```
+
+Use this when the main question is not only "is the gene present?" but "what
+kind of event best explains the signal?". The output table
+`evolutionary_events.tsv` keeps matrix correction, phylogenetic pattern,
+reference similarity, local context, NSC redundancy, and nearby mobile-element
+support in one row per cluster.
+
 ### Lightweight Rescue Without GFFs
 
 ```bash
@@ -327,7 +374,20 @@ For publication figures:
 - Use `evolutionary_events.tsv` to separate phylogenetic pattern from molecular
   mechanism: ancestral retention/loss, clade-associated gain, homoplasy,
   IS-supported interruption, pseudogenization, duplication/paralogy,
-  reference-derived alleles, and context-shift candidates.
+  reference-derived alleles, NSC cluster redundancy, and context-shift
+  candidates.
+
+Key columns in `evolutionary_events.tsv`:
+
+| Column | Meaning |
+|--------|---------|
+| `phylogenetic_pattern` | parsimony pattern from the optional tree: retained, loss, gain, recurrent, homoplastic, singleton/noise, or not assessed |
+| `molecular_mechanism` | conservative interpretation combining rescue evidence, reference audit, context stability, mobile-element evidence, and NSC status |
+| `mechanism_detail` | compact reason for the mechanism call, including `nsc_representative` or `nsc_member_merged_into_representative` when relevant |
+| `support_level` | confidence tier for wording, not a functional validation claim |
+| `mobile_element_source` | `sequence` when supported by `--mobile-element-reference`, `annotation` when supported by GFF labels |
+| `target_reference_gene` | reference locus/gene when the cluster is best explained as reference-derived homology |
+| `recommended_wording` | conservative wording for manuscripts and manual review |
 
 ## Evidence States
 
@@ -389,6 +449,9 @@ Pseudogene sub-types:
 | `--reference-genome` | optional | audit one reference/background genome |
 | `--tree` | optional | rooted Newick tree for parsimony-based evolutionary event interpretation |
 | `--mobile-element-reference` | optional | FASTA of mobile elements, IS, or transposase loci for name-agnostic sequence support near disrupted loci |
+| `--mobile-element-min-identity` | `85.0` | minimum nucleotide identity for mobile-element reference hits |
+| `--mobile-element-min-coverage` | `50.0` | minimum query coverage for mobile-element reference hits |
+| `--mobile-element-window` | `1000` | maximum distance in bp from a rescue/disruption interval to report mobile-element support |
 | `--write-corrected-gff` | off | write GFF3 files with appended rescued CDS features |
 | `-t, --threads` | `4` | number of threads |
 
@@ -437,6 +500,27 @@ Two engines are available:
 - **MinHash**: built-in, dependency-free, fast approximate clustering.
 - **MMseqs2**: optional alignment-based clustering, recommended when exact
   nucleotide identity/coverage thresholds are needed.
+
+NSC does not erase the audit trail. The binary matrix can receive merged
+presence support through the representative cluster, while
+`evolutionary_events.tsv`, `cluster_relationships.tsv`, and
+`nscluster_report.tsv` keep the redundant members visible for review.
+
+### Evolutionary Event Interpretation
+
+`evolutionary_events.tsv` is an interpretation layer, not a new correction
+policy. It combines:
+
+1. corrected cluster state after accepted rescues and optional NSC support;
+2. reference-genome audit and reference-derived cluster events;
+3. local locus-context stability and synteny/paralog rejection evidence;
+4. optional tree parsimony;
+5. optional sequence-based mobile-element support.
+
+The table is designed to prevent overclaiming. For example, a cluster can be
+kept as a separate matrix cluster while being described as a
+`reference_gene_allelic_derivative`, `duplication_or_paralog_expansion`, or
+`annotation_or_clustering_artifact` rather than a clean novel acquisition.
 
 ## Comparison With Panaroo Refinding
 
