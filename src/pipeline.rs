@@ -49,7 +49,8 @@ use self::reference_audit::{
 #[cfg(test)]
 use self::evolution::{
     nearest_mobile_element_for_rescue, nsc_role_for_cluster, penalized_phylo_summary,
-    resolve_phylo_tips, summarize_phylogenetic_pattern, MobileElementHit, NewickParser, PhyloTree,
+    resolve_phylo_tips, summarize_phylogenetic_pattern, MobileElementHit, NewickParser, PhyloNode,
+    PhyloTree,
 };
 #[cfg(test)]
 use self::output::{copy_gff_records_before_fasta_with_header, copy_text_maybe_gzip_with_header};
@@ -1018,6 +1019,7 @@ pub fn run(args: &Args) -> Result<()> {
             &stats,
             &matrix_rescue_map,
             &nsc_result,
+            phylo_tree.as_ref(),
             &args.output,
         )?;
     }

@@ -1,3 +1,4 @@
+use super::evolution::{PhyloNode, PhyloTree};
 use super::*;
 
 pub(super) fn write_corrected_csv(
@@ -1112,6 +1113,375 @@ fn file_link_html(path: &str, description: &str) -> String {
 }
 
 const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
+const EXPLORER_MAX_TIPS: usize = 250;
+const EXPLORER_MAX_CELLS: usize = 500_000;
+
+fn json_script_escape(value: &str) -> String {
+    json_escape(value).replace("</", "<\\/")
+}
+
+fn matched_phylo_tips(node: &PhyloNode) -> usize {
+    if node.children.is_empty() {
+        usize::from(node.genome_idx.is_some())
+    } else {
+        node.children.iter().map(matched_phylo_tips).sum()
+    }
+}
+
+fn pruned_phylo_json(node: &PhyloNode) -> Option<String> {
+    use std::fmt::Write as _;
+
+    if node.children.is_empty() {
+        let gi = node.genome_idx?;
+        let mut out = String::new();
+        write!(
+            out,
+            "{{\"label\":{},\"genome\":{},\"children\":[]}}",
+            json_script_escape(node.label.as_deref().unwrap_or("")),
+            gi.val()
+        )
+        .expect("write to String is infallible");
+        return Some(out);
+    }
+
+    let children: Vec<String> = node.children.iter().filter_map(pruned_phylo_json).collect();
+    if children.is_empty() {
+        return None;
+    }
+
+    let mut out = String::new();
+    write!(
+        out,
+        "{{\"label\":{},\"genome\":null,\"children\":[{}]}}",
+        json_script_escape(node.label.as_deref().unwrap_or("")),
+        children.join(",")
+    )
+    .expect("write to String is infallible");
+    Some(out)
+}
+
+fn metadata_column_index(pa: &crate::parser::PresenceAbsence, name: &str) -> Option<usize> {
+    let mut meta_idx = 0usize;
+    for (col_idx, header) in pa.header().iter().enumerate() {
+        if pa.genome_col_indices().contains(&col_idx) {
+            continue;
+        }
+        if header == name {
+            return Some(meta_idx);
+        }
+        meta_idx += 1;
+    }
+    None
+}
+
+fn explorer_state_char(
+    pa: &crate::parser::PresenceAbsence,
+    ci: ClusterIdx,
+    gi: GenomeIdx,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_presence: &ahash::HashSet<(usize, usize)>,
+) -> char {
+    if pa.is_present(ci, gi) {
+        'P'
+    } else if rescue_map.contains_key(&(ci, gi)) {
+        'R'
+    } else if nsc_presence.contains(&(ci.val(), gi.val())) {
+        'N'
+    } else {
+        'A'
+    }
+}
+
+fn build_explorer_data_json(
+    pa: &crate::parser::PresenceAbsence,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+    tree: &PhyloTree,
+) -> Option<String> {
+    use std::fmt::Write as _;
+
+    let tree_json = pruned_phylo_json(&tree.root)?;
+    let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
+    let clusters_to_skip: ahash::HashSet<usize> = nsc_result
+        .as_ref()
+        .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
+        .unwrap_or_default();
+    let annotation_idx = metadata_column_index(pa, "Annotation");
+
+    let mut out = String::new();
+    out.push_str("{\"genomes\":[");
+    for (idx, genome) in pa.genome_names().iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_script_escape(genome));
+    }
+    out.push_str("],\"clusters\":[");
+
+    let mut states = Vec::new();
+    let mut first_cluster = true;
+    for ci_val in 0..pa.n_clusters() {
+        if clusters_to_skip.contains(&ci_val) {
+            continue;
+        }
+        let ci = ClusterIdx(ci_val);
+        let mut row_states = String::with_capacity(pa.n_genomes());
+        let mut present_after = 0usize;
+        for gi_val in 0..pa.n_genomes() {
+            let state = explorer_state_char(pa, ci, GenomeIdx(gi_val), rescue_map, &nsc_presence);
+            if state != 'A' {
+                present_after += 1;
+            }
+            row_states.push(state);
+        }
+        if !first_cluster {
+            out.push(',');
+        }
+        first_cluster = false;
+        let annotation = annotation_idx
+            .and_then(|idx| pa.metadata(ci).get(idx))
+            .map(String::as_str)
+            .unwrap_or("");
+        let prevalence = if pa.n_genomes() == 0 {
+            0.0
+        } else {
+            present_after as f64 / pa.n_genomes() as f64
+        };
+        write!(
+            out,
+            "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5}}}",
+            json_script_escape(pa.cluster_name(ci)),
+            json_script_escape(annotation),
+            present_after,
+            prevalence
+        )
+        .expect("write to String is infallible");
+        states.push(row_states);
+    }
+
+    out.push_str("],\"states\":[");
+    for (idx, state_row) in states.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_script_escape(state_row));
+    }
+    out.push_str("],\"tree\":");
+    out.push_str(&tree_json);
+    out.push('}');
+    Some(out)
+}
+
+fn explorer_unavailable_html(reason: &str) -> String {
+    format!(
+        "<section class='panel full explorer' style='margin-top:14px'><h2>Phylogeny and matrix explorer</h2><p class='muted'>{}</p></section>",
+        html_escape(reason)
+    )
+}
+
+fn phylo_matrix_explorer_html(
+    pa: &crate::parser::PresenceAbsence,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+    phylo_tree: Option<&PhyloTree>,
+) -> String {
+    let Some(tree) = phylo_tree else {
+        return explorer_unavailable_html(
+            "Add --tree to include an interactive phylogeny plus matrix explorer in this report.",
+        );
+    };
+    let matched_tips = matched_phylo_tips(&tree.root);
+    if matched_tips == 0 {
+        return explorer_unavailable_html(
+            "The supplied tree has no tips matching matrix genomes, so the explorer was not embedded.",
+        );
+    }
+    if matched_tips > EXPLORER_MAX_TIPS {
+        return explorer_unavailable_html(&format!(
+            "The tree has {} matched tips. The interactive explorer is embedded only up to {} tips to keep the report responsive.",
+            matched_tips, EXPLORER_MAX_TIPS
+        ));
+    }
+
+    let rendered_clusters = nsc_result
+        .as_ref()
+        .map(|r| pa.n_clusters().saturating_sub(r.merge_map.len()))
+        .unwrap_or_else(|| pa.n_clusters());
+    let cell_count = matched_tips.saturating_mul(rendered_clusters);
+    if cell_count > EXPLORER_MAX_CELLS {
+        return explorer_unavailable_html(&format!(
+            "The tree and matrix would embed {} cells ({} tips x {} clusters). The explorer limit is {} cells; use gene_presence_absence_recore_states.csv for the full matrix.",
+            format_count(cell_count),
+            matched_tips,
+            rendered_clusters,
+            format_count(EXPLORER_MAX_CELLS)
+        ));
+    }
+
+    let Some(data_json) = build_explorer_data_json(pa, rescue_map, nsc_result, tree) else {
+        return explorer_unavailable_html(
+            "The tree could not be converted into a matched-tip browser explorer.",
+        );
+    };
+
+    let mut html = String::new();
+    html.push_str("<section class='panel full explorer' style='margin-top:14px'>");
+    html.push_str("<div class='explorer-head'><div><h2>Phylogeny and matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the pruned tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
+    html.push_str("<div class='explorer-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><span id='clusterInfo' class='muted'></span></div>");
+    html.push_str("<div class='explorer-grid'><div class='tree-pane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane'><canvas id='matrixCanvas'></canvas></div></div><div id='matrixStatus' class='matrix-status muted'>Hover over the matrix to inspect a cell.</div>");
+    html.push_str("<script>window.recoreExplorerData=");
+    html.push_str(&data_json);
+    html.push_str(
+        r##";(() => {
+const data = window.recoreExplorerData;
+if (!data || !data.clusters.length) return;
+const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", A:"#ffffff"};
+const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
+const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC", A:"absent"};
+const select = document.getElementById("clusterSelect");
+const search = document.getElementById("clusterSearch");
+const info = document.getElementById("clusterInfo");
+const status = document.getElementById("matrixStatus");
+const svg = document.getElementById("treeSvg");
+const canvas = document.getElementById("matrixCanvas");
+const ctx = canvas.getContext("2d");
+let selected = 0;
+let leafOrder = [];
+let maxDepth = 0;
+let treeHeight = 0;
+let treeWidth = 360;
+let cellH = 10;
+let cellW = 5;
+
+function stateAt(clusterIdx, genomeIdx) {
+  return (data.states[clusterIdx] && data.states[clusterIdx][genomeIdx]) || "A";
+}
+function layout(node, depth) {
+  node.depth = depth;
+  maxDepth = Math.max(maxDepth, depth);
+  if (!node.children || node.children.length === 0) {
+    node.row = leafOrder.length;
+    leafOrder.push(node.genome);
+    return node.row;
+  }
+  let sum = 0;
+  let count = 0;
+  node.children.forEach(child => { sum += layout(child, depth + 1); count += 1; });
+  node.row = count ? sum / count : leafOrder.length;
+  return node.row;
+}
+function stateClass(state) {
+  if (state === "R") return "r";
+  if (state === "N") return "n";
+  if (state === "A") return "a";
+  return "p";
+}
+function populateOptions() {
+  const q = search.value.trim().toLowerCase();
+  select.innerHTML = "";
+  data.clusters.forEach((cluster, idx) => {
+    const haystack = (cluster.name + " " + (cluster.annotation || "")).toLowerCase();
+    if (q && !haystack.includes(q)) return;
+    const opt = document.createElement("option");
+    opt.value = String(idx);
+    opt.textContent = cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
+    select.appendChild(opt);
+  });
+  if (![...select.options].some(opt => Number(opt.value) === selected)) {
+    selected = select.options.length ? Number(select.options[0].value) : 0;
+  }
+  select.value = String(selected);
+}
+function drawNode(node, parts, xScale) {
+  const x = 14 + node.depth * xScale;
+  const y = 18 + node.row * cellH;
+  if (node.children && node.children.length) {
+    node.children.forEach(child => {
+      const cx = 14 + child.depth * xScale;
+      const cy = 18 + child.row * cellH;
+      parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge"/>`);
+      parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"/>`);
+      drawNode(child, parts, xScale);
+    });
+  } else {
+    const state = stateAt(selected, node.genome);
+    const label = data.genomes[node.genome] || node.label || "";
+    parts.push(`<circle cx="${x}" cy="${y}" r="4" fill="${colors[state]}" stroke="${strokes[state]}" stroke-width="1.2"><title>${label}: ${labels[state]}</title></circle>`);
+    parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
+  }
+}
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+}
+function renderTree() {
+  const xScale = Math.max(24, (treeWidth - 155) / Math.max(1, maxDepth));
+  const parts = [];
+  drawNode(data.tree, parts, xScale);
+  svg.setAttribute("width", String(treeWidth));
+  svg.setAttribute("height", String(treeHeight));
+  svg.setAttribute("viewBox", `0 0 ${treeWidth} ${treeHeight}`);
+  svg.innerHTML = parts.join("");
+}
+function renderMatrix(scrollToSelected) {
+  const rows = leafOrder.length;
+  const cols = data.clusters.length;
+  cellH = rows <= 80 ? 13 : rows <= 160 ? 9 : 6;
+  cellW = cols <= 120 ? 8 : cols <= 400 ? 5 : 3;
+  treeHeight = Math.max(70, rows * cellH + 36);
+  canvas.width = Math.max(1, cols * cellW);
+  canvas.height = Math.max(1, rows * cellH);
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let r = 0; r < rows; r += 1) {
+    const genomeIdx = leafOrder[r];
+    for (let c = 0; c < cols; c += 1) {
+      ctx.fillStyle = colors[stateAt(c, genomeIdx)] || colors.A;
+      ctx.fillRect(c * cellW, r * cellH, Math.max(1, cellW - 1), Math.max(1, cellH - 1));
+    }
+  }
+  ctx.strokeStyle = "#111827";
+  ctx.lineWidth = Math.max(1, Math.min(2, cellW));
+  ctx.strokeRect(selected * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, canvas.height - 1));
+  if (scrollToSelected) {
+    const pane = canvas.parentElement;
+    pane.scrollLeft = Math.max(0, selected * cellW - 80);
+  }
+  const cluster = data.clusters[selected];
+  info.textContent = cluster ? `${cluster.name}: ${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)` : "";
+}
+function render(scrollToSelected = false) {
+  renderMatrix(scrollToSelected);
+  renderTree();
+}
+layout(data.tree, 0);
+populateOptions();
+render(true);
+search.addEventListener("input", () => { populateOptions(); render(true); });
+select.addEventListener("change", () => { selected = Number(select.value || 0); render(true); });
+canvas.addEventListener("mousemove", event => {
+  const rect = canvas.getBoundingClientRect();
+  const c = Math.floor((event.clientX - rect.left) / cellW);
+  const r = Math.floor((event.clientY - rect.top) / cellH);
+  if (c < 0 || r < 0 || c >= data.clusters.length || r >= leafOrder.length) return;
+  const genomeIdx = leafOrder[r];
+  const state = stateAt(c, genomeIdx);
+  status.textContent = `${data.clusters[c].name} / ${data.genomes[genomeIdx]}: ${labels[state]}`;
+});
+canvas.addEventListener("click", event => {
+  const rect = canvas.getBoundingClientRect();
+  const c = Math.floor((event.clientX - rect.left) / cellW);
+  if (c < 0 || c >= data.clusters.length) return;
+  selected = c;
+  search.value = "";
+  populateOptions();
+  render(true);
+});
+})();</script>"##,
+    );
+    html.push_str("</section>");
+    html
+}
 
 pub(super) fn write_html_report(
     args: &Args,
@@ -1119,6 +1489,7 @@ pub(super) fn write_html_report(
     stats: &SummaryStats,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     nsc_result: &Option<nscluster::NsClusterResult>,
+    phylo_tree: Option<&PhyloTree>,
     output_dir: &std::path::Path,
 ) -> Result<()> {
     use std::fmt::Write as _;
@@ -1173,8 +1544,11 @@ pub(super) fn write_html_report(
         table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line);padding:8px 6px}td{border-bottom:1px solid #eaecf0;padding:8px 6px;vertical-align:top}tr:last-child td{border-bottom:0}
         .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;background:#eef4ff;color:#1849a9}.badge.review{background:#fff6ed;color:var(--amber)}.badge.filter{background:#fef3f2;color:var(--red)}.badge.pass{background:#ecfdf3;color:var(--green)}
         .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
+        .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#155eef}.sw.r{background:#12b76a}.sw.n{background:#7a5af8}.sw.a{background:#fff}
+        .explorer-controls{display:grid;grid-template-columns:minmax(160px,1fr) minmax(220px,2fr) minmax(170px,1fr);gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}
+        .explorer-grid{display:grid;grid-template-columns:380px minmax(0,1fr);gap:12px;margin-top:14px}.tree-pane,.matrix-pane{border:1px solid var(--line);border-radius:12px;background:#fff;overflow:auto;min-height:180px;max-height:520px}.tree-edge{stroke:#98a2b3;stroke-width:1.2;fill:none}.tip-label{font-size:10px;fill:#344054}.matrix-pane{position:relative}.matrix-pane canvas{display:block;image-rendering:pixelated}.matrix-status{margin-top:8px;font-size:12px}
         footer{color:var(--muted);font-size:12px;margin:18px 4px}
-        @media(max-width:900px){.grid,.section-grid,.files{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:86px;height:50px}}
+        @media(max-width:900px){.grid,.section-grid,.files,.explorer-grid,.explorer-controls{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:86px;height:50px}}
         </style>",
     );
     html.push_str("</head><body><main>");
@@ -1331,6 +1705,10 @@ pub(super) fn write_html_report(
         html.push_str("</tbody></table>");
     }
     html.push_str("</section>");
+
+    html.push_str(&phylo_matrix_explorer_html(
+        pa, rescue_map, nsc_result, phylo_tree,
+    ));
 
     html.push_str("<section class='panel full' style='margin-top:14px'><h2>Files to inspect</h2><div class='files'>");
     for (path, description) in [

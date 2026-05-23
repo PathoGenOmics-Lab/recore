@@ -55,6 +55,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
         ">gA\nATGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGTAA\n\
          >gB\n{}\n\
          >gC\n{}\n", gene_b, gene_c));
+    write_file(base, "tree.nwk", "((s1,s2),s3);\n");
 
     // ── Genome FASTAs ──
     // s2 and s3 contain the gene sequences (they should be rescued)
@@ -100,6 +101,8 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
             "0.0",
             "--write-corrected-gff",
             "--write-html-report",
+            "--tree",
+            base.join("tree.nwk").to_str().unwrap(),
         ])
         .status()
         .expect("Failed to run recore binary");
@@ -175,6 +178,8 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("<title>Recore run report</title>"));
     assert!(html_report.contains("Orthology actions"));
     assert!(html_report.contains("Top candidate clusters"));
+    assert!(html_report.contains("Phylogeny and matrix explorer"));
+    assert!(html_report.contains("window.recoreExplorerData"));
 
     // ── Verify corrected GFF ──
     let gff_content =

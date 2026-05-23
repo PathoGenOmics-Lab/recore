@@ -618,7 +618,11 @@ The guard is reported in `orthology_evidence.tsv` as
 For a polished run summary, add `--write-html-report` to the Recore command.
 This writes `recore_report.html` directly inside the output directory, with
 headline matrix counts, QC bars, evolutionary mechanisms, top candidate
-clusters, and links to the exact TSV files behind the summary.
+clusters, and links to the exact TSV files behind the summary. When `--tree`
+is supplied and the tree/matrix is small enough for a browser, the same report
+also embeds an interactive phylogeny plus corrected matrix explorer: choose or
+click a gene cluster to recolor tree tips dynamically by input presence,
+Recore rescue, NSC support, or absence.
 
 Recore also includes lightweight Python utilities for reproducible review:
 

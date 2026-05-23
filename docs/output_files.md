@@ -539,6 +539,17 @@ QC. It summarizes:
 - the top candidate clusters ranked by `evolutionary_signal_score`;
 - direct links to the exact output files used to generate the summary.
 
+When `--tree` is supplied and the matched tree/matrix is small enough for a
+responsive browser view, the report also embeds a phylogeny plus corrected
+matrix explorer. The explorer prunes the tree to matched matrix tips, keeps
+matrix rows in tree order, lets the user search/select clusters, recolors tree
+tips dynamically by the selected cluster state, and lets users click matrix
+columns to change the selected cluster.
+
+The embedded explorer is intentionally size-limited. Larger runs keep the
+static audit summary and report why the explorer was omitted, rather than
+writing a sluggish HTML file.
+
 The HTML report is an audit dashboard, not a replacement for the TSV outputs.
 Use the TSV files for exact filtering, statistics, and downstream figures.
 

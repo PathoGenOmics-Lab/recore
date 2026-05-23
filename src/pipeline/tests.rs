@@ -184,13 +184,105 @@ fn html_report_summarizes_run_outputs() {
         nsc_merged_genes: 0,
     };
 
-    write_html_report(&args, &pa, &stats, &HashMap::new(), &None, out.path()).unwrap();
+    write_html_report(&args, &pa, &stats, &HashMap::new(), &None, None, out.path()).unwrap();
 
     let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
     assert!(text.contains("<title>Recore run report</title>"));
     assert!(text.contains("group_1"));
     assert!(text.contains("Orthology actions"));
+    assert!(text.contains("Add --tree"));
     assert!(text.contains("gene_presence_absence_recore.csv"));
+}
+
+#[test]
+fn html_report_embeds_small_phylogeny_matrix_explorer() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(
+        out.path().join("orthology_evidence.tsv"),
+        b"matrix_action\torthology_confidence_tier\ncorrect_presence\thigh_confidence\n",
+    )
+    .unwrap();
+    std::fs::write(
+        out.path().join("evolutionary_events.tsv"),
+        b"gene_cluster\thighlight_priority\tevolutionary_signal_score\tmolecular_mechanism\tsupport_level\tphylogenetic_pattern\trecommended_wording\ngroup_1\thighlight\t0.910\tclade_associated_gain\thigh\tclade_gain\tDescribe as clade-associated.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        out.path().join("genome_qc.tsv"),
+        b"genome\tqc_status\ng1\tpass\n",
+    )
+    .unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["group_1".into(), "group_2".into()],
+        vec!["g1".into(), "g2".into()],
+        vec![
+            vec!["gene1".into(), "".into()],
+            vec!["".into(), "gene2".into()],
+        ],
+    );
+    let mut args = default_args_for_validation();
+    args.output = out.path().to_path_buf();
+    args.write_html_report = true;
+    args.tree = Some(out.path().join("tree.nwk"));
+    let stats = SummaryStats {
+        core_before: 0,
+        total_gaps: 2,
+        filtered_gaps: 2,
+        skipped_by_prevalence: 0,
+        searchable_gaps: 2,
+        missing_fasta_gaps: 0,
+        dropped: 0,
+        missing_cds: 0,
+        split: 0,
+        fragmented: 0,
+        alignment_split: 0,
+        start_variant: 0,
+        paralog: 0,
+        pseudogene: 0,
+        synteny_rejected: 0,
+        paralog_rejected: 0,
+        matrix_policy: MatrixPolicy::Balanced,
+        matrix_corrected: 0,
+        nsc_matrix_corrected: 0,
+        synteny_enabled: false,
+        nsc_clusters: 0,
+        nsc_merged_genes: 0,
+    };
+    let tree = PhyloTree {
+        root: PhyloNode {
+            label: None,
+            genome_idx: None,
+            children: vec![
+                PhyloNode {
+                    label: Some("g1".into()),
+                    genome_idx: Some(GenomeIdx(0)),
+                    children: Vec::new(),
+                },
+                PhyloNode {
+                    label: Some("g2".into()),
+                    genome_idx: Some(GenomeIdx(1)),
+                    children: Vec::new(),
+                },
+            ],
+        },
+    };
+
+    write_html_report(
+        &args,
+        &pa,
+        &stats,
+        &HashMap::new(),
+        &None,
+        Some(&tree),
+        out.path(),
+    )
+    .unwrap();
+
+    let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
+    assert!(text.contains("Phylogeny and matrix explorer"));
+    assert!(text.contains("window.recoreExplorerData"));
+    assert!(text.contains("\"states\":[\"PA\",\"AP\"]"));
+    assert!(text.contains("matrixCanvas"));
 }
 
 #[test]

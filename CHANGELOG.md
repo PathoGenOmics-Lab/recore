@@ -41,6 +41,9 @@ and Recore uses semantic versioning.
 - Added `--write-html-report` to write a self-contained HTML run report with
   headline QC, correction counts, mechanisms, top candidate clusters, and
   links to the underlying audit tables.
+- The HTML report now embeds an interactive phylogeny plus matrix explorer
+  for small `--tree` runs, with searchable clusters, clickable matrix columns,
+  and dynamic tip coloring by corrected gene state.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.
