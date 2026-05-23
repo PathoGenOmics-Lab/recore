@@ -697,18 +697,18 @@ pub fn run(args: &Args) -> Result<()> {
             .then(a.genome_idx.cmp(&b.genome_idx))
     });
     let mobile_element_hits = if let Some(path) = args.mobile_element_reference.as_deref() {
-        search_mobile_element_reference(
+        search_mobile_element_reference(MobileElementSearchInput {
             path,
-            &genome_files,
-            &pa,
-            &rescues,
-            &synteny_rejected,
-            &paralog_rejected,
-            args.threads,
-            args.mobile_element_min_identity,
-            args.mobile_element_min_coverage,
-            &args.preset,
-        )?
+            genome_files: &genome_files,
+            pa: &pa,
+            rescues: &rescues,
+            synteny_rejected: &synteny_rejected,
+            paralog_rejected: &paralog_rejected,
+            threads: args.threads,
+            min_identity: args.mobile_element_min_identity,
+            min_coverage: args.mobile_element_min_coverage,
+            preset: &args.preset,
+        })?
     } else {
         Vec::new()
     };
@@ -1534,11 +1534,11 @@ fn reference_candidate_score(rescue: &RescueEvent) -> f64 {
     rescue.confidence + (rescue.identity / 100.0) + (rescue.coverage / 100.0) + synteny_bonus
 }
 
-fn best_reference_candidate<'a>(
-    candidates: &'a [RescueEvent],
+fn best_reference_candidate(
+    candidates: &[RescueEvent],
     ci: ClusterIdx,
     reference_gi: GenomeIdx,
-) -> Option<&'a RescueEvent> {
+) -> Option<&RescueEvent> {
     candidates
         .iter()
         .filter(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
@@ -2892,20 +2892,28 @@ fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
     Some((kind, joined))
 }
 
-fn search_mobile_element_reference(
-    path: &Path,
-    genome_files: &HashMap<String, PathBuf>,
-    pa: &crate::parser::PresenceAbsence,
-    rescues: &[RescueEvent],
-    synteny_rejected: &[RescueEvent],
-    paralog_rejected: &[RescueEvent],
+struct MobileElementSearchInput<'a> {
+    path: &'a Path,
+    genome_files: &'a HashMap<String, PathBuf>,
+    pa: &'a crate::parser::PresenceAbsence,
+    rescues: &'a [RescueEvent],
+    synteny_rejected: &'a [RescueEvent],
+    paralog_rejected: &'a [RescueEvent],
     threads: usize,
     min_identity: f64,
     min_coverage: f64,
-    preset: &str,
+    preset: &'a str,
+}
+
+fn search_mobile_element_reference(
+    input: MobileElementSearchInput<'_>,
 ) -> Result<Vec<MobileElementHit>> {
-    let mobile_ref = parse_pan_reference(path, true)
-        .with_context(|| format!("Cannot parse mobile-element FASTA {}", path.display()))?;
+    let mobile_ref = parse_pan_reference(input.path, true).with_context(|| {
+        format!(
+            "Cannot parse mobile-element FASTA {}",
+            input.path.display()
+        )
+    })?;
     if mobile_ref.is_empty() {
         return Ok(Vec::new());
     }
@@ -2915,10 +2923,11 @@ fn search_mobile_element_reference(
     let mobile_indices: Vec<ClusterIdx> = (0..mobile_names.len()).map(ClusterIdx).collect();
 
     let mut genomes: ahash::HashSet<GenomeIdx> = ahash::HashSet::default();
-    for rescue in rescues
+    for rescue in input
+        .rescues
         .iter()
-        .chain(synteny_rejected.iter())
-        .chain(paralog_rejected.iter())
+        .chain(input.synteny_rejected.iter())
+        .chain(input.paralog_rejected.iter())
     {
         genomes.insert(rescue.genome_idx);
     }
@@ -2938,13 +2947,13 @@ fn search_mobile_element_reference(
     );
     let hits = batch_search(
         &mobile_ref,
-        genome_files,
+        input.genome_files,
         &searchable_genomes,
-        pa.genome_names(),
+        input.pa.genome_names(),
         &mobile_names,
-        threads,
-        min_identity,
-        preset,
+        input.threads,
+        input.min_identity,
+        input.preset,
         true,
         5000,
     )?;
@@ -2952,7 +2961,7 @@ fn search_mobile_element_reference(
     let mut mobile_hits = Vec::new();
     for ((gi, ci), cluster_hits) in hits {
         for hit in cluster_hits {
-            if hit.query_coverage() < min_coverage {
+            if hit.query_coverage() < input.min_coverage {
                 continue;
             }
             let identity = hit.identity();
@@ -2987,10 +2996,8 @@ fn search_mobile_element_reference(
 fn interval_distance(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> u64 {
     if end_a < start_b {
         start_b - end_a
-    } else if end_b < start_a {
-        start_a - end_b
     } else {
-        0
+        start_a.saturating_sub(end_b)
     }
 }
 
@@ -3119,11 +3126,7 @@ fn nsc_role_for_cluster(ci: ClusterIdx, nsc_result: &Option<nscluster::NsCluster
         return "nsc_member_merged_into_representative".to_string();
     }
     for cluster in &nsc.merged_clusters {
-        if cluster
-            .members
-            .iter()
-            .any(|member| *member == ci && cluster.representative.is_empty())
-        {
+        if cluster.members.contains(&ci) {
             return "nsc_representative".to_string();
         }
     }
@@ -3145,18 +3148,32 @@ fn rescue_type_counts(rescues: &[&RescueEvent]) -> String {
         .join(";")
 }
 
-fn classify_mechanism(
-    pa: &crate::parser::PresenceAbsence,
-    phylo: &PhyloPatternSummary,
-    reference_state: &str,
-    reference_event: Option<&ReferenceClusterEvent>,
-    accepted: &[&RescueEvent],
-    synteny_rejected: &[&RescueEvent],
-    paralog_rejected: &[&RescueEvent],
-    context: Option<&ClusterContextSummary>,
+struct MechanismInput<'a> {
+    pa: &'a crate::parser::PresenceAbsence,
+    phylo: &'a PhyloPatternSummary,
+    reference_state: &'a str,
+    reference_event: Option<&'a ReferenceClusterEvent>,
+    accepted: &'a [&'a RescueEvent],
+    synteny_rejected: &'a [&'a RescueEvent],
+    paralog_rejected: &'a [&'a RescueEvent],
+    context: Option<&'a ClusterContextSummary>,
     mobile: Option<MobileElementEvidence>,
-    nsc_role: &str,
-) -> MechanismCall {
+    nsc_role: &'a str,
+}
+
+fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
+    let MechanismInput {
+        pa,
+        phylo,
+        reference_state,
+        reference_event,
+        accepted,
+        synteny_rejected,
+        paralog_rejected,
+        context,
+        mobile,
+        nsc_role,
+    } = input;
     let has_pseudogene = accepted
         .iter()
         .any(|r| matches!(r.rescue_type, RescueType::Pseudogene { .. }));
@@ -3445,18 +3462,18 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
             inputs.mobile_element_window,
         );
         let nsc_role = nsc_role_for_cluster(ci, inputs.nsc_result);
-        let mechanism = classify_mechanism(
-            inputs.pa,
-            &phylo,
+        let mechanism = classify_mechanism(MechanismInput {
+            pa: inputs.pa,
+            phylo: &phylo,
             reference_state,
-            reference_events_by_cluster[ci_val],
+            reference_event: reference_events_by_cluster[ci_val],
             accepted,
             synteny_rejected,
             paralog_rejected,
-            contexts_by_cluster[ci_val],
+            context: contexts_by_cluster[ci_val],
             mobile,
-            &nsc_role,
-        );
+            nsc_role: &nsc_role,
+        });
         let is_interruption = mechanism.mechanism == "IS_interruption_supported";
         let (
             mobile_source,
@@ -4780,6 +4797,31 @@ mod tests {
         assert_eq!(mobile.kind, "mobile_element_sequence");
         assert_eq!(mobile.distance_bp, 0);
         assert!(mobile.label.contains("ISfinder_anon_001"));
+    }
+
+    #[test]
+    fn nsc_role_labels_member_and_representative() {
+        let mut merge_map = HashMap::new();
+        merge_map.insert(ClusterIdx(2), ClusterIdx(1));
+        let nsc = Some(nscluster::NsClusterResult {
+            merged_clusters: vec![nscluster::NsCluster {
+                members: vec![ClusterIdx(1), ClusterIdx(2)],
+                representative: "group_1".into(),
+            }],
+            total_merged_genes: 2,
+            n_clusters: 1,
+            merge_map,
+        });
+
+        assert_eq!(
+            nsc_role_for_cluster(ClusterIdx(2), &nsc),
+            "nsc_member_merged_into_representative"
+        );
+        assert_eq!(
+            nsc_role_for_cluster(ClusterIdx(1), &nsc),
+            "nsc_representative"
+        );
+        assert_eq!(nsc_role_for_cluster(ClusterIdx(3), &nsc), "");
     }
 
     #[test]
