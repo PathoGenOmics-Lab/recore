@@ -89,6 +89,9 @@ No changes yet.
 - Output reports are sorted deterministically for reproducible downstream review.
 - TSV report fields are normalized to single-line values so annotation-derived
   tabs or line breaks cannot corrupt tabular outputs.
+- Large pipeline and rescue implementation files were split into smaller
+  section files, separating tests, reference audits, evolutionary summaries,
+  and output writers without changing runtime behaviour.
 
 ### Fixed
 
