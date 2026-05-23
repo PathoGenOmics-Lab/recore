@@ -455,7 +455,7 @@ Nucleotide similarity clustering:
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v5`);
+- `schema_version` (`recore.outputs.v6`);
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;
@@ -521,6 +521,26 @@ Appended rescue features use source `Recore`, type `CDS`, and include:
 These GFFs are designed as auditable corrected annotations. If a rescue overlaps
 an existing feature, the original feature is preserved and the appended Recore
 feature records the rescue evidence explicitly.
+
+---
+
+## recore_report.html
+
+Written only when `--write-html-report` is enabled.
+
+This is a self-contained browser report for run review and manuscript-facing
+QC. It summarizes:
+
+- input matrix size, searchable gaps, accepted evidence, corrected matrix cells,
+  rejected synteny/paralog evidence, and core/soft-core changes;
+- orthology actions and confidence tiers from `orthology_evidence.tsv`;
+- evolutionary priorities and dominant mechanisms from `evolutionary_events.tsv`;
+- per-genome QC status from `genome_qc.tsv`;
+- the top candidate clusters ranked by `evolutionary_signal_score`;
+- direct links to the exact output files used to generate the summary.
+
+The HTML report is an audit dashboard, not a replacement for the TSV outputs.
+Use the TSV files for exact filtering, statistics, and downstream figures.
 
 ---
 

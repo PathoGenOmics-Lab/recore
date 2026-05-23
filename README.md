@@ -68,6 +68,7 @@ recore \
   --min-prevalence 0.05 \
   --matrix-policy balanced \
   --reference-genome AS00146 \
+  --write-html-report \
   -t 8 \
   -o recore_output/
 ```
@@ -77,6 +78,8 @@ Most users should start with:
 - `--matrix-policy balanced` for the corrected binary matrix
 - `gene_presence_absence_recore_states.csv` for audit and figures
 - `orthology_evidence.tsv` for publication wording and manual review
+- `recore_report.html` from `--write-html-report` for a self-contained run
+  summary with headline QC, mechanisms, and top candidate clusters
 - `reference_genome_audit.tsv` when asking whether clusters are truly absent
   from a reference genome
 - `reference_cluster_events.tsv` to flag reference-absent clusters that look
@@ -89,7 +92,7 @@ Most users should start with:
 
 ## Current Audit Guarantees
 
-The current development branch writes output schema `recore.outputs.v5`. In
+The current development branch writes output schema `recore.outputs.v6`. In
 addition to the corrected matrix, every run now records:
 
 - early input failures for empty matrices, empty pan-reference FASTA files, and
@@ -399,6 +402,7 @@ recore_output/
 ├── genome_qc.tsv                           # per-genome rescue/annotation/QC burden
 ├── nscluster_report.tsv                    # NSC groups when --nscluster is enabled
 ├── corrected_gff/                          # optional GFF3 files with appended Recore CDSs
+├── recore_report.html                      # optional self-contained run report
 ├── run_manifest.json                       # version, schema, parameters, inputs, and run counts
 └── summary.txt                             # run summary
 ```
@@ -409,7 +413,7 @@ products, notes, and aliases cannot corrupt downstream tables.
 `run_manifest.json` records `tool_version`, `schema_version`, input paths,
 parameters, and key counts so every output directory can be traced back to the
 exact Recore configuration that produced it. Current output directories use
-schema `recore.outputs.v5`.
+schema `recore.outputs.v6`.
 
 For publication figures:
 
@@ -527,6 +531,7 @@ Pseudogene sub-types:
 | `--mobile-element-min-coverage` | `50.0` | minimum query coverage for mobile-element reference hits |
 | `--mobile-element-window` | `1000` | maximum distance in bp from a rescue/disruption interval to report mobile-element support |
 | `--write-corrected-gff` | off | write GFF3 files with appended rescued CDS features |
+| `--write-html-report` | off | write a self-contained `recore_report.html` with headline QC, correction counts, mechanisms, and top candidate clusters |
 | `-t, --threads` | `4` | number of threads |
 
 ### Nucleotide Similarity Clustering
@@ -610,14 +615,19 @@ The guard is reported in `orthology_evidence.tsv` as
 
 ### Run Review Utilities
 
-Recore includes lightweight Python utilities for reproducible review:
+For a polished run summary, add `--write-html-report` to the Recore command.
+This writes `recore_report.html` directly inside the output directory, with
+headline matrix counts, QC bars, evolutionary mechanisms, top candidate
+clusters, and links to the exact TSV files behind the summary.
+
+Recore also includes lightweight Python utilities for reproducible review:
 
 - `benchmarks/self_benchmark.py`: masks known-present cells, reruns Recore, and
   estimates dataset-specific masked-positive recall plus score calibration bins.
 - `benchmarks/compare_runs.py`: compares two Recore output directories and
   labels unchanged, new, lost, and changed matrix calls.
-- `benchmarks/recore_report.py`: creates a compact Markdown/HTML report with
-  headline counts, QC, priorities, and top candidate clusters.
+- `benchmarks/recore_report.py`: creates a compact Markdown/HTML report for
+  existing output directories that were generated without `--write-html-report`.
 
 ### Evolutionary Event Interpretation
 

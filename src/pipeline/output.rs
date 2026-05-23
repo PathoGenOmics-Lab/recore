@@ -119,6 +119,8 @@ pub(super) fn clear_optional_outputs(output_dir: &std::path::Path) -> Result<()>
         "cluster_locus_context.tsv",
         "cluster_locus_summary.tsv",
         "cluster_synteny_blocks.tsv",
+        "recore_report.html",
+        "recore_report.md",
     ] {
         let path = output_dir.join(filename);
         match fs::remove_file(&path) {
@@ -816,7 +818,7 @@ pub(super) fn write_run_manifest(
         "  \"tool_version\": {},",
         json_escape(env!("CARGO_PKG_VERSION"))
     )?;
-    writeln!(w, "  \"schema_version\": \"recore.outputs.v5\",")?;
+    writeln!(w, "  \"schema_version\": \"recore.outputs.v6\",")?;
     writeln!(w, "  \"inputs\": {{")?;
     writeln!(
         w,
@@ -868,6 +870,7 @@ pub(super) fn write_run_manifest(
         "    \"write_corrected_gff\": {},",
         args.write_corrected_gff
     )?;
+    writeln!(w, "    \"write_html_report\": {},", args.write_html_report)?;
     if let Some(reference_genome) = args.reference_genome.as_deref() {
         writeln!(
             w,
@@ -939,5 +942,442 @@ pub(super) fn write_run_manifest(
     writeln!(w, "  }}")?;
     writeln!(w, "}}")?;
     w.flush()?;
+    Ok(())
+}
+
+fn html_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn format_count(value: usize) -> String {
+    let text = value.to_string();
+    let mut out = String::with_capacity(text.len() + text.len() / 3);
+    for (idx, ch) in text.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
+fn count_tsv_column(path: &std::path::Path, column: &str) -> Result<BTreeMap<String, usize>> {
+    let mut counts = BTreeMap::new();
+    if !path.exists() {
+        return Ok(counts);
+    }
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    let headers = reader.headers()?.clone();
+    let Some(col_idx) = headers.iter().position(|header| header == column) else {
+        return Ok(counts);
+    };
+    for record in reader.records() {
+        let record = record?;
+        let value = record.get(col_idx).unwrap_or("").trim();
+        let key = if value.is_empty() { "NA" } else { value };
+        *counts.entry(key.to_string()).or_default() += 1;
+    }
+    Ok(counts)
+}
+
+#[derive(Debug, Clone)]
+struct CandidateReportRow {
+    cluster: String,
+    priority: String,
+    score: f64,
+    mechanism: String,
+    support: String,
+    phylo: String,
+    wording: String,
+}
+
+fn top_candidate_rows(path: &std::path::Path, limit: usize) -> Result<Vec<CandidateReportRow>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    let headers = reader.headers()?.clone();
+    let idx = |name: &str| headers.iter().position(|header| header == name);
+    let Some(cluster_idx) = idx("gene_cluster") else {
+        return Ok(Vec::new());
+    };
+    let priority_idx = idx("highlight_priority");
+    let score_idx = idx("evolutionary_signal_score");
+    let mechanism_idx = idx("molecular_mechanism");
+    let support_idx = idx("support_level");
+    let phylo_idx = idx("phylogenetic_pattern");
+    let wording_idx = idx("recommended_wording");
+
+    let mut rows = Vec::new();
+    for record in reader.records() {
+        let record = record?;
+        let score = score_idx
+            .and_then(|i| record.get(i))
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        rows.push(CandidateReportRow {
+            cluster: record.get(cluster_idx).unwrap_or("").to_string(),
+            priority: priority_idx
+                .and_then(|i| record.get(i))
+                .unwrap_or("")
+                .to_string(),
+            score,
+            mechanism: mechanism_idx
+                .and_then(|i| record.get(i))
+                .unwrap_or("")
+                .to_string(),
+            support: support_idx
+                .and_then(|i| record.get(i))
+                .unwrap_or("")
+                .to_string(),
+            phylo: phylo_idx
+                .and_then(|i| record.get(i))
+                .unwrap_or("")
+                .to_string(),
+            wording: wording_idx
+                .and_then(|i| record.get(i))
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    rows.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.cluster.cmp(&b.cluster))
+    });
+    rows.truncate(limit);
+    Ok(rows)
+}
+
+fn count_items_html(title: &str, counts: &BTreeMap<String, usize>, empty: &str) -> String {
+    use std::fmt::Write as _;
+    let mut html = String::new();
+    write!(
+        html,
+        "<section class='panel'><h2>{}</h2>",
+        html_escape(title)
+    )
+    .expect("write to String is infallible");
+    if counts.is_empty() {
+        write!(
+            html,
+            "<p class='muted'>{}</p></section>",
+            html_escape(empty)
+        )
+        .expect("write to String is infallible");
+        return html;
+    }
+    let max = counts.values().copied().max().unwrap_or(1).max(1);
+    html.push_str("<div class='bars'>");
+    let mut rows: Vec<_> = counts.iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    for (label, value) in rows {
+        let pct = (*value as f64 / max as f64 * 100.0).clamp(2.0, 100.0);
+        write!(
+            html,
+            "<div class='bar-row'><div class='bar-label'><span>{}</span><strong>{}</strong></div><div class='track'><div class='bar' style='width:{:.1}%'></div></div></div>",
+            html_escape(label),
+            format_count(*value),
+            pct
+        )
+        .expect("write to String is infallible");
+    }
+    html.push_str("</div></section>");
+    html
+}
+
+fn file_link_html(path: &str, description: &str) -> String {
+    format!(
+        "<a class='file' href='{0}'><span>{0}</span><small>{1}</small></a>",
+        html_escape(path),
+        html_escape(description)
+    )
+}
+
+const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
+
+pub(super) fn write_html_report(
+    args: &Args,
+    pa: &crate::parser::PresenceAbsence,
+    stats: &SummaryStats,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    use std::fmt::Write as _;
+
+    let matrix_corrected_total = stats.matrix_corrected + stats.nsc_matrix_corrected;
+    let rescued = stats.dropped
+        + stats.missing_cds
+        + stats.split
+        + stats.fragmented
+        + stats.alignment_split
+        + stats.start_variant
+        + stats.paralog
+        + stats.pseudogene;
+    let core_after = count_core_after(pa, rescue_map, nsc_result);
+    let soft_before = pa.soft_core_size();
+    let soft_after = count_soft_core_after(pa, rescue_map, nsc_result);
+
+    let orthology_actions =
+        count_tsv_column(&output_dir.join("orthology_evidence.tsv"), "matrix_action")?;
+    let orthology_tiers = count_tsv_column(
+        &output_dir.join("orthology_evidence.tsv"),
+        "orthology_confidence_tier",
+    )?;
+    let priorities = count_tsv_column(
+        &output_dir.join("evolutionary_events.tsv"),
+        "highlight_priority",
+    )?;
+    let mechanisms = count_tsv_column(
+        &output_dir.join("evolutionary_events.tsv"),
+        "molecular_mechanism",
+    )?;
+    let qc = count_tsv_column(&output_dir.join("genome_qc.tsv"), "qc_status")?;
+    let top_candidates = top_candidate_rows(&output_dir.join("evolutionary_events.tsv"), 12)?;
+
+    let mut html = String::new();
+    html.push_str("<!doctype html><html lang='en'><head><meta charset='utf-8'>");
+    html.push_str("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+    html.push_str("<title>Recore run report</title>");
+    html.push_str(
+        "<style>
+        :root{color-scheme:light;--ink:#17202a;--muted:#667085;--line:#d0d5dd;--bg:#f6f8fb;--panel:#ffffff;--blue:#155eef;--green:#067647;--amber:#b54708;--red:#b42318}
+        *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+        main{max-width:1180px;margin:0 auto;padding:28px}
+        header{background:linear-gradient(135deg,#102a43,#155eef);color:white;border-radius:18px;padding:28px;margin-bottom:18px;box-shadow:0 16px 38px rgba(16,42,67,.18)}
+        .brand{display:flex;align-items:center;gap:18px}.logo{width:108px;height:62px;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.94);padding:7px;flex:0 0 auto}.logo svg{width:100%;height:100%;display:block}.hero-text{min-width:0}.path{word-break:break-all}
+        .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:11px;opacity:.82;font-weight:700}h1{margin:6px 0 8px;font-size:30px;line-height:1.1}h2{font-size:16px;margin:0 0 14px}p{margin:0}.muted{color:var(--muted)}header .muted{color:rgba(255,255,255,.75)}
+        .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.pill{border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:6px 10px;background:rgba(255,255,255,.12);font-size:12px}
+        .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 8px 20px rgba(16,24,40,.05)}
+        .card .label{color:var(--muted);font-size:12px}.card .value{font-size:26px;font-weight:760;margin-top:4px}.card .sub{color:var(--muted);font-size:12px;margin-top:2px}
+        .wide{grid-column:span 2}.full{grid-column:1/-1}.section-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+        .bars{display:grid;gap:10px}.bar-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:4px}.track{height:9px;background:#eef2f6;border-radius:999px;overflow:hidden}.bar{height:100%;background:linear-gradient(90deg,#155eef,#12b76a);border-radius:999px}
+        table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line);padding:8px 6px}td{border-bottom:1px solid #eaecf0;padding:8px 6px;vertical-align:top}tr:last-child td{border-bottom:0}
+        .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;background:#eef4ff;color:#1849a9}.badge.review{background:#fff6ed;color:var(--amber)}.badge.filter{background:#fef3f2;color:var(--red)}.badge.pass{background:#ecfdf3;color:var(--green)}
+        .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
+        footer{color:var(--muted);font-size:12px;margin:18px 4px}
+        @media(max-width:900px){.grid,.section-grid,.files{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:86px;height:50px}}
+        </style>",
+    );
+    html.push_str("</head><body><main>");
+
+    html.push_str("<header><div class='brand'><div class='logo'>");
+    html.push_str(REPORT_LOGO);
+    write!(
+        html,
+        "</div><div class='hero-text'><div class='kicker'>Recore run report</div><h1>Correction audit</h1><p class='muted'>Publication-oriented audit of the corrected pangenome matrix.</p><p class='muted path'>Output: {}</p></div></div><div class='meta'><span class='pill'>schema recore.outputs.v6</span><span class='pill'>policy {:?}</span><span class='pill'>synteny {}</span><span class='pill'>NSC {}</span><span class='pill'>reference {}</span></div></header>",
+        html_escape(&output_dir.display().to_string()),
+        stats.matrix_policy,
+        if args.synteny { "on" } else { "off" },
+        if args.nscluster { "on" } else { "off" },
+        html_escape(args.reference_genome.as_deref().unwrap_or("not assessed")),
+    )
+    .expect("write to String is infallible");
+
+    html.push_str("<section class='grid'>");
+    for (label, value, sub) in [
+        ("Clusters", format_count(pa.n_clusters()), "input matrix"),
+        ("Genomes", format_count(pa.n_genomes()), "input matrix"),
+        (
+            "Searchable gaps",
+            format_count(stats.searchable_gaps),
+            "after filters and FASTA matching",
+        ),
+        (
+            "Matrix corrected",
+            format_count(matrix_corrected_total),
+            "rescues + NSC merged cells",
+        ),
+        (
+            "Accepted rescues",
+            format_count(rescued),
+            "all accepted evidence rows",
+        ),
+        (
+            "Rejected evidence",
+            format_count(stats.synteny_rejected + stats.paralog_rejected),
+            "synteny/paralog guardrails",
+        ),
+        (
+            "Core genome",
+            format!(
+                "{} -> {}",
+                format_count(stats.core_before),
+                format_count(core_after)
+            ),
+            "strict core clusters",
+        ),
+        (
+            "Soft-core",
+            format!(
+                "{} -> {}",
+                format_count(soft_before),
+                format_count(soft_after)
+            ),
+            ">=95% prevalence",
+        ),
+    ] {
+        write!(
+            html,
+            "<div class='card'><div class='label'>{}</div><div class='value'>{}</div><div class='sub'>{}</div></div>",
+            html_escape(label),
+            html_escape(&value),
+            html_escape(sub)
+        )
+        .expect("write to String is infallible");
+    }
+    html.push_str("</section>");
+
+    html.push_str("<section class='section-grid'>");
+    html.push_str(&count_items_html(
+        "Orthology actions",
+        &orthology_actions,
+        "No orthology evidence rows found.",
+    ));
+    html.push_str(&count_items_html(
+        "Confidence tiers",
+        &orthology_tiers,
+        "No confidence tiers found.",
+    ));
+    html.push_str(&count_items_html(
+        "Evolutionary priorities",
+        &priorities,
+        "No evolutionary priority rows found.",
+    ));
+    html.push_str(&count_items_html(
+        "Genome QC",
+        &qc,
+        "No genome QC rows found.",
+    ));
+    html.push_str("</section>");
+
+    html.push_str(
+        "<section class='panel full' style='margin-top:14px'><h2>Dominant mechanisms</h2>",
+    );
+    if mechanisms.is_empty() {
+        html.push_str("<p class='muted'>No mechanism counts found.</p>");
+    } else {
+        let mut mechanism_rows: Vec<_> = mechanisms.iter().collect();
+        mechanism_rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        let max = mechanism_rows
+            .iter()
+            .map(|(_, count)| **count)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        html.push_str("<div class='bars'>");
+        for (label, value) in mechanism_rows.into_iter().take(12) {
+            let pct = (*value as f64 / max as f64 * 100.0).clamp(2.0, 100.0);
+            write!(
+                html,
+                "<div class='bar-row'><div class='bar-label'><span>{}</span><strong>{}</strong></div><div class='track'><div class='bar' style='width:{:.1}%'></div></div></div>",
+                html_escape(label),
+                format_count(*value),
+                pct
+            )
+            .expect("write to String is infallible");
+        }
+        html.push_str("</div>");
+    }
+    html.push_str("</section>");
+
+    html.push_str(
+        "<section class='panel full' style='margin-top:14px'><h2>Top candidate clusters</h2>",
+    );
+    if top_candidates.is_empty() {
+        html.push_str("<p class='muted'>No evolutionary event table found.</p>");
+    } else {
+        html.push_str("<table><thead><tr><th>Cluster</th><th>Priority</th><th>Score</th><th>Mechanism</th><th>Phylogeny</th><th>Support</th><th>Recommended wording</th></tr></thead><tbody>");
+        for row in top_candidates {
+            let badge_class = if row.priority.contains("filter") {
+                "filter"
+            } else if row.priority.contains("review") || row.priority.contains("candidate") {
+                "review"
+            } else {
+                "pass"
+            };
+            write!(
+                html,
+                "<tr><td><strong>{}</strong></td><td><span class='badge {}'>{}</span></td><td>{:.3}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                html_escape(&row.cluster),
+                badge_class,
+                html_escape(&row.priority),
+                row.score,
+                html_escape(&row.mechanism),
+                html_escape(&row.phylo),
+                html_escape(&row.support),
+                html_escape(&row.wording)
+            )
+            .expect("write to String is infallible");
+        }
+        html.push_str("</tbody></table>");
+    }
+    html.push_str("</section>");
+
+    html.push_str("<section class='panel full' style='margin-top:14px'><h2>Files to inspect</h2><div class='files'>");
+    for (path, description) in [
+        (
+            "gene_presence_absence_recore.csv",
+            "Corrected binary matrix",
+        ),
+        (
+            "gene_presence_absence_recore_states.csv",
+            "Multistate evidence matrix",
+        ),
+        (
+            "orthology_evidence.tsv",
+            "Per-rescue decisions, adaptive scores, and risk flags",
+        ),
+        (
+            "evolutionary_events.tsv",
+            "Cluster-level mechanisms, priorities, and phylogenetic flags",
+        ),
+        (
+            "reference_genome_audit.tsv",
+            "Reference-absence audit when --reference-genome is set",
+        ),
+        (
+            "genome_qc.tsv",
+            "Per-genome FASTA/GFF/rescue/rejection burden",
+        ),
+        (
+            "cluster_components.tsv",
+            "Related split, alias, paralog, and NSC components",
+        ),
+        ("summary.txt", "Plain-text run summary"),
+    ] {
+        html.push_str(&file_link_html(path, description));
+    }
+    html.push_str("</div></section>");
+
+    write!(
+        html,
+        "<footer>Generated by Recore v{} with <code>--write-html-report</code>. This report is an audit summary; use the TSV files for exact downstream analyses.</footer>",
+        html_escape(env!("CARGO_PKG_VERSION"))
+    )
+    .expect("write to String is infallible");
+    html.push_str("</main></body></html>\n");
+
+    let path = output_dir.join("recore_report.html");
+    fs::write(&path, html).with_context(|| format!("Cannot write {}", path.display()))?;
+    info!("HTML report written to {}", path.display());
     Ok(())
 }

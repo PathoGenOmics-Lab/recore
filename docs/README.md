@@ -19,8 +19,9 @@ recore -p gene_presence_absence.csv \
        --synteny --multi-allele --nscluster \
        --matrix-policy balanced \
        --reference-genome AS00146 \
+       --write-html-report \
        --preset asm5 --min-prevalence 0.0 \
        -t 8 -o recore_output/
 ```
 
-Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `evolutionary_events.tsv`, `reference_genome_audit.tsv` and `reference_cluster_events.tsv` when `--reference-genome` is used, `gene_presence_absence_recore.csv`, `gene_presence_absence_recore_states.csv`, `summary.txt`, `run_manifest.json`, `genome_qc.tsv`, `cluster_relationships.tsv`, `cluster_components.tsv`, `cluster_component_members.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` / `cluster_synteny_blocks.tsv` when GFFs are loaded, `nscluster_report.tsv`, `synteny_rejected_report.tsv` when explicit synteny failures are found, and `paralog_rejected_report.tsv` when PARALOG candidates lack synteny support.
+Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `evolutionary_events.tsv`, `reference_genome_audit.tsv` and `reference_cluster_events.tsv` when `--reference-genome` is used, `gene_presence_absence_recore.csv`, `gene_presence_absence_recore_states.csv`, `summary.txt`, `run_manifest.json`, `recore_report.html` when `--write-html-report` is used, `genome_qc.tsv`, `cluster_relationships.tsv`, `cluster_components.tsv`, `cluster_component_members.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` / `cluster_synteny_blocks.tsv` when GFFs are loaded, `nscluster_report.tsv`, `synteny_rejected_report.tsv` when explicit synteny failures are found, and `paralog_rejected_report.tsv` when PARALOG candidates lack synteny support.

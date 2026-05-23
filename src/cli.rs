@@ -72,6 +72,10 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub write_corrected_gff: bool,
 
+    /// Write a self-contained HTML run report.
+    #[arg(long, default_value_t = false)]
+    pub write_html_report: bool,
+
     /// Policy for inserting accepted rescues into the binary corrected matrix.
     #[arg(long, value_enum, default_value_t = MatrixPolicy::Balanced)]
     pub matrix_policy: MatrixPolicy,

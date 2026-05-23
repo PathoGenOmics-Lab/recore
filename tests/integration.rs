@@ -99,6 +99,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
             "--min-prevalence",
             "0.0",
             "--write-corrected-gff",
+            "--write-html-report",
         ])
         .status()
         .expect("Failed to run recore binary");
@@ -115,6 +116,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(output_dir.join("evolutionary_events.tsv").exists());
     assert!(output_dir.join("summary.txt").exists());
     assert!(output_dir.join("run_manifest.json").exists());
+    assert!(output_dir.join("recore_report.html").exists());
     assert!(output_dir
         .join("corrected_gff")
         .join("s2.recore.gff3")
@@ -164,9 +166,15 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(summary.contains("Rescued:"));
     assert!(summary.contains("Core genome"));
     let manifest = fs::read_to_string(output_dir.join("run_manifest.json")).unwrap();
-    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v5\""));
+    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v6\""));
     assert!(manifest.contains("\"matrix_policy\": \"Balanced\""));
+    assert!(manifest.contains("\"write_html_report\": true"));
     assert!(manifest.contains("\"matrix_corrected_total\""));
+
+    let html_report = fs::read_to_string(output_dir.join("recore_report.html")).unwrap();
+    assert!(html_report.contains("<title>Recore run report</title>"));
+    assert!(html_report.contains("Orthology actions"));
+    assert!(html_report.contains("Top candidate clusters"));
 
     // ── Verify corrected GFF ──
     let gff_content =

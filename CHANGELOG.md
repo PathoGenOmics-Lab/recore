@@ -38,8 +38,11 @@ and Recore uses semantic versioning.
   rescue burden, matrix-correction burden, and rejection burden.
 - Added reproducible utilities: `benchmarks/self_benchmark.py`,
   `benchmarks/compare_runs.py`, and `benchmarks/recore_report.py`.
-- Output manifest schema version is now `recore.outputs.v5`.
-- README now documents the current v5 audit guarantees, input guardrails,
+- Added `--write-html-report` to write a self-contained HTML run report with
+  headline QC, correction counts, mechanisms, top candidate clusters, and
+  links to the underlying audit tables.
+- Output manifest schema version is now `recore.outputs.v6`.
+- README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.
 
 ### Fixed

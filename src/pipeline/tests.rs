@@ -16,6 +16,7 @@ fn default_args_for_validation() -> Args {
         multi_allele: false,
         synteny: false,
         write_corrected_gff: false,
+        write_html_report: false,
         matrix_policy: MatrixPolicy::Balanced,
         reference_genome: None,
         tree: None,
@@ -132,10 +133,73 @@ fn corrected_csv_recomputes_multicopy_metadata_counts() {
 }
 
 #[test]
+fn html_report_summarizes_run_outputs() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(
+        out.path().join("orthology_evidence.tsv"),
+        b"matrix_action\torthology_confidence_tier\ncorrect_presence\thigh_confidence\naudit_only_quality\treview\n",
+    )
+    .unwrap();
+    std::fs::write(
+        out.path().join("evolutionary_events.tsv"),
+        b"gene_cluster\thighlight_priority\tevolutionary_signal_score\tmolecular_mechanism\tsupport_level\tphylogenetic_pattern\trecommended_wording\ngroup_1\thighlight\t0.910\tclade_associated_gain\thigh\tclade_gain\tDescribe as clade-associated.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        out.path().join("genome_qc.tsv"),
+        b"genome\tqc_status\ng1\tpass\ng2\treview\n",
+    )
+    .unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["group_1".into()],
+        vec!["g1".into(), "g2".into()],
+        vec![vec!["gene1".into(), "".into()]],
+    );
+    let mut args = default_args_for_validation();
+    args.output = out.path().to_path_buf();
+    args.write_html_report = true;
+    args.nscluster = true;
+    let stats = SummaryStats {
+        core_before: 0,
+        total_gaps: 1,
+        filtered_gaps: 1,
+        skipped_by_prevalence: 0,
+        searchable_gaps: 1,
+        missing_fasta_gaps: 0,
+        dropped: 1,
+        missing_cds: 0,
+        split: 0,
+        fragmented: 0,
+        alignment_split: 0,
+        start_variant: 0,
+        paralog: 0,
+        pseudogene: 0,
+        synteny_rejected: 0,
+        paralog_rejected: 0,
+        matrix_policy: MatrixPolicy::Balanced,
+        matrix_corrected: 0,
+        nsc_matrix_corrected: 0,
+        synteny_enabled: false,
+        nsc_clusters: 0,
+        nsc_merged_genes: 0,
+    };
+
+    write_html_report(&args, &pa, &stats, &HashMap::new(), &None, out.path()).unwrap();
+
+    let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
+    assert!(text.contains("<title>Recore run report</title>"));
+    assert!(text.contains("group_1"));
+    assert!(text.contains("Orthology actions"));
+    assert!(text.contains("gene_presence_absence_recore.csv"));
+}
+
+#[test]
 fn clear_optional_outputs_removes_stale_optional_files() {
     let out = tempfile::tempdir().unwrap();
     let stale_file = out.path().join("synteny_rejected_report.tsv");
     std::fs::write(&stale_file, b"old\n").unwrap();
+    let stale_html = out.path().join("recore_report.html");
+    std::fs::write(&stale_html, b"old\n").unwrap();
     let corrected_dir = out.path().join("corrected_gff");
     std::fs::create_dir_all(&corrected_dir).unwrap();
     std::fs::write(corrected_dir.join("old.recore.gff3"), b"old\n").unwrap();
@@ -143,6 +207,7 @@ fn clear_optional_outputs_removes_stale_optional_files() {
     clear_optional_outputs(out.path()).unwrap();
 
     assert!(!stale_file.exists());
+    assert!(!stale_html.exists());
     assert!(!corrected_dir.exists());
 }
 

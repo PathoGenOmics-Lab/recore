@@ -34,8 +34,8 @@ use self::evolution::{
 };
 use self::output::{
     clear_optional_outputs, count_core_after, count_soft_core_after, write_corrected_csv,
-    write_corrected_gffs, write_multistate_matrix, write_nsc_report, write_run_manifest,
-    write_summary, MultistateMatrixInputs, SummaryStats,
+    write_corrected_gffs, write_html_report, write_multistate_matrix, write_nsc_report,
+    write_run_manifest, write_summary, MultistateMatrixInputs, SummaryStats,
 };
 use self::quality::{
     cluster_prevalences, cluster_sequence_lengths, orthology_quality,
@@ -1010,6 +1010,16 @@ pub fn run(args: &Args) -> Result<()> {
         if !nsc.merged_clusters.is_empty() {
             write_nsc_report(nsc, pa.cluster_names(), &args.output)?;
         }
+    }
+    if args.write_html_report {
+        write_html_report(
+            args,
+            &pa,
+            &stats,
+            &matrix_rescue_map,
+            &nsc_result,
+            &args.output,
+        )?;
     }
 
     let core_after = count_core_after(&pa, &matrix_rescue_map, &nsc_result);

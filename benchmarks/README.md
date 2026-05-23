@@ -120,6 +120,12 @@ Generate a compact Markdown/HTML report:
 python3 benchmarks/recore_report.py recore_output
 ```
 
+For new runs, prefer the integrated report flag:
+
+```bash
+recore ... --write-html-report -o recore_output
+```
+
 ## AMAP performance benchmark
 
 `amap_performance_benchmark.py` profiles Recore on the full local AMAP
