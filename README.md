@@ -43,6 +43,7 @@ becoming presence calls.
 - [Comparison With Panaroo Refinding](#comparison-with-panaroo-refinding)
 - [What Recore Does Not Claim](#what-recore-does-not-claim)
 - [Documentation](#documentation)
+- [Changelog](#changelog)
 - [Citation](#citation)
 
 ## Quick Start
@@ -461,6 +462,10 @@ Additional details are in [docs/](docs/):
 | [output_files.md](docs/output_files.md) | output schemas and coordinate conventions |
 | [parameters.md](docs/parameters.md) | complete parameter guide |
 | [benchmarks/README.md](benchmarks/README.md) | synthetic benchmark design and reproduction |
+
+## Changelog
+
+Version-to-version changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
