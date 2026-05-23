@@ -81,6 +81,10 @@ pub struct Args {
     #[arg(long)]
     pub reference_genome: Option<String>,
 
+    /// Optional rooted Newick tree for parsimony-based evolutionary event interpretation.
+    #[arg(long)]
+    pub tree: Option<PathBuf>,
+
     // ── Nucleotide Similarity Clustering ──
     /// Enable nucleotide similarity clustering to merge redundant Panaroo clusters.
     /// Detects clusters split at the AA level but identical at the DNA level.

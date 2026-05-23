@@ -80,6 +80,9 @@ Most users should start with:
   from a reference genome
 - `reference_cluster_events.tsv` to flag reference-absent clusters that look
   like event-derived alleles/fragments of a reference gene
+- `evolutionary_events.tsv` to interpret each cluster as an acquisition,
+  loss, IS interruption, pseudogene, paralog/duplication, reference-derived
+  allele, context shift, or unresolved accessory signal
 
 ## Which Matrix Policy Should I Use?
 
@@ -295,6 +298,7 @@ recore_output/
 ├── orthology_evidence.tsv                  # accepted/rejected evidence with wording guidance
 ├── reference_genome_audit.tsv              # reference-specific audit when --reference-genome is set
 ├── reference_cluster_events.tsv            # event-derived reference-gene variants, audit-only
+├── evolutionary_events.tsv                 # evolutionary pattern and mechanism audit
 ├── synteny_rejected_report.tsv             # explicit synteny FAIL candidates
 ├── paralog_rejected_report.tsv             # PARALOG candidates lacking synteny support
 ├── cluster_locus_context.tsv               # per-cluster locus-context rows when GFFs are loaded
@@ -320,6 +324,10 @@ For publication figures:
   while reporting whether their representative sequence is best explained as
   a short/long in-frame allele, full-length same-gene sequence, frameshift-like
   length change, or partial homology to a gene in the audited reference.
+- Use `evolutionary_events.tsv` to separate phylogenetic pattern from molecular
+  mechanism: ancestral retention/loss, clade-associated gain, homoplasy,
+  IS-supported interruption, pseudogenization, duplication/paralogy,
+  reference-derived alleles, and context-shift candidates.
 
 ## Evidence States
 
@@ -379,6 +387,7 @@ Pseudogene sub-types:
 | `--multi-allele` | off | query all alleles per cluster |
 | `--synteny` | off | validate rescues by flanking gene context; requires GFFs |
 | `--reference-genome` | optional | audit one reference/background genome |
+| `--tree` | optional | rooted Newick tree for parsimony-based evolutionary event interpretation |
 | `--write-corrected-gff` | off | write GFF3 files with appended rescued CDS features |
 | `-t, --threads` | `4` | number of threads |
 

@@ -112,6 +112,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
         .exists());
     assert!(output_dir.join("rescue_report.tsv").exists());
     assert!(output_dir.join("cluster_relationships.tsv").exists());
+    assert!(output_dir.join("evolutionary_events.tsv").exists());
     assert!(output_dir.join("summary.txt").exists());
     assert!(output_dir
         .join("corrected_gff")

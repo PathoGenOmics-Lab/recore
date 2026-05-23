@@ -163,6 +163,38 @@ Rows in this file also appear in `reference_genome_audit.tsv` as
 
 ---
 
+## evolutionary_events.tsv
+
+Written for every run. This file is audit-only: it does not merge clusters and
+does not change `gene_presence_absence_recore.csv`. When `--tree` is provided,
+Recore parses the rooted Newick tree, matches tips to matrix columns by exact
+name or embedded `ASxxxxx` identifier, and applies Fitch parsimony to the
+corrected binary state for each cluster.
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Panaroo cluster name |
+| `n_present_corrected`, `prevalence_corrected` | Presence after accepted matrix corrections and NSC presence updates |
+| `tree_matched_tips` | Number of tree tips matched to matrix genomes; blank when no tree is provided |
+| `reference_state` | `present`, `absent`, or `not_assessed` for the requested `--reference-genome` |
+| `phylogenetic_pattern` | `ancestral_retained`, `ancestral_loss`, `lineage_specific_gain`, `clade_associated_presence`, `recurrent_gain`, `recurrent_loss`, `homoplastic_gain_loss`, `singleton_or_noise`, `dispersed_gain_loss`, or `not_assessed_no_tree` |
+| `ancestral_state` | Parsimony root state: `present`, `absent`, or `unknown` |
+| `phylogenetic_changes`, `phylogenetic_gains`, `phylogenetic_losses` | Parsimony counts on the matched tree |
+| `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one clade, and the largest carrier-only clade fraction |
+| `molecular_mechanism` | Best conservative mechanism call: reference-derived allele, IS interruption, pseudogenization, fragmentation, duplication/paralog expansion, context shift, acquisition/insertion candidate, deletion/loss candidate, homoplastic/unstable signal, ancestral retention, or unresolved |
+| `mechanism_detail`, `support_level`, `recommended_wording` | Evidence summary and publication-facing interpretation |
+| `is_interruption_supported`, `mobile_element_*` | GFF-supported nearby mobile element signal. IS calls are conservative and require an insertion-sequence-like label within 250 bp of a fragmented/disrupted rescue |
+| `reference_event_class`, `target_reference_cluster`, `target_reference_gene` | Reference-derived event evidence when available |
+| `context_interpretation`, `rescue_evidence_counts` | Locus-context stability and per-cluster rescue evidence summary |
+
+Use this file as the top-level evolutionary interpretation table. The most
+important guardrail is that `phylogenetic_pattern` and `molecular_mechanism`
+are deliberately separate: a clade-associated presence can be an acquisition,
+a reference loss, a duplicated/paralogous copy, or an event-derived allele
+depending on the sequence, synteny, GFF, and reference evidence.
+
+---
+
 ## cluster_locus_context.tsv
 
 Written when GFF annotations are loaded. One row per observed locus context for

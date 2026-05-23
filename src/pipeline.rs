@@ -4,7 +4,7 @@ use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, MatrixPolicy};
 use crate::nscluster;
@@ -39,6 +39,12 @@ pub fn run(args: &Args) -> Result<()> {
     }
     // ── 1b. Cross-validate inputs (includes path traversal checks) ──
     validate_inputs(&pa, &pan_ref, &genome_files)?;
+
+    let phylo_tree = if let Some(tree_path) = args.tree.as_deref() {
+        Some(load_phylo_tree(tree_path, &pa)?)
+    } else {
+        None
+    };
 
     // ── 2. Filter gaps by prevalence (streaming, no intermediate Vec) ──
     let min_prevalence = args.min_prevalence;
@@ -747,14 +753,18 @@ pub fn run(args: &Args) -> Result<()> {
             write_reference_cluster_events(&reference_cluster_events, &pa, &args.output)?;
         }
     }
-    if !gff_indices.is_empty() {
-        let (context_rows, summary_rows) =
+    let context_summaries = if !gff_indices.is_empty() {
+        let (context_rows, summaries) =
             write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
         info!(
             "Cluster locus context audit: {} context rows across {} clusters",
-            context_rows, summary_rows
+            context_rows,
+            summaries.len()
         );
-    }
+        summaries
+    } else {
+        Vec::new()
+    };
     write_corrected_csv(&pa, &matrix_rescue_map, &args.output, &nsc_result)?;
     write_multistate_matrix(
         &pa,
@@ -769,6 +779,20 @@ pub fn run(args: &Args) -> Result<()> {
     if n_relationships > 0 {
         info!("Cluster relationships: {} rows", n_relationships);
     }
+    write_evolutionary_events(EvolutionaryEventInputs {
+        pa: &pa,
+        matrix_rescue_map: &matrix_rescue_map,
+        rescues: &rescues,
+        synteny_rejected: &synteny_rejected,
+        paralog_rejected: &paralog_rejected,
+        reference_cluster_events: &reference_cluster_events,
+        context_summaries: &context_summaries,
+        gff_indices: &gff_indices,
+        phylo_tree: phylo_tree.as_ref(),
+        reference_genome: args.reference_genome.as_deref(),
+        nsc_result: &nsc_result,
+        output_dir: &args.output,
+    })?;
     if args.write_corrected_gff {
         let matrix_rescues: Vec<RescueEvent> =
             matrix_rescue_map.values().map(|r| (*r).clone()).collect();
@@ -1763,7 +1787,12 @@ fn reference_gene_id(pa: &crate::parser::PresenceAbsence, ci: ClusterIdx, gi: Ge
         .map(str::trim)
         .find(|gene| !gene.is_empty())
         .unwrap_or("");
-    display_reference_gene_id(gene_id)
+    let display = display_reference_gene_id(gene_id);
+    if extract_as_id(&display).is_some() && display == pa.genome_name(gi) {
+        String::new()
+    } else {
+        display
+    }
 }
 
 fn build_reference_cluster_events(
@@ -2299,6 +2328,1020 @@ fn write_reference_cluster_events(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct PhyloNode {
+    label: Option<String>,
+    genome_idx: Option<GenomeIdx>,
+    children: Vec<PhyloNode>,
+}
+
+#[derive(Debug, Clone)]
+struct PhyloTree {
+    root: PhyloNode,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PhyloPatternSummary {
+    assessed: bool,
+    matched_tips: usize,
+    present_tips: usize,
+    absent_tips: usize,
+    parsimony_changes: usize,
+    gains: usize,
+    losses: usize,
+    root_state: &'static str,
+    carrier_monophyly: bool,
+    max_carrier_clade_fraction: f64,
+    pattern: &'static str,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FitchNodeSummary {
+    state_set: u8,
+    matched_tips: usize,
+    present_tips: usize,
+    changes: usize,
+    children: Vec<FitchNodeSummary>,
+}
+
+struct NewickParser<'a> {
+    input: &'a str,
+    pos: usize,
+}
+
+impl<'a> NewickParser<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input, pos: 0 }
+    }
+
+    fn parse(mut self) -> Result<PhyloNode> {
+        self.skip_ignored();
+        let root = self.parse_subtree()?;
+        self.skip_ignored();
+        if self.peek() == Some(';') {
+            self.pos += 1;
+        }
+        self.skip_ignored();
+        if self.pos < self.input.len() {
+            anyhow::bail!("Unexpected Newick content at byte {}", self.pos);
+        }
+        Ok(root)
+    }
+
+    fn parse_subtree(&mut self) -> Result<PhyloNode> {
+        self.skip_ignored();
+        if self.peek() == Some('(') {
+            self.pos += 1;
+            let mut children = Vec::new();
+            loop {
+                children.push(self.parse_subtree()?);
+                self.skip_ignored();
+                match self.peek() {
+                    Some(',') => {
+                        self.pos += 1;
+                    }
+                    Some(')') => {
+                        self.pos += 1;
+                        break;
+                    }
+                    other => anyhow::bail!(
+                        "Expected ',' or ')' in Newick at byte {}, got {:?}",
+                        self.pos,
+                        other
+                    ),
+                }
+            }
+            let label = self.parse_optional_label();
+            self.skip_branch_length();
+            Ok(PhyloNode {
+                label,
+                genome_idx: None,
+                children,
+            })
+        } else {
+            let label = self.parse_optional_label();
+            if label.as_deref().unwrap_or("").is_empty() {
+                anyhow::bail!("Expected Newick leaf label at byte {}", self.pos);
+            }
+            self.skip_branch_length();
+            Ok(PhyloNode {
+                label,
+                genome_idx: None,
+                children: Vec::new(),
+            })
+        }
+    }
+
+    fn parse_optional_label(&mut self) -> Option<String> {
+        self.skip_ignored();
+        match self.peek() {
+            Some('\'') => {
+                self.pos += 1;
+                let start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch == '\'' {
+                        let label = self.input[start..self.pos].to_string();
+                        self.pos += 1;
+                        return Some(label);
+                    }
+                    self.pos += ch.len_utf8();
+                }
+                Some(self.input[start..].to_string())
+            }
+            Some(':') | Some(',') | Some(')') | Some(';') | None => None,
+            _ => {
+                let start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if matches!(ch, ':' | ',' | ')' | ';' | '[') || ch.is_whitespace() {
+                        break;
+                    }
+                    self.pos += ch.len_utf8();
+                }
+                (self.pos > start).then(|| self.input[start..self.pos].to_string())
+            }
+        }
+    }
+
+    fn skip_branch_length(&mut self) {
+        self.skip_ignored();
+        if self.peek() != Some(':') {
+            return;
+        }
+        self.pos += 1;
+        while let Some(ch) = self.peek() {
+            if matches!(ch, ',' | ')' | ';' | '[') || ch.is_whitespace() {
+                break;
+            }
+            self.pos += ch.len_utf8();
+        }
+    }
+
+    fn skip_ignored(&mut self) {
+        loop {
+            while self.peek().is_some_and(char::is_whitespace) {
+                self.pos += self.peek().unwrap().len_utf8();
+            }
+            if self.peek() != Some('[') {
+                break;
+            }
+            self.pos += 1;
+            while let Some(ch) = self.peek() {
+                self.pos += ch.len_utf8();
+                if ch == ']' {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.input[self.pos..].chars().next()
+    }
+}
+
+fn load_phylo_tree(path: &Path, pa: &crate::parser::PresenceAbsence) -> Result<PhyloTree> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("Cannot read tree {}", path.display()))?;
+    let mut root = NewickParser::new(&text)
+        .parse()
+        .with_context(|| format!("Cannot parse Newick tree {}", path.display()))?;
+    let (matched_tips, unmatched_tips) = resolve_phylo_tips(&mut root, pa);
+    info!(
+        "Loaded tree {} with {} matched tips and {} unmatched tips",
+        path.display(),
+        matched_tips,
+        unmatched_tips
+    );
+    if matched_tips == 0 {
+        warn!("No tree tips matched matrix genome names; phylogenetic audit will be uninformative");
+    }
+    Ok(PhyloTree { root })
+}
+
+fn resolve_phylo_tips(node: &mut PhyloNode, pa: &crate::parser::PresenceAbsence) -> (usize, usize) {
+    if node.children.is_empty() {
+        node.genome_idx = node
+            .label
+            .as_deref()
+            .and_then(|label| resolve_tree_tip(label, pa));
+        return if node.genome_idx.is_some() {
+            (1, 0)
+        } else {
+            (0, 1)
+        };
+    }
+    let mut matched = 0usize;
+    let mut unmatched = 0usize;
+    for child in &mut node.children {
+        let (m, u) = resolve_phylo_tips(child, pa);
+        matched += m;
+        unmatched += u;
+    }
+    (matched, unmatched)
+}
+
+fn resolve_tree_tip(label: &str, pa: &crate::parser::PresenceAbsence) -> Option<GenomeIdx> {
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        if pa.genome_name(gi) == label {
+            return Some(gi);
+        }
+    }
+    let tip_as = extract_as_id(label);
+    for gi_val in 0..pa.n_genomes() {
+        let gi = GenomeIdx(gi_val);
+        if let (Some(a), Some(b)) = (tip_as, extract_as_id(pa.genome_name(gi))) {
+            if a == b {
+                return Some(gi);
+            }
+        }
+    }
+    None
+}
+
+fn fitch_postorder(node: &PhyloNode, present_by_genome: &[bool]) -> FitchNodeSummary {
+    const ABSENT: u8 = 0b01;
+    const PRESENT: u8 = 0b10;
+
+    if node.children.is_empty() {
+        let Some(gi) = node.genome_idx else {
+            return FitchNodeSummary::default();
+        };
+        let present = present_by_genome.get(gi.val()).copied().unwrap_or(false);
+        return FitchNodeSummary {
+            state_set: if present { PRESENT } else { ABSENT },
+            matched_tips: 1,
+            present_tips: usize::from(present),
+            changes: 0,
+            children: Vec::new(),
+        };
+    }
+
+    let mut children = Vec::new();
+    let mut state_set = 0u8;
+    let mut matched_tips = 0usize;
+    let mut present_tips = 0usize;
+    let mut changes = 0usize;
+    for child in &node.children {
+        let summary = fitch_postorder(child, present_by_genome);
+        if summary.matched_tips == 0 {
+            children.push(summary);
+            continue;
+        }
+        matched_tips += summary.matched_tips;
+        present_tips += summary.present_tips;
+        changes += summary.changes;
+        if state_set == 0 {
+            state_set = summary.state_set;
+        } else {
+            let intersection = state_set & summary.state_set;
+            if intersection == 0 {
+                state_set |= summary.state_set;
+                changes += 1;
+            } else {
+                state_set = intersection;
+            }
+        }
+        children.push(summary);
+    }
+
+    FitchNodeSummary {
+        state_set,
+        matched_tips,
+        present_tips,
+        changes,
+        children,
+    }
+}
+
+fn state_set_contains(state_set: u8, present: bool) -> bool {
+    let bit = if present { 0b10 } else { 0b01 };
+    state_set & bit != 0
+}
+
+fn choose_root_state(summary: &FitchNodeSummary) -> bool {
+    if summary.state_set == 0b10 {
+        true
+    } else if summary.state_set == 0b01 {
+        false
+    } else {
+        summary.present_tips * 2 >= summary.matched_tips
+    }
+}
+
+fn assign_fitch_states(
+    summary: &FitchNodeSummary,
+    parent_state: Option<bool>,
+    gains: &mut usize,
+    losses: &mut usize,
+) -> Option<bool> {
+    if summary.matched_tips == 0 || summary.state_set == 0 {
+        return None;
+    }
+    let state = if let Some(parent) = parent_state {
+        if state_set_contains(summary.state_set, parent) {
+            parent
+        } else {
+            !parent
+        }
+    } else {
+        choose_root_state(summary)
+    };
+
+    if let Some(parent) = parent_state {
+        if !parent && state {
+            *gains += 1;
+        } else if parent && !state {
+            *losses += 1;
+        }
+    }
+    for child in &summary.children {
+        assign_fitch_states(child, Some(state), gains, losses);
+    }
+    Some(state)
+}
+
+fn carrier_clade_stats(summary: &FitchNodeSummary, total_present: usize) -> (bool, f64) {
+    if total_present == 0 {
+        return (false, 0.0);
+    }
+    if total_present == 1 {
+        return (true, 1.0);
+    }
+
+    fn visit(summary: &FitchNodeSummary, total_present: usize, best: &mut usize, exact: &mut bool) {
+        if summary.matched_tips > 0
+            && summary.present_tips > 0
+            && summary.present_tips == summary.matched_tips
+        {
+            *best = (*best).max(summary.present_tips);
+            if summary.present_tips == total_present {
+                *exact = true;
+            }
+        }
+        for child in &summary.children {
+            visit(child, total_present, best, exact);
+        }
+    }
+
+    let mut best = 0usize;
+    let mut exact = false;
+    visit(summary, total_present, &mut best, &mut exact);
+    (exact, best as f64 / total_present as f64)
+}
+
+fn classify_phylogenetic_pattern(summary: &PhyloPatternSummary) -> &'static str {
+    if !summary.assessed {
+        return "not_assessed_no_tree";
+    }
+    if summary.present_tips == 0 {
+        return "absent_from_tree";
+    }
+    if summary.absent_tips == 0 {
+        return "ancestral_retained";
+    }
+    if summary.present_tips == 1 {
+        return "singleton_or_noise";
+    }
+    if summary.parsimony_changes >= 6 {
+        return "homoplastic_gain_loss";
+    }
+    if summary.root_state == "present" && summary.gains == 0 && summary.losses > 0 {
+        return "ancestral_loss";
+    }
+    if summary.root_state == "absent" && summary.losses == 0 && summary.gains == 1 {
+        if summary.carrier_monophyly {
+            return "lineage_specific_gain";
+        }
+        return "single_gain_with_incomplete_clade_support";
+    }
+    if summary.gains > 1 && summary.losses == 0 {
+        return "recurrent_gain";
+    }
+    if summary.losses > 1 && summary.gains == 0 {
+        return "recurrent_loss";
+    }
+    if summary.carrier_monophyly {
+        return "clade_associated_presence";
+    }
+    "dispersed_gain_loss"
+}
+
+fn summarize_phylogenetic_pattern(
+    tree: Option<&PhyloTree>,
+    present_by_genome: &[bool],
+) -> PhyloPatternSummary {
+    let Some(tree) = tree else {
+        return PhyloPatternSummary {
+            pattern: "not_assessed_no_tree",
+            root_state: "unknown",
+            ..PhyloPatternSummary::default()
+        };
+    };
+    let fitch = fitch_postorder(&tree.root, present_by_genome);
+    if fitch.matched_tips == 0 {
+        return PhyloPatternSummary {
+            pattern: "not_assessed_no_matched_tips",
+            root_state: "unknown",
+            ..PhyloPatternSummary::default()
+        };
+    }
+    let mut gains = 0usize;
+    let mut losses = 0usize;
+    let root_present = assign_fitch_states(&fitch, None, &mut gains, &mut losses).unwrap_or(false);
+    let (carrier_monophyly, max_carrier_clade_fraction) =
+        carrier_clade_stats(&fitch, fitch.present_tips);
+    let mut summary = PhyloPatternSummary {
+        assessed: true,
+        matched_tips: fitch.matched_tips,
+        present_tips: fitch.present_tips,
+        absent_tips: fitch.matched_tips.saturating_sub(fitch.present_tips),
+        parsimony_changes: fitch.changes,
+        gains,
+        losses,
+        root_state: if root_present { "present" } else { "absent" },
+        carrier_monophyly,
+        max_carrier_clade_fraction,
+        pattern: "unclassified",
+    };
+    summary.pattern = classify_phylogenetic_pattern(&summary);
+    summary
+}
+
+#[derive(Debug, Clone)]
+struct MobileElementEvidence {
+    genome_name: String,
+    kind: &'static str,
+    label: String,
+    distance_bp: u64,
+}
+
+#[derive(Debug, Clone)]
+struct MechanismCall {
+    mechanism: &'static str,
+    detail: String,
+    support: &'static str,
+    wording: &'static str,
+    mobile: Option<MobileElementEvidence>,
+}
+
+struct EvolutionaryEventInputs<'a> {
+    pa: &'a crate::parser::PresenceAbsence,
+    matrix_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    rescues: &'a [RescueEvent],
+    synteny_rejected: &'a [RescueEvent],
+    paralog_rejected: &'a [RescueEvent],
+    reference_cluster_events: &'a [ReferenceClusterEvent],
+    context_summaries: &'a [ClusterContextSummary],
+    gff_indices: &'a HashMap<GenomeIdx, GffIndex>,
+    phylo_tree: Option<&'a PhyloTree>,
+    reference_genome: Option<&'a str>,
+    nsc_result: &'a Option<nscluster::NsClusterResult>,
+    output_dir: &'a Path,
+}
+
+fn nsc_presence_updates(
+    pa: &crate::parser::PresenceAbsence,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+) -> ahash::HashSet<(usize, usize)> {
+    nsc_result
+        .as_ref()
+        .map(|r| {
+            let (_, updates) = nscluster::apply_ns_merges(
+                &r.merge_map,
+                |ci, gi| pa.is_present(ci, gi),
+                pa.n_genomes(),
+            );
+            updates
+                .into_iter()
+                .map(|(ci, gi)| (ci.val(), gi.val()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn corrected_cluster_present(
+    pa: &crate::parser::PresenceAbsence,
+    ci: ClusterIdx,
+    gi: GenomeIdx,
+    matrix_rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_presence: &ahash::HashSet<(usize, usize)>,
+) -> bool {
+    pa.is_present(ci, gi)
+        || matrix_rescue_map.contains_key(&(ci, gi))
+        || nsc_presence.contains(&(ci.val(), gi.val()))
+}
+
+fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
+    let joined = labels.join("|");
+    let normalized = joined
+        .to_ascii_lowercase()
+        .replace("%20", " ")
+        .replace('_', " ");
+    let kind = if normalized.contains("is6110") {
+        "IS6110"
+    } else if normalized.contains("is1081") {
+        "IS1081"
+    } else if normalized.contains("insertion sequence")
+        || normalized.contains("transposase")
+        || normalized.contains("is element")
+    {
+        "insertion_sequence"
+    } else if normalized.contains("integrase") || normalized.contains("phage") {
+        "phage_or_integrase"
+    } else if normalized.contains("recombinase") {
+        "recombinase"
+    } else {
+        return None;
+    };
+    Some((kind, joined))
+}
+
+fn interval_distance(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> u64 {
+    if end_a < start_b {
+        start_b - end_a
+    } else if end_b < start_a {
+        start_a - end_b
+    } else {
+        0
+    }
+}
+
+fn nearest_mobile_element_for_rescue(
+    rescue: &RescueEvent,
+    pa: &crate::parser::PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+) -> Option<MobileElementEvidence> {
+    const MOBILE_WINDOW_BP: u64 = 1_000;
+    let gff = gff_indices.get(&rescue.genome_idx)?;
+    let mut best: Option<MobileElementEvidence> = None;
+    for gene in &gff.genes {
+        if gene.contig != rescue.contig {
+            continue;
+        }
+        let distance = interval_distance(rescue.start, rescue.end, gene.start, gene.end);
+        if distance > MOBILE_WINDOW_BP {
+            continue;
+        }
+        let labels = gff.labels_for_gene(gene);
+        let Some((kind, label)) = mobile_kind_from_labels(&labels) else {
+            continue;
+        };
+        let candidate = MobileElementEvidence {
+            genome_name: pa.genome_name(rescue.genome_idx).to_string(),
+            kind,
+            label,
+            distance_bp: distance,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| candidate.distance_bp < current.distance_bp)
+        {
+            best = Some(candidate);
+        }
+    }
+    best
+}
+
+fn nearest_mobile_element_for_cluster(
+    rescues: &[&RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+) -> Option<MobileElementEvidence> {
+    rescues
+        .iter()
+        .filter_map(|rescue| nearest_mobile_element_for_rescue(rescue, pa, gff_indices))
+        .min_by(|a, b| {
+            a.distance_bp
+                .cmp(&b.distance_bp)
+                .then(a.genome_name.cmp(&b.genome_name))
+                .then(a.label.cmp(&b.label))
+        })
+}
+
+fn nsc_role_for_cluster(ci: ClusterIdx, nsc_result: &Option<nscluster::NsClusterResult>) -> String {
+    let Some(nsc) = nsc_result else {
+        return String::new();
+    };
+    if nsc.merge_map.contains_key(&ci) {
+        return "nsc_member_merged_into_representative".to_string();
+    }
+    for cluster in &nsc.merged_clusters {
+        if cluster
+            .members
+            .iter()
+            .any(|member| *member == ci && cluster.representative.is_empty())
+        {
+            return "nsc_representative".to_string();
+        }
+    }
+    String::new()
+}
+
+fn rescue_type_counts(rescues: &[&RescueEvent]) -> String {
+    if rescues.is_empty() {
+        return String::new();
+    }
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for rescue in rescues {
+        *counts.entry(rescue.rescue_type.to_string()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(kind, count)| format!("{}:{}", kind, count))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn classify_mechanism(
+    pa: &crate::parser::PresenceAbsence,
+    phylo: &PhyloPatternSummary,
+    reference_state: &str,
+    reference_event: Option<&ReferenceClusterEvent>,
+    accepted: &[&RescueEvent],
+    synteny_rejected: &[&RescueEvent],
+    paralog_rejected: &[&RescueEvent],
+    context: Option<&ClusterContextSummary>,
+    mobile: Option<MobileElementEvidence>,
+    nsc_role: &str,
+) -> MechanismCall {
+    let has_pseudogene = accepted
+        .iter()
+        .any(|r| matches!(r.rescue_type, RescueType::Pseudogene { .. }));
+    let has_fragment = accepted.iter().any(|r| {
+        matches!(
+            r.rescue_type,
+            RescueType::Fragmented { .. } | RescueType::AlignmentSplit { .. }
+        )
+    });
+    let has_split_or_boundary = accepted.iter().any(|r| {
+        matches!(
+            r.rescue_type,
+            RescueType::Split { .. } | RescueType::StartVariant { .. }
+        )
+    });
+    let has_paralog = accepted
+        .iter()
+        .any(|r| matches!(r.rescue_type, RescueType::Paralog { .. }))
+        || !paralog_rejected.is_empty();
+    let unstable_context =
+        context.is_some_and(|c| c.interpretation == "possible_multilocus_or_paralog");
+    let mobile_is = mobile.as_ref().is_some_and(|m| {
+        matches!(m.kind, "IS6110" | "IS1081" | "insertion_sequence") && m.distance_bp <= 250
+    });
+
+    if let Some(event) = reference_event {
+        if (has_paralog || unstable_context)
+            && matches!(
+                event.event_class,
+                "partial_reference_homology" | "same_gene_full_length"
+            )
+        {
+            return MechanismCall {
+                mechanism: "duplication_or_paralog_expansion",
+                detail: format!(
+                    "reference_event={};target_reference_cluster={};paralog_or_multilocus_context",
+                    event.event_class,
+                    pa.cluster_name(event.target_cluster_idx)
+                ),
+                support: "low",
+                wording: "Reference-like sequence is present in a paralogous or unstable context; interpret as copy-number/paralog or cluster-definition complexity before claiming gain/loss.",
+                mobile,
+            };
+        }
+        let mechanism = match event.event_class {
+            "short_in_frame_allele" | "long_in_frame_allele" | "same_gene_full_length" => {
+                "reference_gene_allelic_derivative"
+            }
+            "frameshift_or_truncated_reference_homology"
+            | "frameshift_or_extension_reference_homology" => {
+                "reference_gene_disruption_or_truncation"
+            }
+            _ => "partial_reference_homology",
+        };
+        return MechanismCall {
+            mechanism,
+            detail: format!(
+                "{};target_reference_cluster={};target_reference_gene={}",
+                event.event_class,
+                pa.cluster_name(event.target_cluster_idx),
+                event.target_gene_id
+            ),
+            support: if event.identity >= 95.0 { "high" } else { "moderate" },
+            wording: "Keep as a separate matrix cluster, but describe as an event-derived reference-gene variant rather than a clean novel gene.",
+            mobile,
+        };
+    }
+
+    if mobile_is && (has_pseudogene || has_fragment) {
+        return MechanismCall {
+            mechanism: "IS_interruption_supported",
+            detail: "fragmented_or_disrupted_rescue_with_nearby_insertion_sequence".to_string(),
+            support: "high",
+            wording: "Interpret as an IS-supported gene interruption/disruption candidate; keep matrix action governed by the orthology evidence.",
+            mobile,
+        };
+    }
+
+    if has_pseudogene {
+        return MechanismCall {
+            mechanism: "pseudogenization",
+            detail: "pseudogene_rescue_evidence".to_string(),
+            support: "moderate",
+            wording: "Describe as disrupted homologous sequence, not as intact gene presence.",
+            mobile,
+        };
+    }
+
+    if has_fragment {
+        return MechanismCall {
+            mechanism: "gene_fragmentation_or_structural_break",
+            detail: "fragmented_or_alignment_split_rescue_evidence".to_string(),
+            support: "moderate",
+            wording: "Describe as partial/fragmented homology and review the local structure before making a gene gain/loss claim.",
+            mobile,
+        };
+    }
+
+    if has_paralog || unstable_context {
+        return MechanismCall {
+            mechanism: "duplication_or_paralog_expansion",
+            detail: "paralog_evidence_or_multilocus_context".to_string(),
+            support: if has_paralog { "moderate" } else { "low" },
+            wording: "Treat as a copy-number/paralog or multi-locus signal; avoid interpreting as a single clean gain/loss without locus review.",
+            mobile,
+        };
+    }
+
+    if !synteny_rejected.is_empty() {
+        return MechanismCall {
+            mechanism: "translocation_or_context_shift_candidate",
+            detail: "sequence_evidence_rejected_by_synteny".to_string(),
+            support: "low",
+            wording: "Sequence similarity exists in an incompatible context; review as possible translocation, paralog, or annotation artefact.",
+            mobile,
+        };
+    }
+
+    if has_split_or_boundary || !nsc_role.is_empty() {
+        return MechanismCall {
+            mechanism: "annotation_or_clustering_artifact",
+            detail: if nsc_role.is_empty() {
+                "split_or_start_boundary_evidence".to_string()
+            } else {
+                nsc_role.to_string()
+            },
+            support: "moderate",
+            wording: "Treat as a cluster split, boundary shift, or redundant annotation signal rather than an independent evolutionary gene event.",
+            mobile,
+        };
+    }
+
+    if reference_state == "absent"
+        && matches!(
+            phylo.pattern,
+            "lineage_specific_gain"
+                | "clade_associated_presence"
+                | "single_gain_with_incomplete_clade_support"
+        )
+    {
+        return MechanismCall {
+            mechanism: "clean_insertion_or_acquisition_candidate",
+            detail: "reference_absent_clade_associated_presence".to_string(),
+            support: if phylo.carrier_monophyly { "moderate" } else { "low" },
+            wording: "Candidate accessory acquisition/insertion relative to the audited reference; validate flanking sequence before claiming a novel locus.",
+            mobile,
+        };
+    }
+
+    if reference_state == "absent" && phylo.root_state == "present" {
+        return MechanismCall {
+            mechanism: "reference_or_lineage_loss_candidate",
+            detail: "inferred_ancestral_presence_with_reference_absence".to_string(),
+            support: "moderate",
+            wording: "Candidate loss in the reference/background lineage rather than a de novo gain in all other genomes.",
+            mobile,
+        };
+    }
+
+    if matches!(phylo.pattern, "ancestral_loss" | "recurrent_loss") {
+        return MechanismCall {
+            mechanism: "deletion_loss_candidate",
+            detail: phylo.pattern.to_string(),
+            support: "moderate",
+            wording: "Presence is inferred ancestral with one or more losses; inspect flanks for deletion scars or mobile-element mediation.",
+            mobile,
+        };
+    }
+
+    if phylo.pattern == "homoplastic_gain_loss" {
+        return MechanismCall {
+            mechanism: "unstable_or_homoplastic_accessory_signal",
+            detail: "many_parsimony_changes".to_string(),
+            support: "review",
+            wording: "Highly recurrent presence/absence can reflect real mobility, recombination, or cluster/annotation instability; review before highlighting.",
+            mobile,
+        };
+    }
+
+    if phylo.pattern == "ancestral_retained" {
+        return MechanismCall {
+            mechanism: "ancestral_retained_no_disruption",
+            detail: "present_across_matched_tree".to_string(),
+            support: "high",
+            wording: "Consistent with conserved ancestral presence in the analysed tree.",
+            mobile,
+        };
+    }
+
+    MechanismCall {
+        mechanism: "unresolved_accessory_variation",
+        detail: phylo.pattern.to_string(),
+        support: "review",
+        wording: "Evolutionary process is not resolved from matrix, synteny, reference-event, and optional tree evidence alone.",
+        mobile,
+    }
+}
+
+fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> {
+    let nsc_presence = nsc_presence_updates(inputs.pa, inputs.nsc_result);
+    let reference_gi = inputs
+        .reference_genome
+        .and_then(|name| resolve_reference_genome(inputs.pa, name));
+
+    let mut accepted_by_cluster: Vec<Vec<&RescueEvent>> = vec![Vec::new(); inputs.pa.n_clusters()];
+    for rescue in inputs.rescues {
+        accepted_by_cluster[rescue.cluster_idx.val()].push(rescue);
+    }
+    let mut synteny_by_cluster: Vec<Vec<&RescueEvent>> = vec![Vec::new(); inputs.pa.n_clusters()];
+    for rescue in inputs.synteny_rejected {
+        synteny_by_cluster[rescue.cluster_idx.val()].push(rescue);
+    }
+    let mut paralog_by_cluster: Vec<Vec<&RescueEvent>> = vec![Vec::new(); inputs.pa.n_clusters()];
+    for rescue in inputs.paralog_rejected {
+        paralog_by_cluster[rescue.cluster_idx.val()].push(rescue);
+    }
+    let mut reference_events_by_cluster: Vec<Option<&ReferenceClusterEvent>> =
+        vec![None; inputs.pa.n_clusters()];
+    for event in inputs.reference_cluster_events {
+        reference_events_by_cluster[event.query_cluster_idx.val()] = Some(event);
+    }
+    let mut contexts_by_cluster: Vec<Option<&ClusterContextSummary>> =
+        vec![None; inputs.pa.n_clusters()];
+    for context in inputs.context_summaries {
+        contexts_by_cluster[context.cluster_idx.val()] = Some(context);
+    }
+
+    let path = inputs.output_dir.join("evolutionary_events.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(
+        w,
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tis_interruption_supported\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\trescue_evidence_counts\trecommended_wording"
+    )?;
+
+    for ci_val in 0..inputs.pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        let present_by_genome: Vec<bool> = (0..inputs.pa.n_genomes())
+            .map(|gi_val| {
+                corrected_cluster_present(
+                    inputs.pa,
+                    ci,
+                    GenomeIdx(gi_val),
+                    inputs.matrix_rescue_map,
+                    &nsc_presence,
+                )
+            })
+            .collect();
+        let n_present = present_by_genome.iter().filter(|present| **present).count();
+        let prevalence = if inputs.pa.n_genomes() > 0 {
+            n_present as f64 / inputs.pa.n_genomes() as f64
+        } else {
+            0.0
+        };
+        let reference_state = reference_gi
+            .map(|gi| {
+                if corrected_cluster_present(
+                    inputs.pa,
+                    ci,
+                    gi,
+                    inputs.matrix_rescue_map,
+                    &nsc_presence,
+                ) {
+                    "present"
+                } else {
+                    "absent"
+                }
+            })
+            .unwrap_or("not_assessed");
+        let phylo = summarize_phylogenetic_pattern(inputs.phylo_tree, &present_by_genome);
+        let accepted = &accepted_by_cluster[ci_val];
+        let synteny_rejected = &synteny_by_cluster[ci_val];
+        let paralog_rejected = &paralog_by_cluster[ci_val];
+        let all_rescue_evidence: Vec<&RescueEvent> = accepted
+            .iter()
+            .copied()
+            .chain(synteny_rejected.iter().copied())
+            .chain(paralog_rejected.iter().copied())
+            .collect();
+        let mobile =
+            nearest_mobile_element_for_cluster(&all_rescue_evidence, inputs.pa, inputs.gff_indices);
+        let nsc_role = nsc_role_for_cluster(ci, inputs.nsc_result);
+        let mechanism = classify_mechanism(
+            inputs.pa,
+            &phylo,
+            reference_state,
+            reference_events_by_cluster[ci_val],
+            accepted,
+            synteny_rejected,
+            paralog_rejected,
+            contexts_by_cluster[ci_val],
+            mobile,
+            &nsc_role,
+        );
+        let is_interruption = mechanism.mechanism == "IS_interruption_supported";
+        let (mobile_kind, mobile_label, mobile_genome, mobile_distance) =
+            if let Some(mobile) = mechanism.mobile.as_ref() {
+                (
+                    mobile.kind.to_string(),
+                    mobile.label.clone(),
+                    mobile.genome_name.clone(),
+                    mobile.distance_bp.to_string(),
+                )
+            } else {
+                (String::new(), String::new(), String::new(), String::new())
+            };
+        let reference_event = reference_events_by_cluster[ci_val];
+        let context_interpretation = contexts_by_cluster[ci_val]
+            .map(|context| context.interpretation)
+            .unwrap_or("");
+        write_tsv_fields(
+            &mut w,
+            &[
+                inputs.pa.cluster_name(ci).to_string(),
+                n_present.to_string(),
+                format!("{:.4}", prevalence),
+                if phylo.assessed {
+                    phylo.matched_tips.to_string()
+                } else {
+                    String::new()
+                },
+                reference_state.to_string(),
+                phylo.pattern.to_string(),
+                phylo.root_state.to_string(),
+                if phylo.assessed {
+                    phylo.parsimony_changes.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    phylo.gains.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    phylo.losses.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    phylo.carrier_monophyly.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    format!("{:.3}", phylo.max_carrier_clade_fraction)
+                } else {
+                    String::new()
+                },
+                mechanism.mechanism.to_string(),
+                mechanism.detail,
+                mechanism.support.to_string(),
+                is_interruption.to_string(),
+                mobile_kind,
+                mobile_label,
+                mobile_genome,
+                mobile_distance,
+                reference_event
+                    .map(|event| event.event_class.to_string())
+                    .unwrap_or_default(),
+                reference_event
+                    .map(|event| inputs.pa.cluster_name(event.target_cluster_idx).to_string())
+                    .unwrap_or_default(),
+                reference_event
+                    .map(|event| event.target_gene_id.clone())
+                    .unwrap_or_default(),
+                context_interpretation.to_string(),
+                rescue_type_counts(accepted),
+                mechanism.wording.to_string(),
+            ],
+        )?;
+    }
+    w.flush()?;
+    info!("Evolutionary event audit written to {}", path.display());
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default)]
 struct ContextAccumulator {
     count: usize,
@@ -2358,7 +3401,7 @@ fn write_cluster_locus_contexts(
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
     output_dir: &std::path::Path,
-) -> Result<(usize, usize)> {
+) -> Result<(usize, Vec<ClusterContextSummary>)> {
     let mut context_rows: BTreeMap<(usize, String, String), ContextAccumulator> = BTreeMap::new();
     let mut summaries = Vec::new();
 
@@ -2490,7 +3533,7 @@ fn write_cluster_locus_contexts(
     }
     summary_w.flush()?;
 
-    Ok((written_context_rows, summaries.len()))
+    Ok((written_context_rows, summaries))
 }
 
 fn write_corrected_csv(
@@ -3381,6 +4424,75 @@ mod tests {
             "Rv0601c"
         );
         assert_eq!(display_reference_gene_id("custom_gene"), "custom_gene");
+    }
+
+    #[test]
+    fn newick_fitch_detects_clade_gain() {
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["s1".into(), "s2".into(), "s3".into(), "s4".into()],
+            vec![vec!["".into(), "g_s2".into(), "g_s3".into(), "".into()]],
+        );
+        let mut root = NewickParser::new("(s1,(s2:0.1,s3:0.1),s4);")
+            .parse()
+            .unwrap();
+        let (matched, unmatched) = resolve_phylo_tips(&mut root, &pa);
+        assert_eq!(matched, 4);
+        assert_eq!(unmatched, 0);
+        let tree = PhyloTree { root };
+        let present = vec![false, true, true, false];
+
+        let summary = summarize_phylogenetic_pattern(Some(&tree), &present);
+
+        assert_eq!(summary.present_tips, 2);
+        assert_eq!(summary.gains, 1);
+        assert_eq!(summary.losses, 0);
+        assert!(summary.carrier_monophyly);
+        assert_eq!(summary.pattern, "lineage_specific_gain");
+    }
+
+    #[test]
+    fn mobile_element_detection_uses_gff_aliases() {
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["s1".into()],
+            vec![vec!["".into()]],
+        );
+        let gff = GffIndex::build_with_aliases(vec![(
+            GffGene {
+                contig: "chr".into(),
+                start: 150,
+                end: 300,
+                strand: '+',
+                gene_id: "mobile1".into(),
+            },
+            vec!["IS6110 transposase".into()],
+        )]);
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(GenomeIdx(0), gff);
+        let rescue = RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(0),
+            rescue_type: RescueType::Fragmented {
+                n_fragments: 2,
+                total_coverage: 91.0,
+            },
+            identity: 99.0,
+            coverage: 91.0,
+            contig: "chr".into(),
+            start: 100,
+            end: 220,
+            strand: '+',
+            annotation_match: None,
+            confidence: 0.9,
+            synteny_ok: None,
+            fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        };
+
+        let mobile = nearest_mobile_element_for_rescue(&rescue, &pa, &gff_indices).unwrap();
+
+        assert_eq!(mobile.kind, "IS6110");
+        assert_eq!(mobile.distance_bp, 0);
     }
 
     #[test]

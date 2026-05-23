@@ -284,6 +284,29 @@ events are written to `reference_cluster_events.tsv` and mirrored in
 Recore keeps the cluster as a separate matrix column but prevents downstream
 tables from calling it a clean novel gene relative to the reference.
 
+### evolutionary_events.tsv
+
+Written for every run. Recore combines the corrected matrix state, reference
+event audit, rescue classifications, synteny rejections, paralog rejections,
+cluster locus context, optional GFF mobile-element labels, and optional Newick
+tree evidence into one interpretation table.
+
+When `--tree` is provided, Recore performs binary Fitch parsimony per cluster:
+tips are matched to matrix columns by exact name or embedded `ASxxxxx` ID, the
+root state is inferred on the rooted tree, and gains/losses are counted by a
+top-down assignment consistent with the Fitch state sets. This yields
+phylogenetic patterns such as ancestral retention, ancestral loss,
+lineage-specific gain, recurrent gain/loss, homoplastic gain/loss, and
+singleton/noise-like signals.
+
+The molecular mechanism call is separate from the tree pattern. Recore gives
+priority to direct sequence/locus evidence: reference-derived alleles from
+`reference_cluster_events.tsv`, IS-supported interruptions from GFF labels,
+pseudogene and fragmentation evidence, paralog/duplication signals, context
+shifts, acquisition/insertion candidates, deletion/loss candidates, and
+unresolved accessory variation. These calls are audit-only and are intended for
+manual review and manuscript wording, not automatic binary correction.
+
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 
 Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context.

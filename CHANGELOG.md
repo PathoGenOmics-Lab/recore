@@ -17,6 +17,12 @@ and Recore uses semantic versioning.
 - `EVENT_DERIVED_REFERENCE_CLUSTER` and
   `publication_confidence=event_derived` in `reference_genome_audit.tsv`, so
   event-derived reference-gene variants are not reported as clean novel genes.
+- `--tree` and `evolutionary_events.tsv` for audit-only evolutionary
+  interpretation of each cluster, including ancestral state, parsimony
+  gain/loss counts, carrier monophyly, reference-derived alleles, IS-supported
+  interruptions, pseudogenization, fragmentation, duplication/paralogy,
+  context-shift candidates, acquisition/insertion candidates, and deletion/loss
+  candidates.
 
 ## [0.2.0] - 2026-05-23
 

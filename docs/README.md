@@ -23,4 +23,4 @@ recore -p gene_presence_absence.csv \
        -t 8 -o recore_output/
 ```
 
-Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `reference_genome_audit.tsv` and `reference_cluster_events.tsv` when `--reference-genome` is used, `gene_presence_absence_recore.csv`, `gene_presence_absence_recore_states.csv`, `summary.txt`, `cluster_relationships.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` when GFFs are loaded, `nscluster_report.tsv`, `synteny_rejected_report.tsv` when explicit synteny failures are found, and `paralog_rejected_report.tsv` when PARALOG candidates lack synteny support.
+Outputs: `rescue_report.tsv`, `orthology_evidence.tsv`, `evolutionary_events.tsv`, `reference_genome_audit.tsv` and `reference_cluster_events.tsv` when `--reference-genome` is used, `gene_presence_absence_recore.csv`, `gene_presence_absence_recore_states.csv`, `summary.txt`, `cluster_relationships.tsv`, `cluster_locus_context.tsv` / `cluster_locus_summary.tsv` when GFFs are loaded, `nscluster_report.tsv`, `synteny_rejected_report.tsv` when explicit synteny failures are found, and `paralog_rejected_report.tsv` when PARALOG candidates lack synteny support.

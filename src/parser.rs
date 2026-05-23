@@ -586,6 +586,8 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         let mut name = String::new();
         let mut protein_id = String::new();
         let mut old_locus_tag = String::new();
+        let mut product = String::new();
+        let mut note = String::new();
         for attr in attributes.split(';') {
             let attr = attr.trim();
             if let Some(val) = attr.strip_prefix("ID=") {
@@ -600,6 +602,10 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
                 protein_id = val.to_string();
             } else if let Some(val) = attr.strip_prefix("old_locus_tag=") {
                 old_locus_tag = val.to_string();
+            } else if let Some(val) = attr.strip_prefix("product=") {
+                product = val.to_string();
+            } else if let Some(val) = attr.strip_prefix("Note=") {
+                note = val.to_string();
             }
         }
 
@@ -624,6 +630,8 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
             name.as_str(),
             protein_id.as_str(),
             old_locus_tag.as_str(),
+            product.as_str(),
+            note.as_str(),
         ] {
             if !value.is_empty() && !aliases.iter().any(|x: &String| x == value) {
                 aliases.push(value.to_string());

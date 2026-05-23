@@ -193,6 +193,13 @@ impl GffIndex {
         self.gene_id_index.get(gene_id).map(|&i| &self.genes[i])
     }
 
+    pub fn labels_for_gene<'a>(&'a self, gene: &'a GffGene) -> Vec<&'a str> {
+        self.gene_aliases
+            .get(&gene.gene_id)
+            .map(|aliases| aliases.iter().map(String::as_str).collect())
+            .unwrap_or_else(|| vec![gene.gene_id.as_str()])
+    }
+
     pub fn cluster_for_gene(
         &self,
         gene: &GffGene,
