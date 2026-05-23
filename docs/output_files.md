@@ -557,7 +557,8 @@ the left side keeps the tree plus matrix, and the right side draws up to ten
 ranked unique five-neighbour synteny blocks for the selected gene cluster. The
 selected cluster is highlighted, the example locus is connected to its gene
 arrow, and shared neighbouring clusters are connected between adjacent synteny
-rows.
+rows. A viewer control can hide this synteny panel, expanding the phylogeny plus
+matrix to the full available width for dense matrix inspection.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than

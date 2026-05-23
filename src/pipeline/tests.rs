@@ -288,6 +288,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("columnHeaderCanvas"));
     assert!(text.contains("syntenyPanel"));
     assert!(text.contains("syntenySvg"));
+    assert!(text.contains("toggleSynteny"));
+    assert!(text.contains("synteny-hidden"));
+    assert!(text.contains("applySyntenyVisibility"));
     assert!(text.contains("\"synteny\""));
     assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));

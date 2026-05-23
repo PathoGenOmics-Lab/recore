@@ -635,7 +635,9 @@ panel reports the reference gene/cell or reference-derived event source when
 Recore can identify one. When `cluster_synteny_blocks.tsv` is available, the
 viewer also opens a split panel showing the top unique five-neighbour synteny
 blocks for the selected gene cluster, with the focal cluster highlighted and
-shared neighbouring clusters connected between adjacent block rows.
+shared neighbouring clusters connected between adjacent block rows. The synteny
+panel can be hidden from the viewer controls when the tree plus matrix needs the
+full available width.
 
 Recore also includes lightweight Python utilities for reproducible review:
 
