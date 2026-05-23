@@ -191,9 +191,9 @@ For the rescued gene at position (contig, start, end) in the target genome:
    a. Read every gene ID in the matrix cell, not only the first one. This keeps multi-copy/paralogous clusters from being represented by an arbitrary copy.
    b. Find each reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes).
    c. Build the same side-specific context window around each resolved reference gene.
-3. Score each target/reference context comparison. Nearest neighbours contribute most, distal neighbours contribute less, and upstream/downstream sides are scored separately.
+3. Score each target/reference context comparison. Nearest neighbours contribute most, distal neighbours contribute less, upstream/downstream sides are scored separately, and each reference neighbour can be matched only once.
 4. A reference context is compatible when its score is at least 0.50 and it satisfies the side rule: if both sides are comparable, at least one upstream and one downstream cluster must match; if only one side is comparable, that side must match.
-5. If three or fewer reference contexts are available, one compatible context can validate the rescue. If more than three contexts are available, compatibility must be observed at least twice. This prevents a single noisy/paralogous context from validating a rescue in a large dataset.
+5. If three or fewer reference genomes have context, one compatible context can validate the rescue. If more than three reference genomes have context, compatibility must be observed in at least two genomes. This prevents a single noisy/paralogous context or several duplicated copies in one genome from validating a rescue in a large dataset.
 6. Recore keeps the best assessment across neighbour windows, preferring passing assessments, then higher score, then the smallest informative window.
 7. Otherwise -> FAIL.
 

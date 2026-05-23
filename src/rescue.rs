@@ -1338,7 +1338,7 @@ fn is_substantial_overlap(a: &RescueEvent, b: &RescueEvent) -> bool {
 
 // ── Synteny validation ──
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct SyntenyContext {
     upstream: Vec<ClusterIdx>,
     downstream: Vec<ClusterIdx>,
@@ -1374,6 +1374,12 @@ struct SyntenyAssessment {
     matched_downstream: usize,
 }
 
+#[derive(Debug, Clone)]
+struct ReferenceSyntenyContext {
+    genome_idx: GenomeIdx,
+    context: SyntenyContext,
+}
+
 fn weighted_side_score(target: &[ClusterIdx], reference: &[ClusterIdx]) -> (f64, usize) {
     if target.is_empty() || reference.is_empty() {
         return (0.0, 0);
@@ -1382,16 +1388,20 @@ fn weighted_side_score(target: &[ClusterIdx], reference: &[ClusterIdx]) -> (f64,
     let mut matched_weight = 0.0;
     let mut denominator = 0.0;
     let mut matches = 0usize;
+    let mut used_reference = vec![false; reference.len()];
     for (target_pos, target_cluster) in target.iter().enumerate() {
         let target_weight = 1.0 / (target_pos + 1) as f64;
         denominator += target_weight;
-        let best_reference_weight = reference
+        let best_reference = reference
             .iter()
             .enumerate()
-            .filter(|(_, reference_cluster)| *reference_cluster == target_cluster)
-            .map(|(reference_pos, _)| 1.0 / (reference_pos + 1) as f64)
-            .fold(0.0, f64::max);
-        if best_reference_weight > 0.0 {
+            .filter(|(reference_pos, reference_cluster)| {
+                !used_reference[*reference_pos] && *reference_cluster == target_cluster
+            })
+            .map(|(reference_pos, _)| (reference_pos, 1.0 / (reference_pos + 1) as f64))
+            .max_by(|(_, a), (_, b)| a.total_cmp(b));
+        if let Some((reference_pos, best_reference_weight)) = best_reference {
+            used_reference[reference_pos] = true;
             matches += 1;
             matched_weight += target_weight * best_reference_weight;
         }
@@ -1456,7 +1466,8 @@ fn compatible_reference_support(
     target_context: &SyntenyContext,
     reference_contexts: &[SyntenyContext],
 ) -> usize {
-    assess_context_support(target_context, reference_contexts, SYNTENY_CONTEXT_GENES).support
+    let reference_contexts = labeled_test_contexts(reference_contexts);
+    assess_context_support(target_context, &reference_contexts, SYNTENY_CONTEXT_GENES).support
 }
 
 #[cfg(test)]
@@ -1464,12 +1475,25 @@ fn has_recurrent_context_support(
     target_context: &SyntenyContext,
     reference_contexts: &[SyntenyContext],
 ) -> bool {
-    assess_context_support(target_context, reference_contexts, SYNTENY_CONTEXT_GENES).passes
+    let reference_contexts = labeled_test_contexts(reference_contexts);
+    assess_context_support(target_context, &reference_contexts, SYNTENY_CONTEXT_GENES).passes
+}
+
+#[cfg(test)]
+fn labeled_test_contexts(reference_contexts: &[SyntenyContext]) -> Vec<ReferenceSyntenyContext> {
+    reference_contexts
+        .iter()
+        .enumerate()
+        .map(|(idx, context)| ReferenceSyntenyContext {
+            genome_idx: GenomeIdx(idx),
+            context: context.clone(),
+        })
+        .collect()
 }
 
 fn assess_context_support(
     target_context: &SyntenyContext,
-    reference_contexts: &[SyntenyContext],
+    reference_contexts: &[ReferenceSyntenyContext],
     n_neighbors: usize,
 ) -> SyntenyAssessment {
     let mut support = 0usize;
@@ -1477,19 +1501,26 @@ fn assess_context_support(
     let mut best_score = 0.0;
     let mut best_up = 0usize;
     let mut best_down = 0usize;
+    let reference_genomes: std::collections::BTreeSet<GenomeIdx> = reference_contexts
+        .iter()
+        .map(|reference_context| reference_context.genome_idx)
+        .collect();
+    let mut support_genomes = std::collections::BTreeSet::new();
 
     for reference_context in reference_contexts {
-        let (score, up_matches, down_matches) = context_score(target_context, reference_context);
+        let (score, up_matches, down_matches) =
+            context_score(target_context, &reference_context.context);
         if score > best_score {
             best_score = score;
             best_up = up_matches;
             best_down = down_matches;
         }
         if score >= SYNTENY_REFERENCE_SUPPORT_THRESHOLD
-            && target_context.side_matches(reference_context)
+            && target_context.side_matches(&reference_context.context)
         {
             support += 1;
             support_score_sum += score;
+            support_genomes.insert(reference_context.genome_idx);
         }
     }
 
@@ -1498,10 +1529,10 @@ fn assess_context_support(
     } else {
         best_score
     };
-    let passes = if reference_contexts.len() <= 3 {
+    let passes = if reference_genomes.len() <= 3 {
         support > 0
     } else {
-        support >= 2
+        support_genomes.len() >= 2
     };
 
     SyntenyAssessment {
@@ -1624,7 +1655,10 @@ pub fn validate_synteny(
                 );
 
                 if ref_context.has_any_cluster() {
-                    reference_contexts.push(ref_context);
+                    reference_contexts.push(ReferenceSyntenyContext {
+                        genome_idx: ref_gi,
+                        context: ref_context,
+                    });
                 }
             }
         }
@@ -2567,6 +2601,66 @@ mod tests {
 
         assert_eq!(compatible_reference_support(&target, &contexts), 2);
         assert!(has_recurrent_context_support(&target, &contexts));
+    }
+
+    #[test]
+    fn test_synteny_does_not_count_one_reference_neighbor_twice() {
+        let target = vec![ClusterIdx(1), ClusterIdx(1), ClusterIdx(1), ClusterIdx(1)];
+        let reference = vec![ClusterIdx(1)];
+
+        let (score, matches) = weighted_side_score(&target, &reference);
+
+        assert_eq!(matches, 1);
+        assert!(
+            score < SYNTENY_REFERENCE_SUPPORT_THRESHOLD,
+            "one repeated reference neighbour should not validate a repeated flank by itself"
+        );
+    }
+
+    #[test]
+    fn test_synteny_recurrence_requires_multiple_genomes_for_large_reference_sets() {
+        let target = SyntenyContext {
+            upstream: vec![ClusterIdx(1)],
+            downstream: vec![ClusterIdx(2)],
+        };
+        let matching = SyntenyContext {
+            upstream: vec![ClusterIdx(1)],
+            downstream: vec![ClusterIdx(2)],
+        };
+        let nonmatching = SyntenyContext {
+            upstream: vec![ClusterIdx(3)],
+            downstream: vec![ClusterIdx(4)],
+        };
+        let contexts = vec![
+            ReferenceSyntenyContext {
+                genome_idx: GenomeIdx(0),
+                context: matching.clone(),
+            },
+            ReferenceSyntenyContext {
+                genome_idx: GenomeIdx(0),
+                context: matching,
+            },
+            ReferenceSyntenyContext {
+                genome_idx: GenomeIdx(1),
+                context: nonmatching.clone(),
+            },
+            ReferenceSyntenyContext {
+                genome_idx: GenomeIdx(2),
+                context: nonmatching.clone(),
+            },
+            ReferenceSyntenyContext {
+                genome_idx: GenomeIdx(3),
+                context: nonmatching,
+            },
+        ];
+
+        let assessment = assess_context_support(&target, &contexts, SYNTENY_CONTEXT_GENES);
+
+        assert_eq!(assessment.support, 2);
+        assert!(
+            !assessment.passes,
+            "multiple compatible copies from one genome should not satisfy recurrent support"
+        );
     }
 
     #[test]

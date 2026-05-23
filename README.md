@@ -514,9 +514,12 @@ When `--synteny` is enabled, Recore compares flanking gene context around the
 candidate rescue with contexts from genomes where the cluster is already
 present. It tests adaptive windows from one to five upstream/downstream
 neighbours, scores upstream and downstream sides separately, gives nearest
-neighbours the highest weight, and keeps the smallest high-scoring passing
-window. If a reference genome has multiple gene IDs for the cluster, all copies
-are evaluated rather than only the first matrix entry.
+neighbours the highest weight, matches each reference neighbour at most once,
+and keeps the smallest high-scoring passing window. If a reference genome has
+multiple gene IDs for the cluster, all copies are evaluated rather than only
+the first matrix entry. In large reference sets, recurrent support must come
+from more than one genome, so duplicated copies inside a single genome cannot
+validate a rescue by themselves.
 
 The model uses recurrent compatible contexts, not one fragile exact string, so
 minor annotation boundary differences do not create artificial failures.

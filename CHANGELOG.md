@@ -108,6 +108,11 @@ No changes yet.
   is matched by the supplied Newick tree.
 - Invalid numeric options and mistyped NSC engines are rejected before the
   pipeline starts, avoiding silent fallback to unintended behaviour.
+- Adaptive synteny scoring now matches each reference neighbour at most once,
+  avoiding inflated scores in tandem/repeated flanks.
+- Recurrent synteny support in large reference sets now requires compatible
+  contexts in at least two genomes, so multiple copies from one genome cannot
+  validate a rescue by themselves.
 
 ## [0.1.0] - 2026-04-04
 
