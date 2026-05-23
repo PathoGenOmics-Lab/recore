@@ -96,7 +96,7 @@ matrix.
 |------|--------------------|------------------|------------------------|
 | Paper-ready binary PA matrix | `balanced` | strict same-locus calls, alias clusters, and full-length sequence evidence | pseudogenes, partial homology, context-rejected hits |
 | Maximum conservatism | `strict` | only strict same-locus and alias-cluster evidence | full sequence-only hits without annotation/synteny support |
-| Exploratory rescue | `sensitive` | all accepted evidence, including partial/disrupted calls | only rejected context/paralog traps |
+| Exploratory rescue | `sensitive` | accepted strict, alias, sequence-only, partial, and pseudogene evidence | rejected contexts and homologous/paralogous traps |
 
 Recommended wording:
 
@@ -137,12 +137,15 @@ correction rules:
   paralogous signal.
 - `--tree` uses parsimony on the corrected state to describe lineage-specific
   gains, ancestral losses, recurrent/homoplastic signals, and retained core
-  genes.
+  genes. If tree tips do not cover all matrix genomes, unmatched genomes are
+  ignored and Recore reports an explicit warning.
 - `--mobile-element-reference` aligns IS/transposase/mobile-element sequences
   near disrupted evidence so mobile-element support can be sequence-based, not
   dependent on product names in GFF annotations.
 - `--nscluster` reports nucleotide-redundant clusters, marks redundant members,
-  and marks the representative cluster that carries the merged support.
+  and marks the representative cluster that carries the merged support. NSC
+  unions original matrix presence and matrix-corrected rescue evidence from
+  redundant member clusters.
 
 ## Benchmark
 
@@ -167,6 +170,8 @@ Interpretation:
   pseudogenes into binary presence.
 - `sensitive` maximizes recall but accepts partial pseudogene evidence as
   binary presence, creating false positives in this benchmark.
+- No policy converts a homologous/paralogous trap into binary presence unless
+  the evidence has already been promoted to same-locus support by synteny.
 
 Reproduce:
 
@@ -356,6 +361,10 @@ recore_output/
 └── summary.txt                             # run summary
 ```
 
+TSV outputs are written as single-line records. Tabs, line breaks, and null
+characters inside annotation-derived text are normalized to spaces so GFF
+products, notes, and aliases cannot corrupt downstream tables.
+
 For publication figures:
 
 - Use `gene_presence_absence_recore.csv` for binary presence/absence analyses.
@@ -502,7 +511,8 @@ Two engines are available:
   nucleotide identity/coverage thresholds are needed.
 
 NSC does not erase the audit trail. The binary matrix can receive merged
-presence support through the representative cluster, while
+presence support through the representative cluster, including support derived
+from Recore-corrected member clusters, while
 `evolutionary_events.tsv`, `cluster_relationships.tsv`, and
 `nscluster_report.tsv` keep the redundant members visible for review.
 
@@ -516,6 +526,11 @@ policy. It combines:
 3. local locus-context stability and synteny/paralog rejection evidence;
 4. optional tree parsimony;
 5. optional sequence-based mobile-element support.
+
+Tree tips are matched to matrix columns by exact name or embedded `ASxxxxx`
+identifier. If only a subset of tips matches, evolutionary counts and patterns
+are calculated on the matched subset and the run summary/log warns about the
+incomplete match.
 
 The table is designed to prevent overclaiming. For example, a cluster can be
 kept as a separate matrix cluster while being described as a

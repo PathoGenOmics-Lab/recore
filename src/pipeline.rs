@@ -929,39 +929,47 @@ fn write_named_report(
             Some(false) => "FALSE",
             None => "",
         };
-        writeln!(
-            w,
-            "{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            pa.cluster_name(r.cluster_idx),
-            pa.genome_name(r.genome_idx),
-            r.rescue_type,
-            r.identity,
-            r.coverage,
-            r.contig,
-            r.start + 1, // convert 0-based to 1-based for TSV output
-            r.end,
-            r.strand,
-            r.confidence,
-            match r.synteny_ok {
-                Some(true) => "PASS",
-                Some(false) => "FAIL",
-                None => "",
-            },
-            r.annotation_match.as_deref().unwrap_or(""),
-            fragment_n,
-            query_gap,
-            target_gap,
-            colinear,
-            same_cds,
-            r.fragment_evidence.note.as_deref().unwrap_or(""),
+        write_tsv_fields(
+            &mut w,
+            &[
+                pa.cluster_name(r.cluster_idx).to_string(),
+                pa.genome_name(r.genome_idx).to_string(),
+                r.rescue_type.to_string(),
+                format!("{:.1}", r.identity),
+                format!("{:.1}", r.coverage),
+                r.contig.clone(),
+                (r.start + 1).to_string(),
+                r.end.to_string(),
+                r.strand.to_string(),
+                format!("{:.3}", r.confidence),
+                synteny_label(r.synteny_ok).to_string(),
+                r.annotation_match.as_deref().unwrap_or("").to_string(),
+                fragment_n,
+                query_gap,
+                target_gap,
+                colinear.to_string(),
+                same_cds.to_string(),
+                r.fragment_evidence.note.as_deref().unwrap_or("").to_string(),
+            ],
         )?;
     }
     w.flush()?;
     Ok(())
 }
 
+fn clean_tsv_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '\t' | '\n' | '\r' | '\0' => ' ',
+            _ => ch,
+        })
+        .collect()
+}
+
 fn write_tsv_fields(w: &mut BufWriter<fs::File>, fields: &[String]) -> Result<()> {
-    writeln!(w, "{}", fields.join("\t"))?;
+    let cleaned: Vec<String> = fields.iter().map(|field| clean_tsv_field(field)).collect();
+    writeln!(w, "{}", cleaned.join("\t"))?;
     Ok(())
 }
 
@@ -1100,7 +1108,6 @@ fn matrix_policy_corrects(policy: MatrixPolicy, state: &str) -> bool {
                 | "SEQUENCE_ONLY"
                 | "PARTIAL_HOMOLOGY"
                 | "PSEUDOGENE"
-                | "HOMOLOG_PARALOG"
         ),
     }
 }
@@ -2534,6 +2541,12 @@ fn load_phylo_tree(path: &Path, pa: &crate::parser::PresenceAbsence) -> Result<P
     );
     if matched_tips == 0 {
         warn!("No tree tips matched matrix genome names; phylogenetic audit will be uninformative");
+    } else if matched_tips < pa.n_genomes() {
+        warn!(
+            "Tree tip matching is incomplete: {}/{} matrix genomes matched; unmatched genomes are ignored in evolutionary event calls",
+            matched_tips,
+            pa.n_genomes()
+        );
     }
     Ok(PhyloTree { root })
 }
@@ -3740,16 +3753,17 @@ fn write_cluster_locus_contexts(
         });
         let mapped = summaries[ci_val].n_mapped.max(1);
         for (rank, (upstream, downstream, acc)) in rows.into_iter().enumerate() {
-            writeln!(
-                context_w,
-                "{}\t{}\t{}\t{:.3}\t{}\t{}\t{}",
-                pa.cluster_name(ClusterIdx(ci_val)),
-                rank + 1,
-                acc.count,
-                acc.count as f64 / mapped as f64,
-                upstream,
-                downstream,
-                acc.examples.join(";"),
+            write_tsv_fields(
+                &mut context_w,
+                &[
+                    pa.cluster_name(ClusterIdx(ci_val)).to_string(),
+                    (rank + 1).to_string(),
+                    acc.count.to_string(),
+                    format!("{:.3}", acc.count as f64 / mapped as f64),
+                    upstream,
+                    downstream,
+                    acc.examples.join(";"),
+                ],
             )?;
             written_context_rows += 1;
         }
@@ -3764,17 +3778,18 @@ fn write_cluster_locus_contexts(
         "gene_cluster\tn_present\tn_context_mapped\tn_unresolved_gene_ids\tn_unique_contexts\tdominant_context_count\tdominant_context_fraction\tinterpretation"
     )?;
     for summary in &summaries {
-        writeln!(
-            summary_w,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}",
-            pa.cluster_name(summary.cluster_idx),
-            summary.n_present,
-            summary.n_mapped,
-            summary.n_unresolved,
-            summary.n_unique_contexts,
-            summary.dominant_count,
-            summary.dominant_fraction,
-            summary.interpretation,
+        write_tsv_fields(
+            &mut summary_w,
+            &[
+                pa.cluster_name(summary.cluster_idx).to_string(),
+                summary.n_present.to_string(),
+                summary.n_mapped.to_string(),
+                summary.n_unresolved.to_string(),
+                summary.n_unique_contexts.to_string(),
+                summary.dominant_count.to_string(),
+                format!("{:.3}", summary.dominant_fraction),
+                summary.interpretation.to_string(),
+            ],
         )?;
     }
     summary_w.flush()?;
@@ -4294,13 +4309,14 @@ fn write_nsc_report(
             .iter()
             .map(|ci| cluster_names[ci.val()].as_str())
             .collect();
-        writeln!(
-            w,
-            "NS_{}\t{}\t{}\t{}",
-            i,
-            nsc_cl.representative,
-            nsc_cl.members.len(),
-            member_names.join(";")
+        write_tsv_fields(
+            &mut w,
+            &[
+                format!("NS_{}", i),
+                nsc_cl.representative.clone(),
+                nsc_cl.members.len().to_string(),
+                member_names.join(";"),
+            ],
         )?;
     }
     w.flush()?;
@@ -4462,6 +4478,19 @@ mod tests {
 
         let dropped = rescue_with_type(RescueType::Dropped, None);
         assert!(!is_paralog_without_synteny_support(&dropped));
+    }
+
+    #[test]
+    fn tsv_fields_are_single_line_safe() {
+        assert_eq!(clean_tsv_field("a\tb\nc\rd\0e"), "a b c d e");
+    }
+
+    #[test]
+    fn sensitive_policy_does_not_correct_paralog_state() {
+        assert!(!matrix_policy_corrects(
+            MatrixPolicy::Sensitive,
+            "HOMOLOG_PARALOG"
+        ));
     }
 
     #[test]

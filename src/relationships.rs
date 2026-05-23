@@ -93,6 +93,22 @@ fn fmt_float(value: f64) -> String {
     }
 }
 
+fn clean_tsv_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '\t' | '\n' | '\r' | '\0' => ' ',
+            _ => ch,
+        })
+        .collect()
+}
+
+fn write_tsv_fields(w: &mut BufWriter<fs::File>, fields: &[String]) -> Result<()> {
+    let cleaned: Vec<String> = fields.iter().map(|field| clean_tsv_field(field)).collect();
+    writeln!(w, "{}", cleaned.join("\t"))?;
+    Ok(())
+}
+
 fn synteny_support(pass: usize, fail: usize, not_tested: usize) -> &'static str {
     match (pass, fail, not_tested) {
         (0, 0, _) => "not_tested",
@@ -273,26 +289,27 @@ pub fn write_cluster_relationships(
             synteny,
         );
 
-        writeln!(
-            w,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            row.query_cluster,
-            row.related_cluster,
-            row.relationship_type,
-            row.evidence_type,
-            n,
-            synteny,
-            row.synteny_pass,
-            row.synteny_fail,
-            row.synteny_not_tested,
-            fmt_float(identity_min),
-            fmt_float(identity_median),
-            fmt_float(identity_max),
-            fmt_float(coverage_min),
-            fmt_float(coverage_median),
-            fmt_float(coverage_max),
-            rec,
-            row.examples.join(";"),
+        write_tsv_fields(
+            &mut w,
+            &[
+                row.query_cluster,
+                row.related_cluster,
+                row.relationship_type,
+                row.evidence_type,
+                n.to_string(),
+                synteny.to_string(),
+                row.synteny_pass.to_string(),
+                row.synteny_fail.to_string(),
+                row.synteny_not_tested.to_string(),
+                fmt_float(identity_min),
+                fmt_float(identity_median),
+                fmt_float(identity_max),
+                fmt_float(coverage_min),
+                fmt_float(coverage_median),
+                fmt_float(coverage_max),
+                rec.to_string(),
+                row.examples.join(";"),
+            ],
         )?;
     }
     w.flush()?;

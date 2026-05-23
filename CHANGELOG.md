@@ -66,6 +66,8 @@ No changes yet.
 - GFF seqids can be normalized against FASTA contig names to handle common
   annotation/assembly naming mismatches.
 - Output reports are sorted deterministically for reproducible downstream review.
+- TSV report fields are normalized to single-line values so annotation-derived
+  tabs or line breaks cannot corrupt tabular outputs.
 
 ### Fixed
 
@@ -82,6 +84,11 @@ No changes yet.
   from redundant member clusters, not only original matrix presence.
 - `summary.txt` now counts NSC-merged matrix cells separately from direct
   rescue cells and reports the combined corrected-cell total.
+- `sensitive` matrix policy no longer treats homologous/paralogous evidence
+  states as binary-correctable unless they have already passed same-locus
+  support checks.
+- Tree-based evolutionary audits now warn when only a subset of matrix genomes
+  is matched by the supplied Newick tree.
 
 ## [0.1.0] - 2026-04-04
 
