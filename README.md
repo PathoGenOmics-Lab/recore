@@ -30,6 +30,7 @@ becoming presence calls.
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Current Audit Guarantees](#current-audit-guarantees)
 - [Which Matrix Policy Should I Use?](#which-matrix-policy-should-i-use)
 - [How It Works](#how-it-works)
 - [Benchmark](#benchmark)
@@ -86,6 +87,24 @@ Most users should start with:
   is enabled, this table also marks both redundant NSC members and the
   representative cluster that receives the merged presence support.
 
+## Current Audit Guarantees
+
+The current development branch writes output schema `recore.outputs.v5`. In
+addition to the corrected matrix, every run now records:
+
+- early input failures for empty matrices, empty pan-reference FASTA files, and
+  duplicate genome or cluster names, before expensive searches start;
+- GFF3 percent-decoded identifiers/aliases/products before gene matching, so
+  encoded locus tags do not silently miss their matrix entries;
+- multicopy-aware recomputation of `No. isolates`, `No. sequences`, and
+  `Avg sequences per isolate` in the corrected Panaroo-compatible matrix;
+- `genome_qc.tsv` with FASTA/GFF availability, contig remapping, rescue burden,
+  correction burden, synteny rejections, and paralog rejections per genome;
+- cluster components linking split, annotation-matched, nucleotide-redundant,
+  and paralog-related clusters for manual review;
+- tree-derived root-state confidence, carrier-MRCA size/purity, and Dollo-like
+  origin/loss metrics when `--tree` is supplied.
+
 ## Which Matrix Policy Should I Use?
 
 Recore always records detected evidence in audit files. The matrix policy only
@@ -137,8 +156,11 @@ correction rules:
   paralogous signal.
 - `--tree` uses parsimony on the corrected state to describe lineage-specific
   gains, ancestral losses, recurrent/homoplastic signals, and retained core
-  genes. If tree tips do not cover all matrix genomes, unmatched genomes are
-  ignored and Recore reports an explicit warning.
+  genes. Ambiguous Fitch root states are reported as ambiguous, not forced into
+  a single ancestral story; carrier-MRCA purity and Dollo-like origin/loss
+  metrics help separate compact clade-associated events from blinking patterns.
+  If tree tips do not cover all matrix genomes, unmatched genomes are ignored
+  and Recore reports an explicit warning.
 - `--mobile-element-reference` aligns IS/transposase/mobile-element sequences
   near disrupted evidence so mobile-element support can be sequence-based, not
   dependent on product names in GFF annotations.
@@ -213,6 +235,10 @@ Input checklist:
 - Matrix genome columns should match FASTA/GFF file stems, or contain the same
   embedded `ASxxxxx` identifier.
 - Pan-reference FASTA cluster names must match the `Gene` column.
+- Empty matrices, empty pan-reference FASTA files, and duplicate genome or
+  cluster names are rejected before the pipeline starts.
+- GFF3 attributes are percent-decoded before matching `ID`, `Name`, `gene`,
+  `locus_tag`, aliases, products, and notes to matrix gene IDs.
 - Use GFFs whenever possible; without GFFs, Recore can still detect full-length
   sequence evidence and some partial/deletion evidence, but it cannot reliably
   distinguish SPLIT, START_VARIANT, and PARALOG by annotation overlap.
@@ -381,7 +407,8 @@ characters inside annotation-derived text are normalized to spaces so GFF
 products, notes, and aliases cannot corrupt downstream tables.
 `run_manifest.json` records `tool_version`, `schema_version`, input paths,
 parameters, and key counts so every output directory can be traced back to the
-exact Recore configuration that produced it.
+exact Recore configuration that produced it. Current output directories use
+schema `recore.outputs.v5`.
 
 For publication figures:
 
@@ -414,6 +441,8 @@ Key columns in `evolutionary_events.tsv`:
 | `phylogenetic_reliability` | high/moderate/low reliability label from tree pattern, root ambiguity, MRCA purity, and parsimony changes |
 | `phylogenetic_blink_flag` | explicit low/moderate/high flag for repeated gain/loss or singleton-like blinking patterns |
 | `penalized_phylo_model` / `penalized_phylo_score` | Dollo-like model using the smallest carrier MRCA; broad origins, many losses, root ambiguity, and repeated gains reduce the score |
+| `dollo_origin_tips` / `dollo_origin_purity` | size and carrier purity of the inferred single-gain origin used by the Dollo-like model |
+| `ancestral_state` / `root_state_confidence` | Fitch root state and whether the root state is unambiguous or ambiguous |
 | `carrier_mrca_tips` / `carrier_mrca_purity` | size and carrier purity of the smallest clade containing all carriers |
 | `molecular_mechanism` | conservative interpretation combining rescue evidence, reference audit, context stability, mobile-element evidence, and NSC status |
 | `mechanism_detail` | compact reason for the mechanism call, including `nsc_representative` or `nsc_member_merged_into_representative` when relevant |
@@ -591,8 +620,8 @@ policy. It combines:
 1. corrected cluster state after accepted rescues and optional NSC support;
 2. reference-genome audit and reference-derived cluster events;
 3. local locus-context stability and synteny/paralog rejection evidence;
-4. optional tree parsimony;
-5. optional sequence-based mobile-element support.
+4. optional tree parsimony, including explicit ambiguous-root reporting;
+5. optional sequence-based mobile-element support;
 6. connected components of related clusters, so paralogous, redundant, split,
    or annotation-linked clusters are interpreted together.
 
@@ -627,8 +656,9 @@ Recore is an audit and correction layer, not an oracle. In particular:
 - It does not claim that every homologous sequence is a functional gene.
 - It does not turn pseudogenes or partial homologues into clean binary presence
   under the recommended `balanced` policy.
-- It does not infer ancestry or biological novelty by itself; use
-  `reference_genome_audit.tsv`, phylogeny, synteny, and external evidence.
+- It does not prove ancestry or biological novelty by itself; evolutionary
+  labels are audit interpretations that should be read with reference evidence,
+  phylogeny, synteny, and external validation.
 - It does not replace manual review for complex paralogous families, repetitive
   elements, or collapsed assemblies.
 - It cannot recover evidence that is absent from the assembly sequence.

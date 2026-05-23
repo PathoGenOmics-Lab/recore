@@ -29,12 +29,14 @@ Scans the genomes directory for files with extensions `.fasta`, `.fa`, `.fna` (a
 
 ### GFF annotations (optional)
 
-Parses GFF3 files matching genome names. Extracts CDS features only: contig, start, end, strand, gene ID. Coordinates are converted from GFF3's 1-based closed to 0-based half-open (matching minimap2 PAF output). Supports `.gff`, `.gff3`, and gzipped variants.
+Parses GFF3 files matching genome names. Extracts CDS features only: contig, start, end, strand, gene ID. Coordinates are converted from GFF3's 1-based closed to 0-based half-open (matching minimap2 PAF output). Supports `.gff`, `.gff3`, and gzipped variants. GFF3 percent-encoded attributes are decoded before identifier, alias, product, and note matching.
 
 ### Cross-validation
 
 Before proceeding, validates:
 - Genome and cluster names are safe for path construction (no `../`, `/`, `\0`)
+- The matrix and pan-reference FASTA are not empty
+- Genome names and cluster names are unique
 - Warns about clusters in CSV but not in reference (and vice versa)
 - Warns about genomes without matching FASTA files
 

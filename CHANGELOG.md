@@ -30,7 +30,8 @@ and Recore uses semantic versioning.
   evolutionary signal scores, highlight priorities, and cluster-component
   context for each cluster.
 - `evolutionary_events.tsv` now includes Dollo-like penalized phylogenetic
-  scores and violation counts.
+  scores, violation counts, root-state confidence, carrier-MRCA size/purity,
+  and Dollo origin size/purity.
 - `cluster_synteny_blocks.tsv` reports wider five-neighbour synteny blocks for
   audit-only structural/context review.
 - `genome_qc.tsv` reports per-genome FASTA/GFF availability, remapping,
@@ -38,6 +39,8 @@ and Recore uses semantic versioning.
 - Added reproducible utilities: `benchmarks/self_benchmark.py`,
   `benchmarks/compare_runs.py`, and `benchmarks/recore_report.py`.
 - Output manifest schema version is now `recore.outputs.v5`.
+- README now documents the current v5 audit guarantees, input guardrails,
+  multicopy-corrected matrix metadata, and evolutionary interpretation fields.
 
 ### Fixed
 
@@ -49,9 +52,8 @@ and Recore uses semantic versioning.
   than forcing every remapped genome into `review`.
 - Dollo-like phylogenetic scoring no longer rewards clusters absent from all
   matched tree tips.
-- Evolutionary event calls now expose ambiguous Fitch root states, carrier-MRCA
-  size/purity, and Dollo origin size/purity, avoiding overconfident ancestral
-  loss calls for dispersed tie-break patterns.
+- Evolutionary event calls now preserve ambiguous Fitch root states instead of
+  forcing tie-breaks into overconfident ancestral-loss calls.
 - Corrected matrices now recompute `No. isolates`, `No. sequences`, and
   `Avg sequences per isolate` from the final multicopy-aware cell values.
 - Input validation now rejects empty matrices, empty reference FASTA files, and
