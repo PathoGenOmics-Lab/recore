@@ -28,6 +28,13 @@ and Recore uses semantic versioning.
   interruption calls by sequence proximity instead of relying only on GFF
   product names.
 
+### Fixed
+
+- NSC representative clusters now inherit matrix-corrected rescue evidence
+  from redundant member clusters, not only original matrix presence.
+- `summary.txt` now counts NSC-merged matrix cells separately from direct
+  rescue cells and reports the combined corrected-cell total.
+
 ## [0.2.0] - 2026-05-23
 
 ### Added

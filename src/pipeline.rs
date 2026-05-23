@@ -782,15 +782,16 @@ pub fn run(args: &Args) -> Result<()> {
         Vec::new()
     };
     write_corrected_csv(&pa, &matrix_rescue_map, &args.output, &nsc_result)?;
-    write_multistate_matrix(
-        &pa,
-        &all_rescue_map,
-        &synteny_rejected,
-        &paralog_rejected,
-        &gene_to_cluster_maps,
-        &args.output,
-        &nsc_result,
-    )?;
+    write_multistate_matrix(MultistateMatrixInputs {
+        pa: &pa,
+        accepted_rescue_map: &all_rescue_map,
+        nsc_rescue_map: &matrix_rescue_map,
+        synteny_rejected: &synteny_rejected,
+        paralog_rejected: &paralog_rejected,
+        gene_to_cluster_maps: &gene_to_cluster_maps,
+        output_dir: &args.output,
+        nsc_result: &nsc_result,
+    })?;
     let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
     if n_relationships > 0 {
         info!("Cluster relationships: {} rows", n_relationships);
@@ -836,6 +837,7 @@ pub fn run(args: &Args) -> Result<()> {
         paralog_rejected: paralog_rejected.len(),
         matrix_policy: args.matrix_policy,
         matrix_corrected: matrix_rescue_map.len(),
+        nsc_matrix_corrected: nsc_presence_updates(&pa, &nsc_result, &matrix_rescue_map).len(),
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result
@@ -2838,13 +2840,14 @@ struct EvolutionaryEventInputs<'a> {
 fn nsc_presence_updates(
     pa: &crate::parser::PresenceAbsence,
     nsc_result: &Option<nscluster::NsClusterResult>,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
 ) -> ahash::HashSet<(usize, usize)> {
     nsc_result
         .as_ref()
         .map(|r| {
             let (_, updates) = nscluster::apply_ns_merges(
                 &r.merge_map,
-                |ci, gi| pa.is_present(ci, gi),
+                |ci, gi| pa.is_present(ci, gi) || rescue_map.contains_key(&(ci, gi)),
                 pa.n_genomes(),
             );
             updates
@@ -3374,7 +3377,8 @@ fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
 }
 
 fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> {
-    let nsc_presence = nsc_presence_updates(inputs.pa, inputs.nsc_result);
+    let nsc_presence =
+        nsc_presence_updates(inputs.pa, inputs.nsc_result, inputs.matrix_rescue_map);
     let reference_gi = inputs
         .reference_genome
         .and_then(|name| resolve_reference_genome(inputs.pa, name));
@@ -3791,20 +3795,7 @@ fn write_corrected_csv(
         .unwrap_or_default();
 
     // Build NSC presence updates: (rep_ci, gi) pairs to mark present
-    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
-        .as_ref()
-        .map(|r| {
-            let (_, updates) = nscluster::apply_ns_merges(
-                &r.merge_map,
-                |ci, gi| pa.is_present(ci, gi),
-                pa.n_genomes(),
-            );
-            updates
-                .into_iter()
-                .map(|(ci, gi)| (ci.val(), gi.val()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
     let path = output_dir.join("gene_presence_absence_recore.csv");
     let file = fs::File::create(&path)?;
     let writer = BufWriter::with_capacity(256 * 1024, file);
@@ -3892,45 +3883,41 @@ fn write_corrected_csv(
     Ok(())
 }
 
-fn write_multistate_matrix(
-    pa: &crate::parser::PresenceAbsence,
-    accepted_rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
-    synteny_rejected: &[RescueEvent],
-    paralog_rejected: &[RescueEvent],
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
-    output_dir: &std::path::Path,
-    nsc_result: &Option<nscluster::NsClusterResult>,
-) -> Result<()> {
-    let clusters_to_skip: ahash::HashSet<usize> = nsc_result
+struct MultistateMatrixInputs<'a> {
+    pa: &'a crate::parser::PresenceAbsence,
+    accepted_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    nsc_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    synteny_rejected: &'a [RescueEvent],
+    paralog_rejected: &'a [RescueEvent],
+    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    output_dir: &'a std::path::Path,
+    nsc_result: &'a Option<nscluster::NsClusterResult>,
+}
+
+fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Result<()> {
+    let pa = inputs.pa;
+    let clusters_to_skip: ahash::HashSet<usize> = inputs
+        .nsc_result
         .as_ref()
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
         .unwrap_or_default();
 
-    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
-        .as_ref()
-        .map(|r| {
-            let (_, updates) = nscluster::apply_ns_merges(
-                &r.merge_map,
-                |ci, gi| pa.is_present(ci, gi),
-                pa.n_genomes(),
-            );
-            updates
-                .into_iter()
-                .map(|(ci, gi)| (ci.val(), gi.val()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let nsc_presence = nsc_presence_updates(pa, inputs.nsc_result, inputs.nsc_rescue_map);
 
-    let synteny_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = synteny_rejected
+    let synteny_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = inputs
+        .synteny_rejected
         .iter()
         .map(|r| ((r.cluster_idx, r.genome_idx), r))
         .collect();
-    let paralog_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = paralog_rejected
+    let paralog_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = inputs
+        .paralog_rejected
         .iter()
         .map(|r| ((r.cluster_idx, r.genome_idx), r))
         .collect();
 
-    let path = output_dir.join("gene_presence_absence_recore_states.csv");
+    let path = inputs
+        .output_dir
+        .join("gene_presence_absence_recore_states.csv");
     let file = fs::File::create(&path)?;
     let writer = BufWriter::with_capacity(256 * 1024, file);
     let mut csv_writer = csv::Writer::from_writer(writer);
@@ -3964,15 +3951,16 @@ fn write_multistate_matrix(
             row[col_idx].clear();
             if pa.is_present(ci, gi) {
                 row[col_idx].push_str("PRESENT_INPUT");
-            } else if let Some(rescue) = accepted_rescue_map.get(&(ci, gi)) {
+            } else if let Some(rescue) = inputs.accepted_rescue_map.get(&(ci, gi)) {
                 row[col_idx].push_str(accepted_rescue_evidence_state(
                     rescue,
                     pa,
-                    gene_to_cluster_maps,
+                    inputs.gene_to_cluster_maps,
                 ));
             } else if let Some(rescue) = synteny_rejected_map.get(&(ci, gi)) {
                 let query_cluster = pa.cluster_name(rescue.cluster_idx);
-                let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+                let annotation_cluster =
+                    annotation_cluster_name(rescue, pa, inputs.gene_to_cluster_maps);
                 row[col_idx].push_str(evidence_state(
                     rescue,
                     false,
@@ -3982,7 +3970,8 @@ fn write_multistate_matrix(
                 ));
             } else if let Some(rescue) = paralog_rejected_map.get(&(ci, gi)) {
                 let query_cluster = pa.cluster_name(rescue.cluster_idx);
-                let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
+                let annotation_cluster =
+                    annotation_cluster_name(rescue, pa, inputs.gene_to_cluster_maps);
                 row[col_idx].push_str(evidence_state(
                     rescue,
                     false,
@@ -4200,17 +4189,7 @@ fn count_core_after(
     nsc_result: &Option<nscluster::NsClusterResult>,
 ) -> usize {
     let n = pa.n_genomes();
-    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
-        .as_ref()
-        .map(|r| {
-            let (_, updates) =
-                nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
-            updates
-                .into_iter()
-                .map(|(ci, gi)| (ci.val(), gi.val()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
         .as_ref()
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
@@ -4246,17 +4225,7 @@ fn count_soft_core_after(
 ) -> usize {
     let n = pa.n_genomes();
     let threshold = (n as f64 * 0.95).ceil() as usize;
-    let nsc_presence: ahash::HashSet<(usize, usize)> = nsc_result
-        .as_ref()
-        .map(|r| {
-            let (_, updates) =
-                nscluster::apply_ns_merges(&r.merge_map, |ci, gi| pa.is_present(ci, gi), n);
-            updates
-                .into_iter()
-                .map(|(ci, gi)| (ci.val(), gi.val()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
         .as_ref()
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
@@ -4304,6 +4273,7 @@ struct SummaryStats {
     paralog_rejected: usize,
     matrix_policy: MatrixPolicy,
     matrix_corrected: usize,
+    nsc_matrix_corrected: usize,
     synteny_enabled: bool,
     nsc_clusters: usize,
     nsc_merged_genes: usize,
@@ -4365,7 +4335,12 @@ fn write_summary(
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;
     writeln!(w, "Rescued:               {}", rescues.len())?;
     writeln!(w, "Matrix policy:         {:?}", stats.matrix_policy)?;
-    writeln!(w, "Matrix-corrected:      {}", stats.matrix_corrected)?;
+    let total_matrix_corrected = stats.matrix_corrected + stats.nsc_matrix_corrected;
+    writeln!(w, "Matrix-corrected:      {}", total_matrix_corrected)?;
+    writeln!(w, "  rescue cells:        {}", stats.matrix_corrected)?;
+    if stats.nsc_matrix_corrected > 0 {
+        writeln!(w, "  NSC merged cells:    {}", stats.nsc_matrix_corrected)?;
+    }
     if stats.synteny_rejected > 0 {
         writeln!(w, "Rejected (synteny):    {}", stats.synteny_rejected)?;
     }
@@ -4375,7 +4350,7 @@ fn write_summary(
     writeln!(
         w,
         "Remaining gaps:        {}",
-        stats.searchable_gaps.saturating_sub(stats.matrix_corrected)
+        stats.searchable_gaps.saturating_sub(total_matrix_corrected)
     )?;
     writeln!(w)?;
     let core_diff = core_after as i64 - stats.core_before as i64;
@@ -4822,6 +4797,37 @@ mod tests {
             "nsc_representative"
         );
         assert_eq!(nsc_role_for_cluster(ClusterIdx(3), &nsc), "");
+    }
+
+    #[test]
+    fn nsc_presence_union_includes_matrix_rescued_members() {
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["rep".into(), "member".into()],
+            vec!["g1".into(), "g2".into()],
+            vec![vec!["rep_g1".into(), "".into()], vec!["".into(), "".into()]],
+        );
+        let mut merge_map = HashMap::new();
+        merge_map.insert(ClusterIdx(1), ClusterIdx(0));
+        let nsc = Some(nscluster::NsClusterResult {
+            merged_clusters: vec![nscluster::NsCluster {
+                members: vec![ClusterIdx(0), ClusterIdx(1)],
+                representative: "rep".into(),
+            }],
+            total_merged_genes: 2,
+            n_clusters: 1,
+            merge_map,
+        });
+        let member_rescue = RescueEvent {
+            cluster_idx: ClusterIdx(1),
+            genome_idx: GenomeIdx(1),
+            ..rescue_with_type(RescueType::Dropped, Some(true))
+        };
+        let mut rescue_map = HashMap::new();
+        rescue_map.insert((member_rescue.cluster_idx, member_rescue.genome_idx), &member_rescue);
+
+        let updates = nsc_presence_updates(&pa, &nsc, &rescue_map);
+
+        assert!(updates.contains(&(0, 1)));
     }
 
     #[test]
