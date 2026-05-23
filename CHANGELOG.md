@@ -7,33 +7,7 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
-### Added
-
-- Event-aware reference cluster audit for `--reference-genome`.
-- `reference_cluster_events.tsv`, an audit-only table that links
-  reference-absent clusters to the best reference-present cluster when the
-  sequence supports a same-gene, in-frame allele, frameshift-like, or partial
-  reference-homology event.
-- `EVENT_DERIVED_REFERENCE_CLUSTER` and
-  `publication_confidence=event_derived` in `reference_genome_audit.tsv`, so
-  event-derived reference-gene variants are not reported as clean novel genes.
-- `--tree` and `evolutionary_events.tsv` for audit-only evolutionary
-  interpretation of each cluster, including ancestral state, parsimony
-  gain/loss counts, carrier monophyly, reference-derived alleles, IS-supported
-  interruptions, pseudogenization, fragmentation, duplication/paralogy,
-  context-shift candidates, acquisition/insertion candidates, and deletion/loss
-  candidates.
-- `--mobile-element-reference` plus identity/coverage/window controls for
-  name-agnostic mobile-element support. Recore can now support IS/transposase
-  interruption calls by sequence proximity instead of relying only on GFF
-  product names.
-
-### Fixed
-
-- NSC representative clusters now inherit matrix-corrected rescue evidence
-  from redundant member clusters, not only original matrix presence.
-- `summary.txt` now counts NSC-merged matrix cells separately from direct
-  rescue cells and reports the combined corrected-cell total.
+No changes yet.
 
 ## [0.2.0] - 2026-05-23
 
@@ -62,6 +36,24 @@ and Recore uses semantic versioning.
 - Synthetic precision/recall benchmark and AMAP-scale performance benchmark.
 - README logo, workflow diagram, benchmark plot, and expanded documentation for
   algorithms, parameters, rescue types, and output files.
+- Event-aware reference cluster audit for `--reference-genome`.
+- `reference_cluster_events.tsv`, an audit-only table that links
+  reference-absent clusters to the best reference-present cluster when the
+  sequence supports a same-gene, in-frame allele, frameshift-like, or partial
+  reference-homology event.
+- `EVENT_DERIVED_REFERENCE_CLUSTER` and
+  `publication_confidence=event_derived` in `reference_genome_audit.tsv`, so
+  event-derived reference-gene variants are not reported as clean novel genes.
+- `--tree` and `evolutionary_events.tsv` for audit-only evolutionary
+  interpretation of each cluster, including ancestral state, parsimony
+  gain/loss counts, carrier monophyly, reference-derived alleles, IS-supported
+  interruptions, pseudogenization, fragmentation, duplication/paralogy,
+  context-shift candidates, acquisition/insertion candidates, and deletion/loss
+  candidates.
+- `--mobile-element-reference` plus identity/coverage/window controls for
+  name-agnostic mobile-element support. Recore can now support IS/transposase
+  interruption calls by sequence proximity instead of relying only on GFF
+  product names.
 
 ### Changed
 
@@ -86,6 +78,10 @@ and Recore uses semantic versioning.
 - Reference-absence claims no longer classify partial/paralogous reference-like
   evidence as `NO_EVIDENCE`; these cases are flagged as
   `PARTIAL_PARALOG_EVIDENCE` with `publication_confidence=complex_paralog`.
+- NSC representative clusters now inherit matrix-corrected rescue evidence
+  from redundant member clusters, not only original matrix presence.
+- `summary.txt` now counts NSC-merged matrix cells separately from direct
+  rescue cells and reports the combined corrected-cell total.
 
 ## [0.1.0] - 2026-04-04
 
