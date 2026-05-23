@@ -273,6 +273,17 @@ excluded from the binary matrix. Such rows are reported as
 but the absence should not be described as a clean absence of the broader
 sequence family.
 
+The reference audit also compares reference-absent cluster representatives
+against reference-present cluster representatives. Recore seeds candidate pairs
+with canonical 15-mers, globally aligns the best candidates, and classifies
+high-confidence matches as full-length same-gene sequence, short/long in-frame
+alleles, frameshift-like length changes, or partial reference homology. These
+events are written to `reference_cluster_events.tsv` and mirrored in
+`reference_genome_audit.tsv` as `EVENT_DERIVED_REFERENCE_CLUSTER` with
+`publication_confidence=event_derived`. They are deliberately audit-only:
+Recore keeps the cluster as a separate matrix column but prevents downstream
+tables from calling it a clean novel gene relative to the reference.
+
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 
 Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context.

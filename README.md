@@ -78,6 +78,8 @@ Most users should start with:
 - `orthology_evidence.tsv` for publication wording and manual review
 - `reference_genome_audit.tsv` when asking whether clusters are truly absent
   from a reference genome
+- `reference_cluster_events.tsv` to flag reference-absent clusters that look
+  like event-derived alleles/fragments of a reference gene
 
 ## Which Matrix Policy Should I Use?
 
@@ -292,6 +294,7 @@ recore_output/
 ├── rescue_report.tsv                       # accepted rescue events
 ├── orthology_evidence.tsv                  # accepted/rejected evidence with wording guidance
 ├── reference_genome_audit.tsv              # reference-specific audit when --reference-genome is set
+├── reference_cluster_events.tsv            # event-derived reference-gene variants, audit-only
 ├── synteny_rejected_report.tsv             # explicit synteny FAIL candidates
 ├── paralog_rejected_report.tsv             # PARALOG candidates lacking synteny support
 ├── cluster_locus_context.tsv               # per-cluster locus-context rows when GFFs are loaded
@@ -312,7 +315,11 @@ For publication figures:
 - Use `reference_genome_audit.tsv` to support claims such as "absent from
   H37Rv/reference" instead of relying only on the original matrix. The
   `publication_confidence` column flags clean absences separately from
-  complex partial/paralogous reference evidence.
+  complex partial/paralogous or event-derived reference evidence.
+- Use `reference_cluster_events.tsv` to keep clusters separate in the matrix
+  while reporting whether their representative sequence is best explained as
+  a short/long in-frame allele, full-length same-gene sequence, frameshift-like
+  length change, or partial homology to a gene in the audited reference.
 
 ## Evidence States
 

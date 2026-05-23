@@ -9,7 +9,14 @@ and Recore uses semantic versioning.
 
 ### Added
 
-- Placeholder for changes after `0.2.0`.
+- Event-aware reference cluster audit for `--reference-genome`.
+- `reference_cluster_events.tsv`, an audit-only table that links
+  reference-absent clusters to the best reference-present cluster when the
+  sequence supports a same-gene, in-frame allele, frameshift-like, or partial
+  reference-homology event.
+- `EVENT_DERIVED_REFERENCE_CLUSTER` and
+  `publication_confidence=event_derived` in `reference_genome_audit.tsv`, so
+  event-derived reference-gene variants are not reported as clean novel genes.
 
 ## [0.2.0] - 2026-05-23
 

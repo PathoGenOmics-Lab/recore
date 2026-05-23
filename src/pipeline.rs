@@ -295,6 +295,17 @@ pub fn run(args: &Args) -> Result<()> {
         Vec::new()
     };
 
+    let reference_cluster_events = if let Some(reference_genome) = args.reference_genome.as_deref()
+    {
+        if let Some(reference_gi) = resolve_reference_genome(&pa, reference_genome) {
+            build_reference_cluster_events(&pa, &pan_ref, reference_gi)
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     // ── 7. Classify hits (parallel) ──
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(args.threads)
@@ -726,11 +737,15 @@ pub fn run(args: &Args) -> Result<()> {
             synteny_rejected: &synteny_rejected,
             paralog_rejected: &paralog_rejected,
             reference_candidates: &reference_audit_candidates,
+            reference_cluster_events: &reference_cluster_events,
             pa: &pa,
             gene_to_cluster_maps: &gene_to_cluster_maps,
             matrix_policy: args.matrix_policy,
             output_dir: &args.output,
         })?;
+        if !reference_cluster_events.is_empty() {
+            write_reference_cluster_events(&reference_cluster_events, &pa, &args.output)?;
+        }
     }
     if !gff_indices.is_empty() {
         let (context_rows, summary_rows) =
@@ -1086,6 +1101,7 @@ fn evidence_strength(state: &str) -> &'static str {
         "SEQUENCE_ONLY" => "moderate",
         "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => "review",
         "PARTIAL_PARALOG_EVIDENCE" => "review",
+        "EVENT_DERIVED_REFERENCE_CLUSTER" => "review",
         "MISSING_CDS_UNVALIDATED" => "review",
         "HOMOLOG_PARALOG" | "REJECTED_CONTEXT" => "low",
         "NO_EVIDENCE" => "none",
@@ -1113,6 +1129,9 @@ fn recommended_wording(state: &str, accepted: bool) -> &'static str {
         "HOMOLOG_PARALOG" => "Keep distinct unless synteny confirms the same locus.",
         "PARTIAL_PARALOG_EVIDENCE" => {
             "Treat as partial/paralogous reference-like evidence; do not convert to binary presence."
+        }
+        "EVENT_DERIVED_REFERENCE_CLUSTER" => {
+            "Keep as a separate cluster, but interpret as an event-derived reference-gene variant."
         }
         _ => "Review before publication.",
     }
@@ -1257,6 +1276,7 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
         return match state {
             "HOMOLOG_PARALOG" => "reference_homolog_paralog_rejected",
             "PARTIAL_PARALOG_EVIDENCE" => "reference_partial_paralog_evidence",
+            "EVENT_DERIVED_REFERENCE_CLUSTER" => "reference_event_derived_cluster",
             "REJECTED_CONTEXT" => "reference_incompatible_context",
             _ => "reference_rejected_candidate",
         };
@@ -1268,6 +1288,7 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
         "MISSING_CDS_UNVALIDATED" => "reference_missing_cds_unvalidated",
         "PARTIAL_HOMOLOGY" => "reference_partial_like",
         "PARTIAL_PARALOG_EVIDENCE" => "reference_partial_paralog_evidence",
+        "EVENT_DERIVED_REFERENCE_CLUSTER" => "reference_event_derived_cluster",
         "PSEUDOGENE" => "reference_pseudogene_like",
         "HOMOLOG_PARALOG" => "reference_homolog_paralog",
         _ => "reference_candidate_present",
@@ -1276,6 +1297,9 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
 
 fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
     if !accepted {
+        if state == "EVENT_DERIVED_REFERENCE_CLUSTER" {
+            return "flag_reference_event_derived_cluster";
+        }
         if state == "PARTIAL_PARALOG_EVIDENCE" {
             return "flag_reference_partial_paralog_evidence";
         }
@@ -1289,12 +1313,16 @@ fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
             "flag_reference_like_ambiguous"
         }
         "PARTIAL_PARALOG_EVIDENCE" => "flag_reference_partial_paralog_evidence",
+        "EVENT_DERIVED_REFERENCE_CLUSTER" => "flag_reference_event_derived_cluster",
         _ => "review_reference_status",
     }
 }
 
 fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
     if !accepted {
+        if state == "EVENT_DERIVED_REFERENCE_CLUSTER" {
+            return "Do not call a clean novel gene; keep the cluster separate and report the inferred reference-gene event.";
+        }
         if state == "PARTIAL_PARALOG_EVIDENCE" {
             return "Do not call cleanly novel to the reference; report as partial/paralogous reference-like evidence.";
         }
@@ -1322,6 +1350,9 @@ fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
         "PARTIAL_PARALOG_EVIDENCE" => {
             "Reference has partial/paralogous sequence evidence; keep the exact cluster absent but flag as complex."
         }
+        "EVENT_DERIVED_REFERENCE_CLUSTER" => {
+            "Exact cluster is absent, but representative sequence supports an event-derived variant of a reference gene."
+        }
         _ => "Review before making a reference-absence claim.",
     }
 }
@@ -1330,6 +1361,7 @@ fn reference_publication_confidence(state: &str, reference_status: &str) -> &'st
     match state {
         "STRICT_PRESENT" | "ALIAS_CLUSTER" | "SEQUENCE_ONLY" => "not_reference_absent",
         "PARTIAL_PARALOG_EVIDENCE" | "HOMOLOG_PARALOG" => "complex_paralog",
+        "EVENT_DERIVED_REFERENCE_CLUSTER" => "event_derived",
         "PARTIAL_HOMOLOGY" => "fragmented",
         "PSEUDOGENE" => "pseudogene",
         "NO_EVIDENCE" => "clean",
@@ -1471,6 +1503,382 @@ fn best_reference_candidate<'a>(
         .max_by(|a, b| reference_candidate_score(a).total_cmp(&reference_candidate_score(b)))
 }
 
+const REFERENCE_EVENT_KMER: usize = 15;
+const REFERENCE_EVENT_TOP_CANDIDATES: usize = 12;
+const REFERENCE_EVENT_MAX_DP_CELLS: usize = 5_000_000;
+
+#[derive(Debug, Clone)]
+struct ReferenceClusterEvent {
+    query_cluster_idx: ClusterIdx,
+    target_cluster_idx: ClusterIdx,
+    target_gene_id: String,
+    event_class: &'static str,
+    identity: f64,
+    query_coverage: f64,
+    reference_coverage: f64,
+    query_length: usize,
+    reference_length: usize,
+    event_size_nt: i64,
+    event_size_aa: Option<i64>,
+    matches: usize,
+    mismatches: usize,
+    gaps_in_query: usize,
+    gaps_in_reference: usize,
+    shared_kmers: usize,
+    interpretation: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct PairwiseEventStats {
+    identity: f64,
+    query_coverage: f64,
+    reference_coverage: f64,
+    matches: usize,
+    mismatches: usize,
+    gaps_in_query: usize,
+    gaps_in_reference: usize,
+}
+
+fn longest_cluster_sequence<'a>(
+    pan_ref: &'a HashMap<String, Vec<Vec<u8>>>,
+    cluster_name: &str,
+) -> Option<&'a [u8]> {
+    pan_ref
+        .get(cluster_name)?
+        .iter()
+        .max_by_key(|seq| seq.len())
+        .map(Vec::as_slice)
+}
+
+fn base_bits(base: u8) -> Option<u64> {
+    match base.to_ascii_uppercase() {
+        b'A' => Some(0),
+        b'C' => Some(1),
+        b'G' => Some(2),
+        b'T' => Some(3),
+        _ => None,
+    }
+}
+
+fn canonical_kmer_hash(seq: &[u8]) -> Option<u64> {
+    let mut forward = 0u64;
+    let mut reverse = 0u64;
+    for &base in seq {
+        forward = (forward << 2) | base_bits(base)?;
+    }
+    for &base in seq.iter().rev() {
+        let bits = base_bits(base)?;
+        reverse = (reverse << 2) | (3 - bits);
+    }
+    Some(forward.min(reverse))
+}
+
+fn sequence_kmers(seq: &[u8], k: usize) -> Vec<u64> {
+    if seq.len() < k {
+        return Vec::new();
+    }
+    let mut kmers: Vec<u64> = (0..=seq.len() - k)
+        .filter_map(|i| canonical_kmer_hash(&seq[i..i + k]))
+        .collect();
+    kmers.sort_unstable();
+    kmers.dedup();
+    kmers
+}
+
+fn global_event_alignment(query: &[u8], reference: &[u8]) -> Option<PairwiseEventStats> {
+    let m = query.len();
+    let n = reference.len();
+    if m == 0 || n == 0 || (m + 1).saturating_mul(n + 1) > REFERENCE_EVENT_MAX_DP_CELLS {
+        return None;
+    }
+
+    let width = n + 1;
+    let idx = |i: usize, j: usize| i * width + j;
+    let mut scores = vec![0i32; (m + 1) * (n + 1)];
+    let mut trace = vec![0u8; (m + 1) * (n + 1)];
+
+    for i in 1..=m {
+        scores[idx(i, 0)] = scores[idx(i - 1, 0)] - 2;
+        trace[idx(i, 0)] = 1;
+    }
+    for j in 1..=n {
+        scores[idx(0, j)] = scores[idx(0, j - 1)] - 2;
+        trace[idx(0, j)] = 2;
+    }
+
+    for i in 1..=m {
+        for j in 1..=n {
+            let q = query[i - 1].to_ascii_uppercase();
+            let r = reference[j - 1].to_ascii_uppercase();
+            let diag = scores[idx(i - 1, j - 1)] + if q == r { 2 } else { -1 };
+            let up = scores[idx(i - 1, j)] - 2;
+            let left = scores[idx(i, j - 1)] - 2;
+            if diag >= up && diag >= left {
+                scores[idx(i, j)] = diag;
+                trace[idx(i, j)] = 0;
+            } else if up >= left {
+                scores[idx(i, j)] = up;
+                trace[idx(i, j)] = 1;
+            } else {
+                scores[idx(i, j)] = left;
+                trace[idx(i, j)] = 2;
+            }
+        }
+    }
+
+    let mut i = m;
+    let mut j = n;
+    let mut matches = 0usize;
+    let mut mismatches = 0usize;
+    let mut gaps_in_query = 0usize;
+    let mut gaps_in_reference = 0usize;
+    while i > 0 || j > 0 {
+        match trace[idx(i, j)] {
+            0 if i > 0 && j > 0 => {
+                if query[i - 1].eq_ignore_ascii_case(&reference[j - 1]) {
+                    matches += 1;
+                } else {
+                    mismatches += 1;
+                }
+                i -= 1;
+                j -= 1;
+            }
+            1 if i > 0 => {
+                gaps_in_reference += 1;
+                i -= 1;
+            }
+            2 if j > 0 => {
+                gaps_in_query += 1;
+                j -= 1;
+            }
+            _ if i > 0 => {
+                gaps_in_reference += 1;
+                i -= 1;
+            }
+            _ if j > 0 => {
+                gaps_in_query += 1;
+                j -= 1;
+            }
+            _ => break,
+        }
+    }
+
+    let aligned_non_gap = matches + mismatches;
+    if aligned_non_gap == 0 {
+        return None;
+    }
+    Some(PairwiseEventStats {
+        identity: matches as f64 / aligned_non_gap as f64 * 100.0,
+        query_coverage: aligned_non_gap as f64 / m as f64 * 100.0,
+        reference_coverage: aligned_non_gap as f64 / n as f64 * 100.0,
+        matches,
+        mismatches,
+        gaps_in_query,
+        gaps_in_reference,
+    })
+}
+
+fn classify_reference_event(
+    query_len: usize,
+    reference_len: usize,
+    stats: &PairwiseEventStats,
+) -> Option<(&'static str, i64, Option<i64>, &'static str)> {
+    if stats.identity < 90.0 || stats.query_coverage < 80.0 || stats.reference_coverage < 40.0 {
+        return None;
+    }
+
+    let size = query_len as i64 - reference_len as i64;
+    let abs_size = size.abs();
+    if stats.identity >= 95.0 && stats.query_coverage >= 90.0 && stats.reference_coverage >= 90.0 {
+        return Some((
+            "same_gene_full_length",
+            size,
+            (size % 3 == 0).then_some(size / 3),
+            "Same-gene sequence evidence; not a clean reference-novel cluster.",
+        ));
+    }
+    if query_len < reference_len && stats.identity >= 95.0 && stats.query_coverage >= 90.0 {
+        if abs_size % 3 == 0 {
+            return Some((
+                "short_in_frame_allele",
+                -abs_size,
+                Some(-(abs_size / 3)),
+                "Short in-frame allele of a reference gene; keep separate in the matrix but do not call a clean novel gene.",
+            ));
+        }
+        return Some((
+            "frameshift_or_truncated_reference_homology",
+            -abs_size,
+            None,
+            "Reference-like sequence with an out-of-frame length difference; review as possible frameshift/truncation.",
+        ));
+    }
+    if query_len > reference_len && stats.identity >= 95.0 && stats.reference_coverage >= 90.0 {
+        if abs_size % 3 == 0 {
+            return Some((
+                "long_in_frame_allele",
+                abs_size,
+                Some(abs_size / 3),
+                "Long in-frame allele of a reference gene; keep separate in the matrix but do not call a clean novel gene.",
+            ));
+        }
+        return Some((
+            "frameshift_or_extension_reference_homology",
+            abs_size,
+            None,
+            "Reference-like sequence with an out-of-frame extension; review before biological interpretation.",
+        ));
+    }
+    Some((
+        "partial_reference_homology",
+        size,
+        (size % 3 == 0).then_some(size / 3),
+        "Partial reference-gene homology; exact cluster is separate, but the sequence is not cleanly novel.",
+    ))
+}
+
+fn is_h37rv_locus_token(token: &str) -> bool {
+    let Some(rest) = token.strip_prefix("Rv") else {
+        return false;
+    };
+    if rest.len() < 4 || !rest[..4].chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    rest[4..].chars().all(|ch| ch.is_ascii_alphabetic())
+}
+
+fn display_reference_gene_id(gene_id: &str) -> String {
+    let cleaned = stripped_gene_id(gene_id.trim()).unwrap_or(gene_id.trim());
+    cleaned
+        .split('_')
+        .find(|part| is_h37rv_locus_token(part))
+        .unwrap_or(cleaned)
+        .to_string()
+}
+
+fn reference_gene_id(pa: &crate::parser::PresenceAbsence, ci: ClusterIdx, gi: GenomeIdx) -> String {
+    let gene_id = pa
+        .cell(ci, gi)
+        .split(';')
+        .map(str::trim)
+        .find(|gene| !gene.is_empty())
+        .unwrap_or("");
+    display_reference_gene_id(gene_id)
+}
+
+fn build_reference_cluster_events(
+    pa: &crate::parser::PresenceAbsence,
+    pan_ref: &HashMap<String, Vec<Vec<u8>>>,
+    reference_gi: GenomeIdx,
+) -> Vec<ReferenceClusterEvent> {
+    let mut kmer_index: HashMap<u64, Vec<ClusterIdx>> = HashMap::new();
+    let mut reference_clusters = Vec::new();
+    for ci_val in 0..pa.n_clusters() {
+        let ci = ClusterIdx(ci_val);
+        if !pa.is_present(ci, reference_gi) {
+            continue;
+        }
+        let Some(seq) = longest_cluster_sequence(pan_ref, pa.cluster_name(ci)) else {
+            continue;
+        };
+        if seq.len() < REFERENCE_EVENT_KMER {
+            continue;
+        }
+        reference_clusters.push(ci);
+        for kmer in sequence_kmers(seq, REFERENCE_EVENT_KMER) {
+            kmer_index.entry(kmer).or_default().push(ci);
+        }
+    }
+
+    let mut events = Vec::new();
+    for ci_val in 0..pa.n_clusters() {
+        let query_ci = ClusterIdx(ci_val);
+        if pa.is_present(query_ci, reference_gi) {
+            continue;
+        }
+        let Some(query_seq) = longest_cluster_sequence(pan_ref, pa.cluster_name(query_ci)) else {
+            continue;
+        };
+        if query_seq.len() < REFERENCE_EVENT_KMER {
+            continue;
+        }
+
+        let mut candidate_counts: HashMap<ClusterIdx, usize> = HashMap::new();
+        for kmer in sequence_kmers(query_seq, REFERENCE_EVENT_KMER) {
+            if let Some(candidates) = kmer_index.get(&kmer) {
+                for &target_ci in candidates {
+                    *candidate_counts.entry(target_ci).or_default() += 1;
+                }
+            }
+        }
+        if candidate_counts.is_empty() {
+            continue;
+        }
+
+        let mut candidates: Vec<(ClusterIdx, usize)> = candidate_counts.into_iter().collect();
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        candidates.truncate(REFERENCE_EVENT_TOP_CANDIDATES.min(reference_clusters.len()));
+
+        let mut best_event: Option<ReferenceClusterEvent> = None;
+        for (target_ci, shared_kmers) in candidates {
+            let Some(reference_seq) = longest_cluster_sequence(pan_ref, pa.cluster_name(target_ci))
+            else {
+                continue;
+            };
+            let Some(stats) = global_event_alignment(query_seq, reference_seq) else {
+                continue;
+            };
+            let Some((event_class, event_size_nt, event_size_aa, interpretation)) =
+                classify_reference_event(query_seq.len(), reference_seq.len(), &stats)
+            else {
+                continue;
+            };
+            let candidate_event = ReferenceClusterEvent {
+                query_cluster_idx: query_ci,
+                target_cluster_idx: target_ci,
+                target_gene_id: reference_gene_id(pa, target_ci, reference_gi),
+                event_class,
+                identity: stats.identity,
+                query_coverage: stats.query_coverage,
+                reference_coverage: stats.reference_coverage,
+                query_length: query_seq.len(),
+                reference_length: reference_seq.len(),
+                event_size_nt,
+                event_size_aa,
+                matches: stats.matches,
+                mismatches: stats.mismatches,
+                gaps_in_query: stats.gaps_in_query,
+                gaps_in_reference: stats.gaps_in_reference,
+                shared_kmers,
+                interpretation,
+            };
+            let candidate_score = reference_event_score(&candidate_event);
+            if best_event
+                .as_ref()
+                .is_none_or(|best| candidate_score > reference_event_score(best))
+            {
+                best_event = Some(candidate_event);
+            }
+        }
+        if let Some(event) = best_event {
+            events.push(event);
+        }
+    }
+    events.sort_by(|a, b| {
+        a.query_cluster_idx
+            .cmp(&b.query_cluster_idx)
+            .then(a.target_cluster_idx.cmp(&b.target_cluster_idx))
+    });
+    events
+}
+
+fn reference_event_score(event: &ReferenceClusterEvent) -> f64 {
+    event.identity
+        + event.query_coverage
+        + event.reference_coverage
+        + (event.shared_kmers as f64 / 10.0)
+}
+
 struct ReferenceEventRow<'a> {
     reference_name: &'a str,
     rescue: &'a RescueEvent,
@@ -1487,6 +1895,7 @@ struct ReferenceAuditInputs<'a> {
     synteny_rejected: &'a [RescueEvent],
     paralog_rejected: &'a [RescueEvent],
     reference_candidates: &'a [RescueEvent],
+    reference_cluster_events: &'a [ReferenceClusterEvent],
     pa: &'a crate::parser::PresenceAbsence,
     gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
     matrix_policy: MatrixPolicy,
@@ -1597,6 +2006,64 @@ fn write_reference_shadow_candidate_row(
                 .as_deref()
                 .unwrap_or("")
                 .to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn write_reference_cluster_event_row(
+    w: &mut BufWriter<fs::File>,
+    pa: &crate::parser::PresenceAbsence,
+    reference_name: &str,
+    event: &ReferenceClusterEvent,
+) -> Result<()> {
+    let state = "EVENT_DERIVED_REFERENCE_CLUSTER";
+    let reference_status = reference_status_for(state, false);
+    let publication_confidence = reference_publication_confidence(state, reference_status);
+    let event_aa = event
+        .event_size_aa
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let note = format!(
+        "event_class={};target_reference_cluster={};event_size_nt={};event_size_aa={};query_length={};reference_length={};query_coverage={:.1};reference_coverage={:.1};shared_kmers={};{}",
+        event.event_class,
+        pa.cluster_name(event.target_cluster_idx),
+        event.event_size_nt,
+        event_aa,
+        event.query_length,
+        event.reference_length,
+        event.query_coverage,
+        event.reference_coverage,
+        event.shared_kmers,
+        event.interpretation
+    );
+
+    write_tsv_fields(
+        w,
+        &[
+            pa.cluster_name(event.query_cluster_idx).to_string(),
+            reference_name.to_string(),
+            "reference_like_ambiguous".to_string(),
+            reference_publication_status(state, false).to_string(),
+            reference_status.to_string(),
+            "audit_only".to_string(),
+            state.to_string(),
+            evidence_strength(state).to_string(),
+            publication_confidence.to_string(),
+            reference_recommended_wording(state, false).to_string(),
+            "reference_cluster_event".to_string(),
+            event.event_class.to_string(),
+            "event_derived_reference_cluster".to_string(),
+            format!("{:.1}", event.identity),
+            format!("{:.1}", event.query_coverage),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            event.target_gene_id.clone(),
+            pa.cluster_name(event.target_cluster_idx).to_string(),
+            note,
         ],
     )?;
     Ok(())
@@ -1735,6 +2202,15 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
             continue;
         }
 
+        if let Some(event) = inputs
+            .reference_cluster_events
+            .iter()
+            .find(|event| event.query_cluster_idx == ci)
+        {
+            write_reference_cluster_event_row(&mut w, inputs.pa, reference_name, event)?;
+            continue;
+        }
+
         write_tsv_fields(
             &mut w,
             &[
@@ -1769,6 +2245,55 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
     info!(
         "Reference genome audit written for {} to {}",
         reference_name,
+        path.display()
+    );
+    Ok(())
+}
+
+fn write_reference_cluster_events(
+    events: &[ReferenceClusterEvent],
+    pa: &crate::parser::PresenceAbsence,
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let path = output_dir.join("reference_cluster_events.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(
+        w,
+        "gene_cluster\ttarget_reference_cluster\ttarget_reference_gene\treference_event_class\tidentity\tquery_coverage\treference_coverage\tquery_length\treference_length\tevent_size_nt\tevent_size_aa\tmatches\tmismatches\tgaps_in_query\tgaps_in_reference\tshared_kmers\tmatrix_recommendation\tinterpretation"
+    )?;
+    for event in events {
+        write_tsv_fields(
+            &mut w,
+            &[
+                pa.cluster_name(event.query_cluster_idx).to_string(),
+                pa.cluster_name(event.target_cluster_idx).to_string(),
+                event.target_gene_id.clone(),
+                event.event_class.to_string(),
+                format!("{:.1}", event.identity),
+                format!("{:.1}", event.query_coverage),
+                format!("{:.1}", event.reference_coverage),
+                event.query_length.to_string(),
+                event.reference_length.to_string(),
+                event.event_size_nt.to_string(),
+                event
+                    .event_size_aa
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                event.matches.to_string(),
+                event.mismatches.to_string(),
+                event.gaps_in_query.to_string(),
+                event.gaps_in_reference.to_string(),
+                event.shared_kmers.to_string(),
+                "keep_separate_cluster_annotate_event".to_string(),
+                event.interpretation.to_string(),
+            ],
+        )?;
+    }
+    w.flush()?;
+    info!(
+        "Reference cluster event audit: {} rows written to {}",
+        events.len(),
         path.display()
     );
     Ok(())
@@ -2809,6 +3334,53 @@ mod tests {
             reference_shadow_state(&candidates[0], "group_1044", "group_537"),
             "PARTIAL_PARALOG_EVIDENCE"
         );
+    }
+
+    #[test]
+    fn reference_cluster_events_detect_short_in_frame_allele() {
+        let left = b"ATGAAACCCGGGTTTAAACCCGGGTTTAAACCC";
+        let middle = b"GCTGCTGCTGCTGCTGCTGCTGCTGCTGCT";
+        let right = b"GGGAAATTTCCCGGGAAATTTCCCGGGAAATAA";
+        let mut reference_seq = Vec::new();
+        reference_seq.extend_from_slice(left);
+        reference_seq.extend_from_slice(middle);
+        reference_seq.extend_from_slice(right);
+        let mut short_seq = Vec::new();
+        short_seq.extend_from_slice(left);
+        short_seq.extend_from_slice(right);
+
+        assert_eq!((reference_seq.len() - short_seq.len()) % 3, 0);
+
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["group_short".into(), "group_ref".into()],
+            vec!["L4_AS00146".into()],
+            vec![vec!["".into()], vec!["Rv0601c".into()]],
+        );
+        let mut pan_ref = HashMap::new();
+        pan_ref.insert("group_short".to_string(), vec![short_seq]);
+        pan_ref.insert("group_ref".to_string(), vec![reference_seq]);
+
+        let events = build_reference_cluster_events(&pa, &pan_ref, GenomeIdx(0));
+
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.query_cluster_idx, ClusterIdx(0));
+        assert_eq!(event.target_cluster_idx, ClusterIdx(1));
+        assert_eq!(event.target_gene_id, "Rv0601c");
+        assert_eq!(event.event_class, "short_in_frame_allele");
+        assert_eq!(event.event_size_nt, -30);
+        assert_eq!(event.event_size_aa, Some(-10));
+        assert!(event.identity >= 99.0);
+    }
+
+    #[test]
+    fn reference_gene_display_prefers_h37rv_locus() {
+        assert_eq!(display_reference_gene_id("L4_AS00146_Rv0601c"), "Rv0601c");
+        assert_eq!(
+            display_reference_gene_id("L4_AS00146_Rv0601c_pseudo"),
+            "Rv0601c"
+        );
+        assert_eq!(display_reference_gene_id("custom_gene"), "custom_gene");
     }
 
     #[test]

@@ -127,10 +127,39 @@ matrix column name or an embedded `ASxxxxx` identifier.
 This file is meant for reference-absence claims: keep `new_to_reference` for
 strictly absent clusters, remove `reference_like_or_present`, and manually
 review `reference_like_ambiguous`. The `publication_confidence` field uses
-`clean`, `complex_paralog`, `fragmented`, `pseudogene`, `unresolved`, or
-`not_reference_absent`. `complex_paralog` is used when the exact cluster remains
-absent from the reference but discarded/subthreshold sequence evidence points to
-a partial or paralogous reference-like copy.
+`clean`, `complex_paralog`, `event_derived`, `fragmented`, `pseudogene`,
+`unresolved`, or `not_reference_absent`. `complex_paralog` is used when the
+exact cluster remains absent from the reference but discarded/subthreshold
+sequence evidence points to a partial or paralogous reference-like copy.
+`event_derived` is used when the exact cluster remains separate in the matrix
+but its representative sequence is best explained as a reference-gene allele or
+fragment.
+
+---
+
+## reference_cluster_events.tsv
+
+Written only when `--reference-genome` is provided and Recore finds
+reference-absent clusters with strong sequence evidence to a reference-present
+cluster. This file is audit-only: it never merges clusters and never changes
+the binary corrected matrix.
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Cluster absent from the audited reference |
+| `target_reference_cluster` | Best reference-present cluster matched by k-mer seed plus global alignment |
+| `target_reference_gene` | Gene ID carried by the audited reference for the target cluster |
+| `reference_event_class` | `same_gene_full_length`, `short_in_frame_allele`, `long_in_frame_allele`, `frameshift_or_truncated_reference_homology`, `frameshift_or_extension_reference_homology`, or `partial_reference_homology` |
+| `identity`, `query_coverage`, `reference_coverage` | Global-alignment summary between the cluster representative and the matched reference-cluster representative |
+| `query_length`, `reference_length`, `event_size_nt`, `event_size_aa` | Length comparison. Amino-acid delta is filled only when the nucleotide length difference is divisible by three |
+| `matches`, `mismatches`, `gaps_in_query`, `gaps_in_reference`, `shared_kmers` | Alignment and seed evidence used to choose the best event |
+| `matrix_recommendation` | Currently `keep_separate_cluster_annotate_event` |
+| `interpretation` | Publication-facing wording for the event |
+
+Rows in this file also appear in `reference_genome_audit.tsv` as
+`EVENT_DERIVED_REFERENCE_CLUSTER` with
+`final_publication_status=flag_reference_event_derived_cluster` and
+`publication_confidence=event_derived`.
 
 ---
 
