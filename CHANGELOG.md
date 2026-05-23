@@ -121,6 +121,11 @@ No changes yet.
   NSC component reporting is stable for both MinHash and mmseqs2 engines.
 - Duplicate rescue events for the same cluster/genome are now collapsed by an
   explicit evidence ranking instead of relying on hash-map overwrite order.
+- Gene ID suffix normalization now strips only Panaroo-style `_dup_<number>`
+  and `_pseudo` suffixes, avoiding false alias collapse for biological names
+  that contain `_dup_`.
+- Equal-scoring fragment-chain candidates now use deterministic locus
+  tie-breakers, avoiding arbitrary fragment evidence in repeated regions.
 
 ## [0.1.0] - 2026-04-04
 

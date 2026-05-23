@@ -13,7 +13,7 @@ use std::path::Path;
 
 use crate::nscluster::NsClusterResult;
 use crate::parser::PresenceAbsence;
-use crate::rescue::{RescueEvent, RescueType};
+use crate::rescue::{panaroo_gene_id_suffix_variants, RescueEvent, RescueType};
 
 #[derive(Debug, Clone)]
 struct RelationshipAccumulator {
@@ -332,11 +332,8 @@ fn build_gene_cluster_map(
                 continue;
             }
             map.insert(gene_id.to_string(), ci_val);
-            if let Some(stripped) = gene_id.strip_suffix("_pseudo") {
+            for stripped in panaroo_gene_id_suffix_variants(gene_id).into_iter().skip(1) {
                 map.entry(stripped.to_string()).or_insert(ci_val);
-            }
-            if let Some(pos) = gene_id.rfind("_dup_") {
-                map.entry(gene_id[..pos].to_string()).or_insert(ci_val);
             }
         }
     }

@@ -16,8 +16,8 @@ use crate::parser::{
 use crate::relationships::write_cluster_relationships;
 use crate::rescue::{
     build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_hit, classify_hits,
-    resolve_conflicts, validate_synteny_with_cache, GffGene, GffIndex, PseudogeneReason,
-    RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
+    panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GffGene,
+    GffIndex, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -1126,9 +1126,7 @@ fn rescue_orf_signal(rescue: &RescueEvent) -> &'static str {
 }
 
 fn stripped_gene_id(gene_id: &str) -> Option<&str> {
-    gene_id
-        .strip_suffix("_pseudo")
-        .or_else(|| gene_id.rfind("_dup_").map(|pos| &gene_id[..pos]))
+    panaroo_gene_id_suffix_variants(gene_id).into_iter().nth(1)
 }
 
 fn gff_gene_for_id<'a>(gff: &'a GffIndex, gene_id: &str) -> Option<&'a GffGene> {
@@ -2325,6 +2323,10 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
         "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\tpublication_confidence\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note"
     )?;
 
+    let rescues_by_key = build_best_rescue_map(inputs.rescues.iter());
+    let synteny_rejected_by_key = build_best_rescue_map(inputs.synteny_rejected.iter());
+    let paralog_rejected_by_key = build_best_rescue_map(inputs.paralog_rejected.iter());
+
     for ci_val in 0..inputs.pa.n_clusters() {
         let ci = ClusterIdx(ci_val);
         if inputs.pa.is_present(ci, reference_gi) {
@@ -2359,11 +2361,7 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
             continue;
         }
 
-        if let Some(rescue) = inputs
-            .rescues
-            .iter()
-            .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
-        {
+        if let Some(rescue) = rescues_by_key.get(&(ci, reference_gi)).copied() {
             write_reference_event_row(
                 &mut w,
                 inputs.pa,
@@ -2380,11 +2378,7 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
             continue;
         }
 
-        if let Some(rescue) = inputs
-            .synteny_rejected
-            .iter()
-            .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
-        {
+        if let Some(rescue) = synteny_rejected_by_key.get(&(ci, reference_gi)).copied() {
             write_reference_event_row(
                 &mut w,
                 inputs.pa,
@@ -2401,11 +2395,7 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
             continue;
         }
 
-        if let Some(rescue) = inputs
-            .paralog_rejected
-            .iter()
-            .find(|r| r.cluster_idx == ci && r.genome_idx == reference_gi)
-        {
+        if let Some(rescue) = paralog_rejected_by_key.get(&(ci, reference_gi)).copied() {
             write_reference_event_row(
                 &mut w,
                 inputs.pa,
@@ -4205,16 +4195,8 @@ fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Result<()> {
 
     let nsc_presence = nsc_presence_updates(pa, inputs.nsc_result, inputs.nsc_rescue_map);
 
-    let synteny_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = inputs
-        .synteny_rejected
-        .iter()
-        .map(|r| ((r.cluster_idx, r.genome_idx), r))
-        .collect();
-    let paralog_rejected_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = inputs
-        .paralog_rejected
-        .iter()
-        .map(|r| ((r.cluster_idx, r.genome_idx), r))
-        .collect();
+    let synteny_rejected_map = build_best_rescue_map(inputs.synteny_rejected.iter());
+    let paralog_rejected_map = build_best_rescue_map(inputs.paralog_rejected.iter());
 
     let path = inputs
         .output_dir
@@ -5247,6 +5229,10 @@ mod tests {
         assert_eq!(
             display_reference_gene_id("L4_AS00146_Rv0601c_pseudo"),
             "Rv0601c"
+        );
+        assert_eq!(
+            display_reference_gene_id("domain_dup_family"),
+            "domain_dup_family"
         );
         assert_eq!(display_reference_gene_id("custom_gene"), "custom_gene");
     }

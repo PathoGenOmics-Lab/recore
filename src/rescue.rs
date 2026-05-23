@@ -367,12 +367,9 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
             let gene_id = gene_id.trim();
             if !gene_id.is_empty() {
                 map.insert(gene_id.to_string(), ci);
-                // Also index without _pseudo / _dup_N suffixes for GFF matching
-                if let Some(stripped) = gene_id.strip_suffix("_pseudo") {
+                // Also index without Panaroo suffixes for GFF matching.
+                for stripped in panaroo_gene_id_suffix_variants(gene_id).into_iter().skip(1) {
                     map.entry(stripped.to_string()).or_insert(ci);
-                }
-                if let Some(pos) = gene_id.rfind("_dup_") {
-                    map.entry(gene_id[..pos].to_string()).or_insert(ci);
                 }
             }
         }
@@ -380,10 +377,33 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
     map
 }
 
+pub(crate) fn strip_panaroo_gene_suffix(gene_id: &str) -> Option<&str> {
+    if let Some(stripped) = gene_id.strip_suffix("_pseudo") {
+        return Some(stripped);
+    }
+    let (base, suffix) = gene_id.rsplit_once("_dup_")?;
+    if !base.is_empty() && !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+        Some(base)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn panaroo_gene_id_suffix_variants(gene_id: &str) -> Vec<&str> {
+    let mut variants = vec![gene_id];
+    let mut current = gene_id;
+    while let Some(stripped) = strip_panaroo_gene_suffix(current) {
+        if variants.contains(&stripped) {
+            break;
+        }
+        variants.push(stripped);
+        current = stripped;
+    }
+    variants
+}
+
 fn gene_id_variants(gene_id: &str) -> impl Iterator<Item = &str> {
-    std::iter::once(gene_id)
-        .chain(gene_id.strip_suffix("_pseudo"))
-        .chain(gene_id.rfind("_dup_").map(|pos| &gene_id[..pos]))
+    panaroo_gene_id_suffix_variants(gene_id).into_iter()
 }
 
 fn lookup_gene_cluster_alias(
@@ -641,6 +661,15 @@ fn best_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
                     b.evidence
                         .max_target_gap_bp
                         .cmp(&a.evidence.max_target_gap_bp)
+                })
+                .then_with(|| b.contig.cmp(&a.contig))
+                .then_with(|| b.start.cmp(&a.start))
+                .then_with(|| b.end.cmp(&a.end))
+                .then_with(|| b.strand.cmp(&a.strand))
+                .then_with(|| {
+                    let a_query = a.hits.first().map(|hit| hit.query.as_str()).unwrap_or("");
+                    let b_query = b.hits.first().map(|hit| hit.query.as_str()).unwrap_or("");
+                    b_query.cmp(a_query)
                 })
         })
 }
@@ -1606,10 +1635,10 @@ fn reference_contexts_for_cluster<'a>(
                     .filter(|id| !id.is_empty())
                 {
                     let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
-                        let stripped = ref_gene_id
-                            .strip_suffix("_pseudo")
-                            .or_else(|| ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i]));
-                        stripped.and_then(|s| ref_gff.get_by_id(s))
+                        panaroo_gene_id_suffix_variants(ref_gene_id)
+                            .into_iter()
+                            .skip(1)
+                            .find_map(|id| ref_gff.get_by_id(id))
                     });
                     let Some(ref_gene) = ref_gene else {
                         if verbose && n_neighbors == 1 {
@@ -2968,6 +2997,35 @@ mod tests {
     }
 
     #[test]
+    fn test_best_fragment_chain_tie_breaks_by_locus() {
+        let first = Hit {
+            query: "g".into(),
+            cluster: "g".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 500,
+            strand: '+',
+            target: "z_contig".into(),
+            target_start: 100,
+            target_end: 600,
+            matches: 500,
+            alignment_length: 500,
+            mapq: 60,
+        };
+        let second = Hit {
+            target: "a_contig".into(),
+            target_start: 100,
+            target_end: 600,
+            ..first.clone()
+        };
+        let hits = vec![&first, &second];
+
+        let chain = best_fragment_chain(&hits).unwrap();
+
+        assert_eq!(chain.contig, "a_contig");
+    }
+
+    #[test]
     fn test_classify_split_vs_paralog() {
         // Setup: cluster "target_cluster" absent in genome, hit lands on a gene
         // assigned to "other_cluster". Identity determines SPLIT vs PARALOG.
@@ -3283,6 +3341,25 @@ mod tests {
         let g2c_1 = build_gene_to_cluster(&pa, GenomeIdx(1));
         assert_eq!(g2c_1.get("gene3"), Some(&ClusterIdx(0)));
         assert_eq!(g2c_1.get("gene4"), Some(&ClusterIdx(1)));
+    }
+
+    #[test]
+    fn test_gene_suffix_stripping_only_handles_panaroo_suffixes() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["clusterA".into(), "clusterB".into()],
+            vec!["g1".into()],
+            vec![vec!["gene_dup_2".into()], vec!["gene_dup_domain".into()]],
+        );
+        let g2c = build_gene_to_cluster(&pa, GenomeIdx(0));
+
+        assert_eq!(g2c.get("gene"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("gene_dup_2"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("gene_dup_domain"), Some(&ClusterIdx(1)));
+        assert_eq!(
+            g2c.get("gene_dup"),
+            None,
+            "biological names containing _dup_ must not be collapsed"
+        );
     }
 
     #[test]
