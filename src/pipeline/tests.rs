@@ -288,6 +288,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("columnHeaderCanvas"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
+    assert!(text.contains("min='0.25'"));
+    assert!(text.contains("step='0.25'"));
+    assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));
     assert!(text.contains("matrixColorMode"));
     assert!(text.contains("processLegend"));
@@ -307,6 +310,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("rebuildBaseMatrix"));
     assert!(text.contains("phylogramMode"));
     assert!(text.contains("const tipX = 14 + usable"));
+    assert!(!text.contains("clusterHeaderLabel"));
     assert!(text.contains("referenceOnly"));
     assert!(text.contains("explorerFullscreen"));
     assert!(text.contains("\"referenceGenome\":null"));
