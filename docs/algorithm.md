@@ -307,6 +307,17 @@ shifts, acquisition/insertion candidates, deletion/loss candidates, and
 unresolved accessory variation. These calls are audit-only and are intended for
 manual review and manuscript wording, not automatic binary correction.
 
+Mobile-element support has two tiers. If `--mobile-element-reference` is
+provided, Recore aligns that nucleotide FASTA of mobile elements, IS, or
+transposase loci against genomes with rescue/disruption evidence and reports
+nearby hits as `mobile_element_source=sequence`. This path is agnostic to GFF
+feature names. If no sequence database hit is available, Recore falls back to
+annotation labels (`ID`, aliases, `product`, `Note`) containing terms such as
+IS names, insertion sequence, transposase, phage, integrase, or recombinase.
+`IS_interruption_supported` is deliberately conservative: it requires a
+fragmented or disrupted rescue plus close mobile-element evidence within
+250 bp.
+
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 
 Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context.

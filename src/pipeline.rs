@@ -696,6 +696,22 @@ pub fn run(args: &Args) -> Result<()> {
             .cmp(&b.cluster_idx)
             .then(a.genome_idx.cmp(&b.genome_idx))
     });
+    let mobile_element_hits = if let Some(path) = args.mobile_element_reference.as_deref() {
+        search_mobile_element_reference(
+            path,
+            &genome_files,
+            &pa,
+            &rescues,
+            &synteny_rejected,
+            &paralog_rejected,
+            args.threads,
+            args.mobile_element_min_identity,
+            args.mobile_element_min_coverage,
+            &args.preset,
+        )?
+    } else {
+        Vec::new()
+    };
 
     let all_rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
         .iter()
@@ -788,6 +804,8 @@ pub fn run(args: &Args) -> Result<()> {
         reference_cluster_events: &reference_cluster_events,
         context_summaries: &context_summaries,
         gff_indices: &gff_indices,
+        mobile_element_hits: &mobile_element_hits,
+        mobile_element_window: args.mobile_element_window,
         phylo_tree: phylo_tree.as_ref(),
         reference_genome: args.reference_genome.as_deref(),
         nsc_result: &nsc_result,
@@ -2769,11 +2787,26 @@ fn summarize_phylogenetic_pattern(
 }
 
 #[derive(Debug, Clone)]
+struct MobileElementHit {
+    genome_idx: GenomeIdx,
+    query_name: String,
+    contig: String,
+    start: u64,
+    end: u64,
+    strand: char,
+    identity: f64,
+    coverage: f64,
+}
+
+#[derive(Debug, Clone)]
 struct MobileElementEvidence {
     genome_name: String,
+    source: &'static str,
     kind: &'static str,
     label: String,
     distance_bp: u64,
+    identity: Option<f64>,
+    coverage: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -2794,6 +2827,8 @@ struct EvolutionaryEventInputs<'a> {
     reference_cluster_events: &'a [ReferenceClusterEvent],
     context_summaries: &'a [ClusterContextSummary],
     gff_indices: &'a HashMap<GenomeIdx, GffIndex>,
+    mobile_element_hits: &'a [MobileElementHit],
+    mobile_element_window: u64,
     phylo_tree: Option<&'a PhyloTree>,
     reference_genome: Option<&'a str>,
     nsc_result: &'a Option<nscluster::NsClusterResult>,
@@ -2857,6 +2892,98 @@ fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
     Some((kind, joined))
 }
 
+fn search_mobile_element_reference(
+    path: &Path,
+    genome_files: &HashMap<String, PathBuf>,
+    pa: &crate::parser::PresenceAbsence,
+    rescues: &[RescueEvent],
+    synteny_rejected: &[RescueEvent],
+    paralog_rejected: &[RescueEvent],
+    threads: usize,
+    min_identity: f64,
+    min_coverage: f64,
+    preset: &str,
+) -> Result<Vec<MobileElementHit>> {
+    let mobile_ref = parse_pan_reference(path, true)
+        .with_context(|| format!("Cannot parse mobile-element FASTA {}", path.display()))?;
+    if mobile_ref.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut mobile_names: Vec<String> = mobile_ref.keys().cloned().collect();
+    mobile_names.sort();
+    let mobile_indices: Vec<ClusterIdx> = (0..mobile_names.len()).map(ClusterIdx).collect();
+
+    let mut genomes: ahash::HashSet<GenomeIdx> = ahash::HashSet::default();
+    for rescue in rescues
+        .iter()
+        .chain(synteny_rejected.iter())
+        .chain(paralog_rejected.iter())
+    {
+        genomes.insert(rescue.genome_idx);
+    }
+    if genomes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut searchable_genomes: Vec<(GenomeIdx, Vec<ClusterIdx>)> = genomes
+        .into_iter()
+        .map(|gi| (gi, mobile_indices.clone()))
+        .collect();
+    searchable_genomes.sort_by_key(|(gi, _)| gi.val());
+
+    info!(
+        "Running mobile-element sequence audit: {} queries × {} genomes",
+        mobile_names.len(),
+        searchable_genomes.len()
+    );
+    let hits = batch_search(
+        &mobile_ref,
+        genome_files,
+        &searchable_genomes,
+        pa.genome_names(),
+        &mobile_names,
+        threads,
+        min_identity,
+        preset,
+        true,
+        5000,
+    )?;
+
+    let mut mobile_hits = Vec::new();
+    for ((gi, ci), cluster_hits) in hits {
+        for hit in cluster_hits {
+            if hit.query_coverage() < min_coverage {
+                continue;
+            }
+            let identity = hit.identity();
+            let coverage = hit.query_coverage();
+            mobile_hits.push(MobileElementHit {
+                genome_idx: gi,
+                query_name: mobile_names[ci.val()].clone(),
+                contig: hit.target,
+                start: hit.target_start,
+                end: hit.target_end,
+                strand: hit.strand,
+                identity,
+                coverage,
+            });
+        }
+    }
+    mobile_hits.sort_by(|a, b| {
+        a.genome_idx
+            .cmp(&b.genome_idx)
+            .then(a.contig.cmp(&b.contig))
+            .then(a.start.cmp(&b.start))
+            .then(a.end.cmp(&b.end))
+            .then(a.query_name.cmp(&b.query_name))
+    });
+    info!(
+        "Mobile-element sequence audit retained {} hits",
+        mobile_hits.len()
+    );
+    Ok(mobile_hits)
+}
+
 fn interval_distance(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> u64 {
     if end_a < start_b {
         start_b - end_a
@@ -2871,16 +2998,53 @@ fn nearest_mobile_element_for_rescue(
     rescue: &RescueEvent,
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    mobile_hits: &[MobileElementHit],
+    mobile_window: u64,
 ) -> Option<MobileElementEvidence> {
-    const MOBILE_WINDOW_BP: u64 = 1_000;
-    let gff = gff_indices.get(&rescue.genome_idx)?;
     let mut best: Option<MobileElementEvidence> = None;
+
+    for hit in mobile_hits {
+        if hit.genome_idx != rescue.genome_idx || hit.contig != rescue.contig {
+            continue;
+        }
+        let distance = interval_distance(rescue.start, rescue.end, hit.start, hit.end);
+        if distance > mobile_window {
+            continue;
+        }
+        let candidate = MobileElementEvidence {
+            genome_name: pa.genome_name(rescue.genome_idx).to_string(),
+            source: "sequence",
+            kind: "mobile_element_sequence",
+            label: format!(
+                "{}:{}-{}({};id={:.1};cov={:.1})",
+                hit.query_name,
+                hit.start + 1,
+                hit.end,
+                hit.strand,
+                hit.identity,
+                hit.coverage
+            ),
+            distance_bp: distance,
+            identity: Some(hit.identity),
+            coverage: Some(hit.coverage),
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
+        {
+            best = Some(candidate);
+        }
+    }
+
+    let Some(gff) = gff_indices.get(&rescue.genome_idx) else {
+        return best;
+    };
     for gene in &gff.genes {
         if gene.contig != rescue.contig {
             continue;
         }
         let distance = interval_distance(rescue.start, rescue.end, gene.start, gene.end);
-        if distance > MOBILE_WINDOW_BP {
+        if distance > mobile_window {
             continue;
         }
         let labels = gff.labels_for_gene(gene);
@@ -2889,13 +3053,16 @@ fn nearest_mobile_element_for_rescue(
         };
         let candidate = MobileElementEvidence {
             genome_name: pa.genome_name(rescue.genome_idx).to_string(),
+            source: "annotation",
             kind,
             label,
             distance_bp: distance,
+            identity: None,
+            coverage: None,
         };
         if best
             .as_ref()
-            .is_none_or(|current| candidate.distance_bp < current.distance_bp)
+            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
         {
             best = Some(candidate);
         }
@@ -2907,16 +3074,41 @@ fn nearest_mobile_element_for_cluster(
     rescues: &[&RescueEvent],
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    mobile_hits: &[MobileElementHit],
+    mobile_window: u64,
 ) -> Option<MobileElementEvidence> {
     rescues
         .iter()
-        .filter_map(|rescue| nearest_mobile_element_for_rescue(rescue, pa, gff_indices))
+        .filter_map(|rescue| {
+            nearest_mobile_element_for_rescue(rescue, pa, gff_indices, mobile_hits, mobile_window)
+        })
         .min_by(|a, b| {
             a.distance_bp
                 .cmp(&b.distance_bp)
+                .then(mobile_source_priority(a.source).cmp(&mobile_source_priority(b.source)))
                 .then(a.genome_name.cmp(&b.genome_name))
                 .then(a.label.cmp(&b.label))
         })
+}
+
+fn mobile_source_priority(source: &str) -> u8 {
+    if source == "sequence" {
+        0
+    } else {
+        1
+    }
+}
+
+fn mobile_evidence_is_better(
+    candidate: &MobileElementEvidence,
+    current: &MobileElementEvidence,
+) -> bool {
+    candidate
+        .distance_bp
+        .cmp(&current.distance_bp)
+        .then(mobile_source_priority(candidate.source).cmp(&mobile_source_priority(current.source)))
+        .then(candidate.label.cmp(&current.label))
+        .is_lt()
 }
 
 fn nsc_role_for_cluster(ci: ClusterIdx, nsc_result: &Option<nscluster::NsClusterResult>) -> String {
@@ -2987,7 +3179,8 @@ fn classify_mechanism(
     let unstable_context =
         context.is_some_and(|c| c.interpretation == "possible_multilocus_or_paralog");
     let mobile_is = mobile.as_ref().is_some_and(|m| {
-        matches!(m.kind, "IS6110" | "IS1081" | "insertion_sequence") && m.distance_bp <= 250
+        (m.source == "sequence" || matches!(m.kind, "IS6110" | "IS1081" | "insertion_sequence"))
+            && m.distance_bp <= 250
     });
 
     if let Some(event) = reference_event {
@@ -3197,7 +3390,7 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tis_interruption_supported\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\trescue_evidence_counts\trecommended_wording"
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\trescue_evidence_counts\trecommended_wording"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -3244,8 +3437,13 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
             .chain(synteny_rejected.iter().copied())
             .chain(paralog_rejected.iter().copied())
             .collect();
-        let mobile =
-            nearest_mobile_element_for_cluster(&all_rescue_evidence, inputs.pa, inputs.gff_indices);
+        let mobile = nearest_mobile_element_for_cluster(
+            &all_rescue_evidence,
+            inputs.pa,
+            inputs.gff_indices,
+            inputs.mobile_element_hits,
+            inputs.mobile_element_window,
+        );
         let nsc_role = nsc_role_for_cluster(ci, inputs.nsc_result);
         let mechanism = classify_mechanism(
             inputs.pa,
@@ -3260,17 +3458,41 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
             &nsc_role,
         );
         let is_interruption = mechanism.mechanism == "IS_interruption_supported";
-        let (mobile_kind, mobile_label, mobile_genome, mobile_distance) =
-            if let Some(mobile) = mechanism.mobile.as_ref() {
-                (
-                    mobile.kind.to_string(),
-                    mobile.label.clone(),
-                    mobile.genome_name.clone(),
-                    mobile.distance_bp.to_string(),
-                )
-            } else {
-                (String::new(), String::new(), String::new(), String::new())
-            };
+        let (
+            mobile_source,
+            mobile_kind,
+            mobile_label,
+            mobile_genome,
+            mobile_distance,
+            mobile_identity,
+            mobile_coverage,
+        ) = if let Some(mobile) = mechanism.mobile.as_ref() {
+            (
+                mobile.source.to_string(),
+                mobile.kind.to_string(),
+                mobile.label.clone(),
+                mobile.genome_name.clone(),
+                mobile.distance_bp.to_string(),
+                mobile
+                    .identity
+                    .map(|value| format!("{:.1}", value))
+                    .unwrap_or_default(),
+                mobile
+                    .coverage
+                    .map(|value| format!("{:.1}", value))
+                    .unwrap_or_default(),
+            )
+        } else {
+            (
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        };
         let reference_event = reference_events_by_cluster[ci_val];
         let context_interpretation = contexts_by_cluster[ci_val]
             .map(|context| context.interpretation)
@@ -3318,10 +3540,13 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
                 mechanism.detail,
                 mechanism.support.to_string(),
                 is_interruption.to_string(),
+                mobile_source,
                 mobile_kind,
                 mobile_label,
                 mobile_genome,
                 mobile_distance,
+                mobile_identity,
+                mobile_coverage,
                 reference_event
                     .map(|event| event.event_class.to_string())
                     .unwrap_or_default(),
@@ -4489,10 +4714,72 @@ mod tests {
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
         };
 
-        let mobile = nearest_mobile_element_for_rescue(&rescue, &pa, &gff_indices).unwrap();
+        let mobile =
+            nearest_mobile_element_for_rescue(&rescue, &pa, &gff_indices, &[], 1_000).unwrap();
 
+        assert_eq!(mobile.source, "annotation");
         assert_eq!(mobile.kind, "IS6110");
         assert_eq!(mobile.distance_bp, 0);
+    }
+
+    #[test]
+    fn mobile_element_sequence_hits_are_name_agnostic_and_prioritized() {
+        let pa = crate::parser::PresenceAbsence::new_for_test(
+            vec!["g".into()],
+            vec!["s1".into()],
+            vec![vec!["".into()]],
+        );
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(
+            GenomeIdx(0),
+            GffIndex::build_with_aliases(vec![(
+                GffGene {
+                    contig: "chr".into(),
+                    start: 90,
+                    end: 210,
+                    strand: '+',
+                    gene_id: "anonymous_cds".into(),
+                },
+                vec!["hypothetical protein".into()],
+            )]),
+        );
+        let rescue = RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(0),
+            rescue_type: RescueType::Fragmented {
+                n_fragments: 2,
+                total_coverage: 91.0,
+            },
+            identity: 99.0,
+            coverage: 91.0,
+            contig: "chr".into(),
+            start: 100,
+            end: 220,
+            strand: '+',
+            annotation_match: None,
+            confidence: 0.9,
+            synteny_ok: None,
+            fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        };
+        let mobile_hits = vec![MobileElementHit {
+            genome_idx: GenomeIdx(0),
+            query_name: "ISfinder_anon_001".into(),
+            contig: "chr".into(),
+            start: 120,
+            end: 260,
+            strand: '+',
+            identity: 97.5,
+            coverage: 82.0,
+        }];
+
+        let mobile =
+            nearest_mobile_element_for_rescue(&rescue, &pa, &gff_indices, &mobile_hits, 1_000)
+                .unwrap();
+
+        assert_eq!(mobile.source, "sequence");
+        assert_eq!(mobile.kind, "mobile_element_sequence");
+        assert_eq!(mobile.distance_bp, 0);
+        assert!(mobile.label.contains("ISfinder_anon_001"));
     }
 
     #[test]

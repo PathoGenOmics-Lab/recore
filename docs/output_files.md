@@ -183,7 +183,7 @@ corrected binary state for each cluster.
 | `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one clade, and the largest carrier-only clade fraction |
 | `molecular_mechanism` | Best conservative mechanism call: reference-derived allele, IS interruption, pseudogenization, fragmentation, duplication/paralog expansion, context shift, acquisition/insertion candidate, deletion/loss candidate, homoplastic/unstable signal, ancestral retention, or unresolved |
 | `mechanism_detail`, `support_level`, `recommended_wording` | Evidence summary and publication-facing interpretation |
-| `is_interruption_supported`, `mobile_element_*` | GFF-supported nearby mobile element signal. IS calls are conservative and require an insertion-sequence-like label within 250 bp of a fragmented/disrupted rescue |
+| `is_interruption_supported`, `mobile_element_*` | Nearby mobile element signal. `mobile_element_source=sequence` comes from `--mobile-element-reference` alignments and is name-agnostic; `mobile_element_source=annotation` is the fallback from GFF labels/products/notes. IS calls are conservative and require sequence support or an insertion-sequence-like label within 250 bp of a fragmented/disrupted rescue |
 | `reference_event_class`, `target_reference_cluster`, `target_reference_gene` | Reference-derived event evidence when available |
 | `context_interpretation`, `rescue_evidence_counts` | Locus-context stability and per-cluster rescue evidence summary |
 

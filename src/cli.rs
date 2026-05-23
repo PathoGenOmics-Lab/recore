@@ -85,6 +85,22 @@ pub struct Args {
     #[arg(long)]
     pub tree: Option<PathBuf>,
 
+    /// Optional FASTA of mobile elements, IS, or transposase loci for name-agnostic sequence support.
+    #[arg(long)]
+    pub mobile_element_reference: Option<PathBuf>,
+
+    /// Minimum nucleotide identity for mobile-element reference hits.
+    #[arg(long, default_value_t = 85.0)]
+    pub mobile_element_min_identity: f64,
+
+    /// Minimum query coverage for mobile-element reference hits.
+    #[arg(long, default_value_t = 50.0)]
+    pub mobile_element_min_coverage: f64,
+
+    /// Maximum distance from a rescue/disruption interval to report mobile-element support.
+    #[arg(long, default_value_t = 1000)]
+    pub mobile_element_window: u64,
+
     // ── Nucleotide Similarity Clustering ──
     /// Enable nucleotide similarity clustering to merge redundant Panaroo clusters.
     /// Detects clusters split at the AA level but identical at the DNA level.

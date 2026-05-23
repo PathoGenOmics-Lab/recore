@@ -388,6 +388,7 @@ Pseudogene sub-types:
 | `--synteny` | off | validate rescues by flanking gene context; requires GFFs |
 | `--reference-genome` | optional | audit one reference/background genome |
 | `--tree` | optional | rooted Newick tree for parsimony-based evolutionary event interpretation |
+| `--mobile-element-reference` | optional | FASTA of mobile elements, IS, or transposase loci for name-agnostic sequence support near disrupted loci |
 | `--write-corrected-gff` | off | write GFF3 files with appended rescued CDS features |
 | `-t, --threads` | `4` | number of threads |
 

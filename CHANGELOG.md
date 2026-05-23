@@ -23,6 +23,10 @@ and Recore uses semantic versioning.
   interruptions, pseudogenization, fragmentation, duplication/paralogy,
   context-shift candidates, acquisition/insertion candidates, and deletion/loss
   candidates.
+- `--mobile-element-reference` plus identity/coverage/window controls for
+  name-agnostic mobile-element support. Recore can now support IS/transposase
+  interruption calls by sequence proximity instead of relying only on GFF
+  product names.
 
 ## [0.2.0] - 2026-05-23
 
