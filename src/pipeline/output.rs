@@ -109,6 +109,38 @@ pub(super) fn write_corrected_csv(
     Ok(())
 }
 
+pub(super) fn clear_optional_outputs(output_dir: &std::path::Path) -> Result<()> {
+    for filename in [
+        "synteny_rejected_report.tsv",
+        "paralog_rejected_report.tsv",
+        "reference_genome_audit.tsv",
+        "reference_cluster_events.tsv",
+        "nscluster_report.tsv",
+        "cluster_locus_context.tsv",
+        "cluster_locus_summary.tsv",
+        "cluster_synteny_blocks.tsv",
+    ] {
+        let path = output_dir.join(filename);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| format!("Cannot remove {}", path.display()))
+            }
+        }
+    }
+
+    let corrected_gff = output_dir.join("corrected_gff");
+    match fs::remove_dir_all(&corrected_gff) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err).with_context(|| format!("Cannot remove {}", corrected_gff.display()))
+        }
+    }
+    Ok(())
+}
+
 fn cell_sequence_count(cell: &str) -> usize {
     cell.split(';')
         .map(str::trim)
@@ -218,6 +250,7 @@ pub(super) fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Res
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn copy_text_maybe_gzip_with_header(
     path: &std::path::Path,
     writer: &mut impl Write,
@@ -276,6 +309,80 @@ pub(super) fn copy_text_maybe_gzip_with_header(
     Ok(())
 }
 
+pub(super) fn copy_gff_records_before_fasta_with_header(
+    path: &std::path::Path,
+    writer: &mut impl Write,
+) -> Result<Option<Vec<u8>>> {
+    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
+    let mut reader: Box<dyn BufRead> = if path.extension().is_some_and(|e| e == "gz") {
+        Box::new(BufReader::new(flate2::read::GzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+
+    let mut prefix = Vec::with_capacity(256);
+    let mut line = Vec::with_capacity(4096);
+    let mut has_gff_header = false;
+    let mut ended_newline = true;
+    let mut fasta_tail: Option<Vec<u8>> = None;
+
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        ended_newline = line.ends_with(b"\n");
+
+        let text = String::from_utf8_lossy(&line);
+        let trimmed = text.trim_start();
+        if trimmed.starts_with("##FASTA") {
+            let mut tail = Vec::new();
+            tail.extend_from_slice(&line);
+            reader.read_to_end(&mut tail)?;
+            fasta_tail = Some(tail);
+            break;
+        }
+        if trimmed.is_empty() {
+            prefix.extend_from_slice(&line);
+            continue;
+        }
+        has_gff_header = trimmed.starts_with("##gff-version");
+
+        prefix.extend_from_slice(&line);
+        break;
+    }
+
+    if !has_gff_header {
+        writeln!(writer, "##gff-version 3")?;
+    }
+    writer.write_all(&prefix)?;
+
+    let mut buf = Vec::with_capacity(64 * 1024);
+    while fasta_tail.is_none() {
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        ended_newline = buf.ends_with(b"\n");
+        let text = String::from_utf8_lossy(&buf);
+        if text.trim_start().starts_with("##FASTA") {
+            let mut tail = Vec::new();
+            tail.extend_from_slice(&buf);
+            reader.read_to_end(&mut tail)?;
+            fasta_tail = Some(tail);
+            break;
+        }
+        writer.write_all(&buf)?;
+    }
+
+    if !ended_newline {
+        writeln!(writer)?;
+    }
+    Ok(fasta_tail)
+}
+
 pub(super) fn gff_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -313,6 +420,13 @@ pub(super) fn write_corrected_gffs(
     output_dir: &std::path::Path,
 ) -> Result<()> {
     let gff_dir = output_dir.join("corrected_gff");
+    match fs::remove_dir_all(&gff_dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err).with_context(|| format!("Cannot remove {}", gff_dir.display()))
+        }
+    }
     fs::create_dir_all(&gff_dir)?;
 
     let mut by_genome: HashMap<GenomeIdx, Vec<&RescueEvent>> = HashMap::new();
@@ -329,11 +443,12 @@ pub(super) fn write_corrected_gffs(
         let file = fs::File::create(&path)?;
         let mut w = BufWriter::new(file);
 
-        if let Some(source_gff) = gff_paths.get(&gi) {
-            copy_text_maybe_gzip_with_header(source_gff, &mut w)?;
+        let fasta_tail = if let Some(source_gff) = gff_paths.get(&gi) {
+            copy_gff_records_before_fasta_with_header(source_gff, &mut w)?
         } else {
             writeln!(w, "##gff-version 3")?;
-        }
+            None
+        };
 
         writeln!(w, "###")?;
         writeln!(w, "# Recore rescue features appended below")?;
@@ -404,6 +519,13 @@ pub(super) fn write_corrected_gffs(
                 rescue.strand,
                 attrs.join(";")
             )?;
+        }
+        if let Some(tail) = fasta_tail {
+            writeln!(w, "###")?;
+            w.write_all(&tail)?;
+            if !tail.ends_with(b"\n") {
+                writeln!(w)?;
+            }
         }
         w.flush()?;
     }

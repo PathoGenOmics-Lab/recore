@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, MatrixPolicy};
@@ -33,9 +33,9 @@ use self::evolution::{
     EvolutionaryEventInputs, MobileElementSearchInput,
 };
 use self::output::{
-    count_core_after, count_soft_core_after, write_corrected_csv, write_corrected_gffs,
-    write_multistate_matrix, write_nsc_report, write_run_manifest, write_summary,
-    MultistateMatrixInputs, SummaryStats,
+    clear_optional_outputs, count_core_after, count_soft_core_after, write_corrected_csv,
+    write_corrected_gffs, write_multistate_matrix, write_nsc_report, write_run_manifest,
+    write_summary, MultistateMatrixInputs, SummaryStats,
 };
 use self::quality::{
     cluster_prevalences, cluster_sequence_lengths, orthology_quality,
@@ -52,10 +52,12 @@ use self::evolution::{
     resolve_phylo_tips, summarize_phylogenetic_pattern, MobileElementHit, NewickParser, PhyloTree,
 };
 #[cfg(test)]
-use self::output::copy_text_maybe_gzip_with_header;
+use self::output::{copy_gff_records_before_fasta_with_header, copy_text_maybe_gzip_with_header};
 #[cfg(test)]
 use self::reference_audit::{
-    best_reference_candidate, display_reference_gene_id, reference_publication_confidence,
+    best_reference_candidate, display_reference_gene_id,
+    quality_aware_reference_publication_confidence, quality_aware_reference_publication_status,
+    quality_aware_reference_wording, reference_publication_confidence,
     reference_publication_status, reference_shadow_state, reference_status_for,
 };
 
@@ -793,6 +795,7 @@ pub fn run(args: &Args) -> Result<()> {
 
     // ── 12. Generate outputs ──
     fs::create_dir_all(&args.output)?;
+    clear_optional_outputs(&args.output)?;
 
     // Sort rescues for deterministic output order regardless of thread scheduling
     rescues.sort_by(|a, b| {
@@ -881,6 +884,8 @@ pub fn run(args: &Args) -> Result<()> {
             reference_cluster_events: &reference_cluster_events,
             pa: &pa,
             gene_to_cluster_maps: &gene_to_cluster_maps,
+            cluster_prevalences: &cluster_prevalence_by_idx,
+            cluster_seq_lengths: &cluster_seq_lengths,
             matrix_policy: args.matrix_policy,
             output_dir: &args.output,
         })?;

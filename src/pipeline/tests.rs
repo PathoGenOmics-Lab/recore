@@ -1,4 +1,5 @@
 use super::*;
+use crate::parser::PresenceAbsence;
 
 fn default_args_for_validation() -> Args {
     Args {
@@ -128,6 +129,107 @@ fn corrected_csv_recomputes_multicopy_metadata_counts() {
     assert_eq!(&row[idx("No. isolates")], "3");
     assert_eq!(&row[idx("No. sequences")], "4");
     assert_eq!(&row[idx("Avg sequences per isolate")], "1.333");
+}
+
+#[test]
+fn clear_optional_outputs_removes_stale_optional_files() {
+    let out = tempfile::tempdir().unwrap();
+    let stale_file = out.path().join("synteny_rejected_report.tsv");
+    std::fs::write(&stale_file, b"old\n").unwrap();
+    let corrected_dir = out.path().join("corrected_gff");
+    std::fs::create_dir_all(&corrected_dir).unwrap();
+    std::fs::write(corrected_dir.join("old.recore.gff3"), b"old\n").unwrap();
+
+    clear_optional_outputs(out.path()).unwrap();
+
+    assert!(!stale_file.exists());
+    assert!(!corrected_dir.exists());
+}
+
+#[test]
+fn corrected_gff_appends_features_before_fasta_section() {
+    let out = tempfile::tempdir().unwrap();
+    let source = out.path().join("g1.gff3");
+    std::fs::write(
+        &source,
+        b"##gff-version 3\nchr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1\n##FASTA\n>chr1\nATGCATGC\n",
+    )
+    .unwrap();
+    let pa =
+        PresenceAbsence::new_for_test(vec!["clA".into()], vec!["g1".into()], vec![vec!["".into()]]);
+    let rescue = RescueEvent {
+        cluster_idx: ClusterIdx(0),
+        genome_idx: GenomeIdx(0),
+        contig: "chr1".into(),
+        start: 99,
+        end: 180,
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let mut gff_paths = HashMap::new();
+    gff_paths.insert(GenomeIdx(0), source);
+
+    write_corrected_gffs(&[rescue], &pa, &gff_paths, out.path()).unwrap();
+
+    let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
+    let rescue_pos = text.find("\tRecore\tCDS\t").unwrap();
+    let fasta_pos = text.find("##FASTA").unwrap();
+    assert!(rescue_pos < fasta_pos);
+    assert!(text.contains(">chr1\nATGCATGC"));
+}
+
+#[test]
+fn gff_copy_helper_splits_fasta_tail() {
+    let mut input = tempfile::NamedTempFile::new().unwrap();
+    writeln!(input, "##gff-version 3").unwrap();
+    writeln!(
+        input,
+        "chr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1;Name=gene1"
+    )
+    .unwrap();
+    writeln!(input, "##FASTA").unwrap();
+    writeln!(input, ">chr1").unwrap();
+    writeln!(input, "ATGC").unwrap();
+
+    let mut output = Vec::new();
+    let tail = copy_gff_records_before_fasta_with_header(input.path(), &mut output)
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8(output).unwrap();
+    let tail_text = String::from_utf8(tail).unwrap();
+
+    assert!(text.contains("ID=gene1"));
+    assert!(!text.contains("##FASTA"));
+    assert!(tail_text.starts_with("##FASTA"));
+}
+
+#[test]
+fn reference_audit_quality_guard_keeps_weak_sequence_only_ambiguous() {
+    let mut rescue = rescue_with_type(RescueType::Dropped, None);
+    rescue.identity = 94.0;
+    rescue.coverage = 86.0;
+    rescue.end = 120;
+    let state = "SEQUENCE_ONLY";
+    let quality = orthology_quality(&rescue, state, true, 0.02, 120);
+
+    assert_eq!(
+        matrix_action_with_quality(MatrixPolicy::Balanced, true, state, &quality),
+        "audit_only_quality"
+    );
+    assert_eq!(
+        quality_aware_reference_publication_status(state, true, &quality),
+        "flag_reference_like_ambiguous"
+    );
+    assert_eq!(
+        quality_aware_reference_publication_confidence(
+            state,
+            reference_status_for(state, true),
+            true,
+            &quality,
+        ),
+        "unresolved"
+    );
+    assert!(quality_aware_reference_wording(state, true, &quality)
+        .contains("below adaptive quality thresholds"));
 }
 
 #[test]

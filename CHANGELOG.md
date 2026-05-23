@@ -56,6 +56,16 @@ and Recore uses semantic versioning.
   forcing tie-breaks into overconfident ancestral-loss calls.
 - Corrected matrices now recompute `No. isolates`, `No. sequences`, and
   `Avg sequences per isolate` from the final multicopy-aware cell values.
+- Optional output files and the `corrected_gff/` directory are cleared before
+  writing a new run, preventing stale reports when an output directory is
+  reused.
+- Corrected GFF3 export now inserts Recore rescue features before any original
+  `##FASTA` section, preserving valid GFF3 ordering.
+- `reference_genome_audit.tsv` now applies the adaptive orthology-quality guard
+  before classifying accepted weak sequence-only evidence as reference-like or
+  present.
+- Synthetic and biological benchmark metrics/plots were regenerated against
+  the current adaptive quality guard and evolutionary-event schema.
 - Input validation now rejects empty matrices, empty reference FASTA files, and
   duplicate genome or cluster names before running expensive searches.
 - GFF3 percent-encoded attributes are decoded before gene/alias/product matching.

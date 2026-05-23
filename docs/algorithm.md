@@ -293,6 +293,12 @@ excluded from the binary matrix. Such rows are reported as
 but the absence should not be described as a clean absence of the broader
 sequence family.
 
+Accepted reference-like rescue evidence is still passed through the adaptive
+orthology-quality guard used by the corrected matrix. Weak sequence-only hits
+below the dataset-aware identity/coverage floors remain
+`reference_like_ambiguous` rather than being promoted to
+`reference_like_or_present`.
+
 The reference audit also compares reference-absent cluster representatives
 against reference-present cluster representatives. Recore seeds candidate pairs
 with canonical 15-mers, globally aligns the best candidates, and classifies

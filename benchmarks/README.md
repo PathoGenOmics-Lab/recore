@@ -33,8 +33,9 @@ Interpretation:
   benchmark has no binary corrections.
 - `balanced` rescues full-length sequence evidence while keeping partial
   pseudogenes audit-only.
-- `sensitive` maximizes recall but also turns partial pseudogene evidence into
-  binary presence, which creates false positives in this benchmark.
+- `sensitive` allows partial/disrupted evidence at the policy layer, but the
+  adaptive quality guard still blocks the weak pseudogene-like controls in the
+  current benchmark.
 
 This is a regression benchmark for Recore behavior, not a species-specific
 biological truth set.

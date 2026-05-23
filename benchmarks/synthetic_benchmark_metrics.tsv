@@ -1,4 +1,4 @@
 policy	tp	fp	fn	tn	precision	recall	f1	evaluated_positives	evaluated_negatives	sequence_only_states	pseudogene_states	absent_states
 strict	0	0	5	10	NA	0.000	0.000	5	10	5	2	8
 balanced	5	0	0	10	1.000	1.000	1.000	5	10	5	2	8
-sensitive	5	2	0	8	0.714	1.000	0.833	5	10	5	2	8
+sensitive	5	0	0	10	1.000	1.000	1.000	5	10	5	2	8

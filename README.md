@@ -115,7 +115,7 @@ matrix.
 |------|--------------------|------------------|------------------------|
 | Paper-ready binary PA matrix | `balanced` | strict same-locus calls, alias clusters, and full-length sequence evidence | pseudogenes, partial homology, context-rejected hits |
 | Maximum conservatism | `strict` | only strict same-locus and alias-cluster evidence | full sequence-only hits without annotation/synteny support |
-| Exploratory rescue | `sensitive` | accepted strict, alias, sequence-only, partial, and pseudogene evidence | rejected contexts and homologous/paralogous traps |
+| Exploratory rescue | `sensitive` | accepted strict, alias, sequence-only, partial, and pseudogene evidence that passes the quality guard | rejected contexts, weak accepted evidence, and homologous/paralogous traps |
 
 Recommended wording:
 
@@ -183,15 +183,16 @@ Current synthetic benchmark:
 |--------|----|----|----|-----------|--------|----|
 | `strict` | 0 | 0 | 5 | NA | 0.000 | 0.000 |
 | `balanced` | 5 | 0 | 0 | 1.000 | 1.000 | 1.000 |
-| `sensitive` | 5 | 2 | 0 | 0.714 | 1.000 | 0.833 |
+| `sensitive` | 5 | 0 | 0 | 1.000 | 1.000 | 1.000 |
 
 Interpretation:
 
 - `strict` is conservative in annotation-free settings.
 - `balanced` recovers full-length false absences without converting partial
   pseudogenes into binary presence.
-- `sensitive` maximizes recall but accepts partial pseudogene evidence as
-  binary presence, creating false positives in this benchmark.
+- `sensitive` allows partial/disrupted evidence at the policy layer, but the
+  adaptive quality guard still blocks weak pseudogene-like evidence in this
+  benchmark.
 - No policy converts a homologous/paralogous trap into binary presence unless
   the evidence has already been promoted to same-locus support by synteny.
 
@@ -422,7 +423,9 @@ For publication figures:
 - Use `reference_genome_audit.tsv` to support claims such as "absent from
   H37Rv/reference" instead of relying only on the original matrix. The
   `publication_confidence` column flags clean absences separately from
-  complex partial/paralogous or event-derived reference evidence.
+  complex partial/paralogous or event-derived reference evidence. Weak
+  accepted sequence-only hits that fail the adaptive quality guard remain
+  `reference_like_ambiguous`.
 - Use `reference_cluster_events.tsv` to keep clusters separate in the matrix
   while reporting whether their representative sequence is best explained as
   a short/long in-frame allele, full-length same-gene sequence, frameshift-like
@@ -432,6 +435,10 @@ For publication figures:
   IS-supported interruption, pseudogenization, duplication/paralogy,
   reference-derived alleles, NSC cluster redundancy, and context-shift
   candidates.
+
+When an output directory is reused, Recore clears known optional reports before
+writing the new run so stale `reference_*`, rejected-evidence, NSC, synteny, or
+corrected-GFF files cannot be mistaken for current results.
 
 Key columns in `evolutionary_events.tsv`:
 

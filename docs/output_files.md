@@ -143,7 +143,9 @@ exact cluster remains absent from the reference but discarded/subthreshold
 sequence evidence points to a partial or paralogous reference-like copy.
 `event_derived` is used when the exact cluster remains separate in the matrix
 but its representative sequence is best explained as a reference-gene allele or
-fragment.
+fragment. Accepted sequence-only evidence that fails the adaptive
+orthology-quality guard is kept as `reference_like_ambiguous` with
+`publication_confidence=unresolved`.
 
 ---
 
@@ -278,7 +280,7 @@ Drop-in replacement for Panaroo's `gene_presence_absence.csv`. Identical format 
    After:  "RESCUED:L1_AS00349:245301-246100"
    ```
 
-2. **Matrix-policy filter**: `--matrix-policy` controls which accepted rescues become binary presence. `strict` corrects only `STRICT_PRESENT`/`ALIAS_CLUSTER`; `balanced` also corrects full-length `SEQUENCE_ONLY`; `sensitive` also corrects partial/disrupted accepted evidence.
+2. **Matrix-policy filter**: `--matrix-policy` controls which accepted rescues become binary presence. `strict` corrects only `STRICT_PRESENT`/`ALIAS_CLUSTER`; `balanced` also corrects full-length `SEQUENCE_ONLY`; `sensitive` also permits partial/disrupted accepted evidence. In all modes, the adaptive orthology-quality guard can keep weak accepted evidence out of the binary matrix.
 
 3. **NSC-merged cells** (only if `--nscluster`): Cells where a merged cluster would have added presence become `NSC_MERGED`.
 
@@ -495,9 +497,10 @@ Written only when `--write-corrected-gff` is enabled.
 
 For each genome with at least one rescue, Recore writes a GFF3 file under
 `corrected_gff/`. If an original GFF was supplied with `--annotations`, its
-records are preserved and Recore appends rescued CDS features. If no original
-GFF is available for a rescued genome, the file contains only the appended
-rescue features.
+records are preserved and Recore appends rescued CDS features. If the original
+GFF contains a `##FASTA` section, rescue features are inserted before `##FASTA`
+and the FASTA tail is preserved after them. If no original GFF is available for
+a rescued genome, the file contains only the appended rescue features.
 
 Appended rescue features use source `Recore`, type `CDS`, and include:
 

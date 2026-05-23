@@ -646,6 +646,8 @@ pub(super) struct ReferenceEventRow<'a> {
     reference_name: &'a str,
     rescue: &'a RescueEvent,
     gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    cluster_prevalences: &'a [f64],
+    cluster_seq_lengths: &'a [usize],
     matrix_policy: MatrixPolicy,
     decision: &'a str,
     accepted: bool,
@@ -661,8 +663,59 @@ pub(super) struct ReferenceAuditInputs<'a> {
     pub(super) reference_cluster_events: &'a [ReferenceClusterEvent],
     pub(super) pa: &'a crate::parser::PresenceAbsence,
     pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    pub(super) cluster_prevalences: &'a [f64],
+    pub(super) cluster_seq_lengths: &'a [usize],
     pub(super) matrix_policy: MatrixPolicy,
     pub(super) output_dir: &'a std::path::Path,
+}
+
+pub(super) fn quality_aware_reference_publication_status(
+    state: &str,
+    accepted: bool,
+    quality: &OrthologyQuality,
+) -> &'static str {
+    let raw_status = reference_publication_status(state, accepted);
+    if accepted
+        && raw_status == "remove_from_strict_reference_absent_set"
+        && !quality_allows_matrix_correction(state, quality)
+    {
+        "flag_reference_like_ambiguous"
+    } else {
+        raw_status
+    }
+}
+
+pub(super) fn quality_aware_reference_publication_confidence(
+    state: &str,
+    reference_status: &str,
+    accepted: bool,
+    quality: &OrthologyQuality,
+) -> &'static str {
+    let raw_confidence = reference_publication_confidence(state, reference_status);
+    if accepted
+        && raw_confidence == "not_reference_absent"
+        && !quality_allows_matrix_correction(state, quality)
+    {
+        "unresolved"
+    } else {
+        raw_confidence
+    }
+}
+
+pub(super) fn quality_aware_reference_wording(
+    state: &str,
+    accepted: bool,
+    quality: &OrthologyQuality,
+) -> &'static str {
+    if accepted
+        && reference_publication_status(state, accepted)
+            == "remove_from_strict_reference_absent_set"
+        && !quality_allows_matrix_correction(state, quality)
+    {
+        "Reference-like sequence is present but below adaptive quality thresholds; flag as ambiguous before removing from a strict reference-absent set."
+    } else {
+        reference_recommended_wording(state, accepted)
+    }
 }
 
 pub(super) fn write_reference_event_row(
@@ -680,9 +733,21 @@ pub(super) fn write_reference_event_row(
         &annotation_cluster,
         row.rejection_reason,
     );
-    let final_status = reference_publication_status(state, row.accepted);
+    let quality = orthology_quality(
+        rescue,
+        state,
+        row.accepted,
+        row.cluster_prevalences[rescue.cluster_idx.val()],
+        row.cluster_seq_lengths[rescue.cluster_idx.val()],
+    );
+    let final_status = quality_aware_reference_publication_status(state, row.accepted, &quality);
     let reference_status = reference_status_for(state, row.accepted);
-    let publication_confidence = reference_publication_confidence(state, reference_status);
+    let publication_confidence = quality_aware_reference_publication_confidence(
+        state,
+        reference_status,
+        row.accepted,
+        &quality,
+    );
     let dichotomy = if final_status == "remove_from_strict_reference_absent_set" {
         "reference_like_or_present"
     } else {
@@ -697,11 +762,12 @@ pub(super) fn write_reference_event_row(
             dichotomy.to_string(),
             final_status.to_string(),
             reference_status.to_string(),
-            matrix_action(row.matrix_policy, row.accepted, state).to_string(),
+            matrix_action_with_quality(row.matrix_policy, row.accepted, state, &quality)
+                .to_string(),
             state.to_string(),
             evidence_strength(state).to_string(),
             publication_confidence.to_string(),
-            reference_recommended_wording(state, row.accepted).to_string(),
+            quality_aware_reference_wording(state, row.accepted, &quality).to_string(),
             row.decision.to_string(),
             rescue.rescue_type.to_string(),
             row.rejection_reason.to_string(),
@@ -895,6 +961,8 @@ pub(super) fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> 
                     reference_name,
                     rescue,
                     gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    cluster_prevalences: inputs.cluster_prevalences,
+                    cluster_seq_lengths: inputs.cluster_seq_lengths,
                     matrix_policy: inputs.matrix_policy,
                     decision: "accepted",
                     accepted: true,
@@ -912,6 +980,8 @@ pub(super) fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> 
                     reference_name,
                     rescue,
                     gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    cluster_prevalences: inputs.cluster_prevalences,
+                    cluster_seq_lengths: inputs.cluster_seq_lengths,
                     matrix_policy: inputs.matrix_policy,
                     decision: "rejected",
                     accepted: false,
@@ -929,6 +999,8 @@ pub(super) fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> 
                     reference_name,
                     rescue,
                     gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    cluster_prevalences: inputs.cluster_prevalences,
+                    cluster_seq_lengths: inputs.cluster_seq_lengths,
                     matrix_policy: inputs.matrix_policy,
                     decision: "rejected",
                     accepted: false,
@@ -948,6 +1020,8 @@ pub(super) fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> 
                     reference_name,
                     rescue,
                     gene_to_cluster_maps: inputs.gene_to_cluster_maps,
+                    cluster_prevalences: inputs.cluster_prevalences,
+                    cluster_seq_lengths: inputs.cluster_seq_lengths,
                     matrix_policy: inputs.matrix_policy,
                     decision: "shadow_candidate",
                     accepted: false,
