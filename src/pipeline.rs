@@ -853,6 +853,7 @@ pub fn run(args: &Args) -> Result<()> {
         &nsc_result,
         &args.output,
     )?;
+    write_run_manifest(args, &pa, &stats, &args.output)?;
 
     // Write NSC report if clusters were merged
     if let Some(ref nsc) = nsc_result {
@@ -4424,6 +4425,180 @@ fn write_summary(
             stats.nsc_merged_genes - stats.nsc_clusters
         )?;
     }
+    w.flush()?;
+    Ok(())
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\u0000"),
+            c if c.is_control() => {
+                use std::fmt::Write as _;
+                write!(out, "\\u{:04x}", c as u32).expect("write to String is infallible");
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn json_path(path: &std::path::Path) -> String {
+    json_escape(&path.display().to_string())
+}
+
+fn write_run_manifest(
+    args: &Args,
+    pa: &crate::parser::PresenceAbsence,
+    stats: &SummaryStats,
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let path = output_dir.join("run_manifest.json");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    let total_matrix_corrected = stats.matrix_corrected + stats.nsc_matrix_corrected;
+    let rescued = stats.dropped
+        + stats.missing_cds
+        + stats.split
+        + stats.fragmented
+        + stats.alignment_split
+        + stats.start_variant
+        + stats.paralog
+        + stats.pseudogene;
+
+    writeln!(w, "{{")?;
+    writeln!(w, "  \"tool\": \"recore\",")?;
+    writeln!(
+        w,
+        "  \"tool_version\": {},",
+        json_escape(env!("CARGO_PKG_VERSION"))
+    )?;
+    writeln!(w, "  \"schema_version\": \"recore.outputs.v1\",")?;
+    writeln!(w, "  \"inputs\": {{")?;
+    writeln!(
+        w,
+        "    \"presence_absence\": {},",
+        json_path(&args.presence_absence)
+    )?;
+    writeln!(
+        w,
+        "    \"pan_reference\": {},",
+        json_path(&args.pan_reference)
+    )?;
+    writeln!(w, "    \"genomes\": {},", json_path(&args.genomes))?;
+    if let Some(path) = args.annotations.as_deref() {
+        writeln!(w, "    \"annotations\": {},", json_path(path))?;
+    } else {
+        writeln!(w, "    \"annotations\": null,")?;
+    }
+    if let Some(tree) = args.tree.as_deref() {
+        writeln!(w, "    \"tree\": {},", json_path(tree))?;
+    } else {
+        writeln!(w, "    \"tree\": null,")?;
+    }
+    if let Some(mobile_ref) = args.mobile_element_reference.as_deref() {
+        writeln!(
+            w,
+            "    \"mobile_element_reference\": {}",
+            json_path(mobile_ref)
+        )?;
+    } else {
+        writeln!(w, "    \"mobile_element_reference\": null")?;
+    }
+    writeln!(w, "  }},")?;
+
+    writeln!(w, "  \"parameters\": {{")?;
+    writeln!(w, "    \"min_identity\": {:.3},", args.min_identity)?;
+    writeln!(w, "    \"min_coverage\": {:.3},", args.min_coverage)?;
+    writeln!(w, "    \"min_prevalence\": {:.6},", args.min_prevalence)?;
+    writeln!(w, "    \"preset\": {},", json_escape(&args.preset))?;
+    writeln!(w, "    \"threads\": {},", args.threads)?;
+    writeln!(
+        w,
+        "    \"matrix_policy\": {},",
+        json_escape(&format!("{:?}", args.matrix_policy))
+    )?;
+    writeln!(w, "    \"multi_allele\": {},", args.multi_allele)?;
+    writeln!(w, "    \"synteny\": {},", args.synteny)?;
+    writeln!(
+        w,
+        "    \"write_corrected_gff\": {},",
+        args.write_corrected_gff
+    )?;
+    if let Some(reference_genome) = args.reference_genome.as_deref() {
+        writeln!(
+            w,
+            "    \"reference_genome\": {},",
+            json_escape(reference_genome)
+        )?;
+    } else {
+        writeln!(w, "    \"reference_genome\": null,")?;
+    }
+    writeln!(w, "    \"nscluster\": {},", args.nscluster)?;
+    writeln!(w, "    \"nsc_engine\": {},", json_escape(&args.nsc_engine))?;
+    writeln!(w, "    \"nsc_kmer_size\": {},", args.nsc_kmer_size)?;
+    writeln!(w, "    \"nsc_threshold\": {:.6},", args.nsc_threshold)?;
+    writeln!(w, "    \"nsc_min_seq_id\": {:.6},", args.nsc_min_seq_id)?;
+    writeln!(w, "    \"nsc_coverage\": {:.6},", args.nsc_coverage)?;
+    writeln!(
+        w,
+        "    \"mobile_element_min_identity\": {:.3},",
+        args.mobile_element_min_identity
+    )?;
+    writeln!(
+        w,
+        "    \"mobile_element_min_coverage\": {:.3},",
+        args.mobile_element_min_coverage
+    )?;
+    writeln!(
+        w,
+        "    \"mobile_element_window\": {}",
+        args.mobile_element_window
+    )?;
+    writeln!(w, "  }},")?;
+
+    writeln!(w, "  \"counts\": {{")?;
+    writeln!(w, "    \"clusters\": {},", pa.n_clusters())?;
+    writeln!(w, "    \"genomes\": {},", pa.n_genomes())?;
+    writeln!(w, "    \"total_gaps\": {},", stats.total_gaps)?;
+    writeln!(w, "    \"gaps_passing_filter\": {},", stats.filtered_gaps)?;
+    writeln!(w, "    \"gaps_searched\": {},", stats.searchable_gaps)?;
+    writeln!(
+        w,
+        "    \"skipped_by_prevalence\": {},",
+        stats.skipped_by_prevalence
+    )?;
+    writeln!(w, "    \"missing_fasta_gaps\": {},", stats.missing_fasta_gaps)?;
+    writeln!(w, "    \"rescued\": {},", rescued)?;
+    writeln!(
+        w,
+        "    \"matrix_corrected_total\": {},",
+        total_matrix_corrected
+    )?;
+    writeln!(
+        w,
+        "    \"matrix_corrected_rescue_cells\": {},",
+        stats.matrix_corrected
+    )?;
+    writeln!(
+        w,
+        "    \"matrix_corrected_nsc_cells\": {},",
+        stats.nsc_matrix_corrected
+    )?;
+    writeln!(w, "    \"synteny_rejected\": {},", stats.synteny_rejected)?;
+    writeln!(w, "    \"paralog_rejected\": {},", stats.paralog_rejected)?;
+    writeln!(w, "    \"nsc_clusters\": {},", stats.nsc_clusters)?;
+    writeln!(w, "    \"nsc_merged_genes\": {}", stats.nsc_merged_genes)?;
+    writeln!(w, "  }}")?;
+    writeln!(w, "}}")?;
     w.flush()?;
     Ok(())
 }

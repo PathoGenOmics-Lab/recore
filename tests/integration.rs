@@ -114,6 +114,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(output_dir.join("cluster_relationships.tsv").exists());
     assert!(output_dir.join("evolutionary_events.tsv").exists());
     assert!(output_dir.join("summary.txt").exists());
+    assert!(output_dir.join("run_manifest.json").exists());
     assert!(output_dir
         .join("corrected_gff")
         .join("s2.recore.gff3")
@@ -162,6 +163,10 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     let summary = fs::read_to_string(output_dir.join("summary.txt")).unwrap();
     assert!(summary.contains("Rescued:"));
     assert!(summary.contains("Core genome"));
+    let manifest = fs::read_to_string(output_dir.join("run_manifest.json")).unwrap();
+    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v1\""));
+    assert!(manifest.contains("\"matrix_policy\": \"Balanced\""));
+    assert!(manifest.contains("\"matrix_corrected_total\""));
 
     // ── Verify corrected GFF ──
     let gff_content =

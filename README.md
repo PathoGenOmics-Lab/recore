@@ -358,12 +358,16 @@ recore_output/
 ├── cluster_relationships.tsv               # SPLIT/PARALOG/annotation-match/NSC relationships
 ├── nscluster_report.tsv                    # NSC groups when --nscluster is enabled
 ├── corrected_gff/                          # optional GFF3 files with appended Recore CDSs
+├── run_manifest.json                       # version, schema, parameters, inputs, and run counts
 └── summary.txt                             # run summary
 ```
 
 TSV outputs are written as single-line records. Tabs, line breaks, and null
 characters inside annotation-derived text are normalized to spaces so GFF
 products, notes, and aliases cannot corrupt downstream tables.
+`run_manifest.json` records `tool_version`, `schema_version`, input paths,
+parameters, and key counts so every output directory can be traced back to the
+exact Recore configuration that produced it.
 
 For publication figures:
 

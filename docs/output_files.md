@@ -365,6 +365,24 @@ Nucleotide similarity clustering:
 
 ---
 
+## run_manifest.json
+
+Machine-readable run manifest written for every run. It records:
+
+- `tool` and `tool_version`;
+- `schema_version` (`recore.outputs.v1`);
+- input paths used for the run;
+- key parameters, including matrix policy, prevalence threshold, synteny, NSC,
+  reference genome, tree, and mobile-element settings;
+- headline counts such as clusters, genomes, searched gaps, direct rescue
+  corrections, NSC-merged corrections, rejected synteny/paralog candidates, and
+  NSC groups.
+
+Use this file when archiving outputs for a manuscript or comparing runs across
+parameter settings.
+
+---
+
 ## nscluster_report.tsv
 
 Written only if `--nscluster` is enabled and at least one merge was found.

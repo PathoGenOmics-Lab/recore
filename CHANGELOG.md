@@ -54,6 +54,8 @@ No changes yet.
   name-agnostic mobile-element support. Recore can now support IS/transposase
   interruption calls by sequence proximity instead of relying only on GFF
   product names.
+- `run_manifest.json` with tool version, output schema version, input paths,
+  key parameters, and headline run counts for reproducible archiving.
 
 ### Changed
 
