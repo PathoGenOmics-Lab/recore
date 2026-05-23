@@ -139,27 +139,31 @@ pub fn run(args: &Args) -> Result<()> {
 
     // ── 2. Filter gaps by prevalence (streaming, no intermediate Vec) ──
     let min_prevalence = args.min_prevalence;
-    let mut gaps_by_genome: HashMap<GenomeIdx, Vec<ClusterIdx>> = HashMap::new();
+    let n_genomes = pa.n_genomes();
+    let n_clusters = pa.n_clusters();
+    let mut gaps_by_genome: Vec<Vec<ClusterIdx>> = vec![Vec::new(); n_genomes];
     let mut total_gaps = 0usize;
     let mut filtered_gaps = 0usize;
     let mut skipped_by_prevalence = 0usize;
 
-    let n_genomes = pa.n_genomes();
-    let n_clusters = pa.n_clusters();
-
     for ci_val in 0..n_clusters {
         let ci = ClusterIdx(ci_val);
-        let prevalence = pa.present_count(ci) as f64 / n_genomes as f64;
-        for gi_val in 0..n_genomes {
-            let gi = GenomeIdx(gi_val);
-            if !pa.is_present(ci, gi) {
-                total_gaps += 1;
-                if prevalence < min_prevalence {
-                    skipped_by_prevalence += 1;
-                } else {
-                    gaps_by_genome.entry(gi).or_default().push(ci);
-                    filtered_gaps += 1;
-                }
+        let present = pa.present_count(ci);
+        let missing = n_genomes.saturating_sub(present);
+        total_gaps += missing;
+        let prevalence = if n_genomes == 0 {
+            0.0
+        } else {
+            present as f64 / n_genomes as f64
+        };
+        if prevalence < min_prevalence {
+            skipped_by_prevalence += missing;
+            continue;
+        }
+        for (gi_val, &present) in pa.presence_row(ci).iter().enumerate() {
+            if !present {
+                gaps_by_genome[gi_val].push(ci);
+                filtered_gaps += 1;
             }
         }
     }
@@ -182,7 +186,11 @@ pub fn run(args: &Args) -> Result<()> {
     let mut missing_genomes = 0usize;
     let mut missing_fasta_gaps = 0usize;
     let mut missing_names: Vec<String> = Vec::new();
-    for (gi, cluster_indices) in gaps_by_genome {
+    for (gi_val, cluster_indices) in gaps_by_genome.into_iter().enumerate() {
+        if cluster_indices.is_empty() {
+            continue;
+        }
+        let gi = GenomeIdx(gi_val);
         let genome_name = pa.genome_name(gi);
         if genome_files.contains_key(genome_name) {
             searchable_genomes.push((gi, cluster_indices));

@@ -15,7 +15,8 @@ use crate::types::{ClusterIdx, GenomeIdx};
 pub struct PresenceAbsence {
     clusters: Vec<String>,
     genomes: Vec<String>,
-    present: Vec<HashSet<GenomeIdx>>,
+    present_genomes: Vec<Vec<GenomeIdx>>,
+    present_bits: Vec<Vec<bool>>,
     cell_values: Vec<Vec<String>>,
     header: Vec<String>,
     metadata: Vec<Vec<String>>,
@@ -59,16 +60,20 @@ impl PresenceAbsence {
 
     #[inline]
     pub fn is_present(&self, ci: ClusterIdx, gi: GenomeIdx) -> bool {
-        self.present[ci.val()].contains(&gi)
+        self.present_bits[ci.val()][gi.val()]
     }
 
     #[inline]
     pub fn present_count(&self, ci: ClusterIdx) -> usize {
-        self.present[ci.val()].len()
+        self.present_genomes[ci.val()].len()
     }
 
-    pub fn present_genomes(&self, ci: ClusterIdx) -> &HashSet<GenomeIdx> {
-        &self.present[ci.val()]
+    pub fn present_genomes(&self, ci: ClusterIdx) -> &[GenomeIdx] {
+        &self.present_genomes[ci.val()]
+    }
+
+    pub fn presence_row(&self, ci: ClusterIdx) -> &[bool] {
+        &self.present_bits[ci.val()]
     }
 
     // ── Cell values (for gene IDs and CSV reconstruction) ──
@@ -119,12 +124,15 @@ impl PresenceAbsence {
 
     pub fn core_size(&self) -> usize {
         let n = self.genomes.len();
-        self.present.iter().filter(|p| p.len() == n).count()
+        self.present_genomes.iter().filter(|p| p.len() == n).count()
     }
 
     pub fn soft_core_size(&self) -> usize {
         let threshold = (self.genomes.len() as f64 * 0.95).ceil() as usize;
-        self.present.iter().filter(|p| p.len() >= threshold).count()
+        self.present_genomes
+            .iter()
+            .filter(|p| p.len() >= threshold)
+            .count()
     }
 
     /// Constructor for tests only — minimal PA with all genes absent.
@@ -134,20 +142,22 @@ impl PresenceAbsence {
         genomes: Vec<String>,
         cell_values: Vec<Vec<String>>,
     ) -> Self {
-        use ahash::HashSetExt;
         let n_cl = clusters.len();
         let n_ge = genomes.len();
-        let present = (0..n_cl)
-            .map(|ci| {
-                let mut s = HashSet::new();
-                for (gi, v) in cell_values[ci].iter().enumerate() {
-                    if !v.is_empty() {
-                        s.insert(GenomeIdx(gi));
-                    }
+        let mut present_genomes = Vec::with_capacity(n_cl);
+        let mut present_bits = Vec::with_capacity(n_cl);
+        for row in &cell_values {
+            let mut present_row = Vec::new();
+            let mut bit_row = vec![false; n_ge];
+            for (gi, v) in row.iter().enumerate() {
+                if !v.is_empty() {
+                    present_row.push(GenomeIdx(gi));
+                    bit_row[gi] = true;
                 }
-                s
-            })
-            .collect();
+            }
+            present_genomes.push(present_row);
+            present_bits.push(bit_row);
+        }
         let metadata = vec![vec![]; n_cl];
         let genome_col_indices: Vec<usize> = (0..n_ge).collect();
         let mut header = vec!["Gene".to_string()];
@@ -155,7 +165,8 @@ impl PresenceAbsence {
         PresenceAbsence {
             clusters,
             genomes,
-            present,
+            present_genomes,
+            present_bits,
             cell_values,
             header,
             metadata,
@@ -220,7 +231,8 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         .collect();
 
     let mut clusters = Vec::new();
-    let mut present = Vec::new();
+    let mut present_genomes = Vec::new();
+    let mut present_bits = Vec::new();
     let mut cell_values = Vec::new();
     let mut metadata = Vec::new();
 
@@ -228,13 +240,15 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         let record = result?;
         let cluster_name = record.get(gene_col).unwrap_or("").to_string();
 
-        let mut present_set = HashSet::new();
+        let mut present_row = Vec::new();
+        let mut bit_row = vec![false; genomes.len()];
         let mut row_values = Vec::with_capacity(genomes.len());
 
         for (gi, &col_idx) in genome_indices.iter().enumerate() {
             let val = record.get(col_idx).unwrap_or("").trim().to_string();
             if !val.is_empty() {
-                present_set.insert(GenomeIdx(gi));
+                present_row.push(GenomeIdx(gi));
+                bit_row[gi] = true;
             }
             row_values.push(val);
         }
@@ -245,7 +259,8 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
             .collect();
 
         clusters.push(cluster_name);
-        present.push(present_set);
+        present_genomes.push(present_row);
+        present_bits.push(bit_row);
         cell_values.push(row_values);
         metadata.push(meta_values);
     }
@@ -256,18 +271,19 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
         genomes.len(),
         {
             let n = genomes.len();
-            present.iter().filter(|p| p.len() == n).count()
+            present_genomes.iter().filter(|p| p.len() == n).count()
         },
         {
             let t = (genomes.len() as f64 * 0.95).ceil() as usize;
-            present.iter().filter(|p| p.len() >= t).count()
+            present_genomes.iter().filter(|p| p.len() >= t).count()
         }
     );
 
     Ok(PresenceAbsence {
         clusters,
         genomes,
-        present,
+        present_genomes,
+        present_bits,
         cell_values,
         header: headers,
         metadata,

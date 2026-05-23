@@ -259,7 +259,7 @@ fn reference_contexts_for_cluster<'a>(
         .entry((ci, n_neighbors))
         .or_insert_with(|| {
             let mut reference_contexts = Vec::new();
-            let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
+            let mut ref_genomes = pa.present_genomes(ci).to_vec();
             ref_genomes.sort_by_key(|gi| gi.val());
             for ref_gi in ref_genomes {
                 let Some(ref_gff) = gff_indices.get(&ref_gi) else {

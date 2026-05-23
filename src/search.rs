@@ -80,14 +80,17 @@ pub fn batch_search(
     }
 
     // ── 1. Collect unique query clusters needed across all genomes ──
-    let mut needed_cluster_set: ahash::HashSet<ClusterIdx> = ahash::HashSet::default();
+    let mut needed_cluster_bits = vec![false; cluster_names.len()];
     for (_gi, cluster_indices) in searchable_genomes {
         for &ci in cluster_indices {
-            needed_cluster_set.insert(ci);
+            needed_cluster_bits[ci.val()] = true;
         }
     }
-    let mut needed_clusters: Vec<ClusterIdx> = needed_cluster_set.into_iter().collect();
-    needed_clusters.sort_unstable();
+    let needed_clusters: Vec<ClusterIdx> = needed_cluster_bits
+        .iter()
+        .enumerate()
+        .filter_map(|(ci, needed)| needed.then_some(ClusterIdx(ci)))
+        .collect();
 
     // ── 2. Write query FASTA ──
     let mut query_file = NamedTempFile::new().context("Cannot create temp query file")?;
@@ -235,10 +238,10 @@ pub fn batch_search(
     });
 
     // ── 6. Build gap lookup ──
-    let mut gap_set: ahash::HashSet<(GenomeIdx, ClusterIdx)> = ahash::HashSet::default();
+    let mut gap_lookup = vec![vec![false; cluster_names.len()]; genome_names.len()];
     for (gi, cluster_indices) in searchable_genomes {
         for &ci in cluster_indices {
-            gap_set.insert((*gi, ci));
+            gap_lookup[gi.val()][ci.val()] = true;
         }
     }
 
@@ -289,7 +292,7 @@ pub fn batch_search(
         let cluster_name = &cluster_names[ci.val()];
 
         // Filter: only keep hits for actual gaps
-        if !gap_set.contains(&(gi, ci)) {
+        if !gap_lookup[gi.val()][ci.val()] {
             continue;
         }
 

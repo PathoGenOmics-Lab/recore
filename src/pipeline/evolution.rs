@@ -1429,7 +1429,7 @@ pub(super) fn write_cluster_locus_contexts(
         let mut n_unresolved = 0usize;
         let mut context_counts: HashMap<(String, String), usize> = HashMap::new();
 
-        let mut genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
+        let mut genomes = pa.present_genomes(ci).to_vec();
         genomes.sort_by_key(|gi| gi.val());
 
         for gi in genomes {

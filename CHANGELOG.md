@@ -7,7 +7,15 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+
+- Presence/absence storage now uses compact indexed vectors instead of a
+  per-cluster hash set, reducing memory overhead and making matrix lookups
+  cache-friendly.
+- Gap filtering and PAF hit filtering now use dense indexed lookup tables
+  instead of hash maps/sets for genome/cluster pairs.
+- Release builds use a single codegen unit for stronger whole-binary
+  optimization.
 
 ## [0.2.0] - 2026-05-23
 
