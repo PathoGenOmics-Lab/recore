@@ -279,8 +279,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     .unwrap();
 
     let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
-    assert!(text.contains("Phylogeny and matrix explorer"));
+    assert!(text.contains("Phylogeny and corrected matrix explorer"));
     assert!(text.contains("window.recoreExplorerData"));
+    assert!(text.contains("clusterDetails"));
     assert!(text.contains("\"states\":[\"PA\",\"AP\"]"));
     assert!(text.contains("matrixCanvas"));
 }

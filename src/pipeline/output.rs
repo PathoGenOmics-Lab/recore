@@ -973,6 +973,13 @@ fn format_count(value: usize) -> String {
     out.chars().rev().collect()
 }
 
+fn format_percent(numerator: usize, denominator: usize) -> String {
+    if denominator == 0 {
+        return "NA".to_string();
+    }
+    format!("{:.1}%", numerator as f64 / denominator as f64 * 100.0)
+}
+
 fn count_tsv_column(path: &std::path::Path, column: &str) -> Result<BTreeMap<String, usize>> {
     let mut counts = BTreeMap::new();
     if !path.exists() {
@@ -1326,9 +1333,9 @@ fn phylo_matrix_explorer_html(
 
     let mut html = String::new();
     html.push_str("<section class='panel full explorer' style='margin-top:14px'>");
-    html.push_str("<div class='explorer-head'><div><h2>Phylogeny and matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the pruned tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
+    html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
     html.push_str("<div class='explorer-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div class='explorer-grid'><div class='tree-pane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane'><canvas id='matrixCanvas'></canvas></div></div><div id='matrixStatus' class='matrix-status muted'>Hover over the matrix to inspect a cell.</div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div class='explorer-grid'><div class='tree-pane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane'><canvas id='matrixCanvas'></canvas></div></div><div id='matrixStatus' class='matrix-status muted'>Hover over the matrix to inspect a cell.</div>");
     html.push_str("<script>window.recoreExplorerData=");
     html.push_str(&data_json);
     html.push_str(
@@ -1341,6 +1348,7 @@ const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC
 const select = document.getElementById("clusterSelect");
 const search = document.getElementById("clusterSearch");
 const info = document.getElementById("clusterInfo");
+const details = document.getElementById("clusterDetails");
 const status = document.getElementById("matrixStatus");
 const svg = document.getElementById("treeSvg");
 const canvas = document.getElementById("matrixCanvas");
@@ -1356,6 +1364,15 @@ let cellW = 5;
 function stateAt(clusterIdx, genomeIdx) {
   return (data.states[clusterIdx] && data.states[clusterIdx][genomeIdx]) || "A";
 }
+function countsForCluster(clusterIdx) {
+  const counts = {P:0, R:0, N:0, A:0};
+  const row = data.states[clusterIdx] || "";
+  for (let i = 0; i < data.genomes.length; i += 1) {
+    const state = row[i] || "A";
+    counts[state] = (counts[state] || 0) + 1;
+  }
+  return counts;
+}
 function layout(node, depth) {
   node.depth = depth;
   maxDepth = Math.max(maxDepth, depth);
@@ -1369,12 +1386,6 @@ function layout(node, depth) {
   node.children.forEach(child => { sum += layout(child, depth + 1); count += 1; });
   node.row = count ? sum / count : leafOrder.length;
   return node.row;
-}
-function stateClass(state) {
-  if (state === "R") return "r";
-  if (state === "N") return "n";
-  if (state === "A") return "a";
-  return "p";
 }
 function populateOptions() {
   const q = search.value.trim().toLowerCase();
@@ -1448,7 +1459,14 @@ function renderMatrix(scrollToSelected) {
     pane.scrollLeft = Math.max(0, selected * cellW - 80);
   }
   const cluster = data.clusters[selected];
-  info.textContent = cluster ? `${cluster.name}: ${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)` : "";
+  if (cluster) {
+    const counts = countsForCluster(selected);
+    info.textContent = `${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)`;
+    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div>`;
+  } else {
+    info.textContent = "";
+    details.textContent = "No cluster selected.";
+  }
 }
 function render(scrollToSelected = false) {
   renderMatrix(scrollToSelected);
@@ -1495,6 +1513,7 @@ pub(super) fn write_html_report(
     use std::fmt::Write as _;
 
     let matrix_corrected_total = stats.matrix_corrected + stats.nsc_matrix_corrected;
+    let rejected_total = stats.synteny_rejected + stats.paralog_rejected;
     let rescued = stats.dropped
         + stats.missing_cds
         + stats.split
@@ -1506,6 +1525,8 @@ pub(super) fn write_html_report(
     let core_after = count_core_after(pa, rescue_map, nsc_result);
     let soft_before = pa.soft_core_size();
     let soft_after = count_soft_core_after(pa, rescue_map, nsc_result);
+    let core_delta = core_after as i64 - stats.core_before as i64;
+    let soft_delta = soft_after as i64 - soft_before as i64;
 
     let orthology_actions =
         count_tsv_column(&output_dir.join("orthology_evidence.tsv"), "matrix_action")?;
@@ -1530,39 +1551,65 @@ pub(super) fn write_html_report(
     html.push_str("<title>Recore run report</title>");
     html.push_str(
         "<style>
-        :root{color-scheme:light;--ink:#17202a;--muted:#667085;--line:#d0d5dd;--bg:#f6f8fb;--panel:#ffffff;--blue:#155eef;--green:#067647;--amber:#b54708;--red:#b42318}
-        *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-        main{max-width:1180px;margin:0 auto;padding:28px}
-        header{background:linear-gradient(135deg,#102a43,#155eef);color:white;border-radius:18px;padding:28px;margin-bottom:18px;box-shadow:0 16px 38px rgba(16,42,67,.18)}
-        .brand{display:flex;align-items:center;gap:18px}.logo{width:108px;height:62px;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.94);padding:7px;flex:0 0 auto}.logo svg{width:100%;height:100%;display:block}.hero-text{min-width:0}.path{word-break:break-all}
-        .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:11px;opacity:.82;font-weight:700}h1{margin:6px 0 8px;font-size:30px;line-height:1.1}h2{font-size:16px;margin:0 0 14px}p{margin:0}.muted{color:var(--muted)}header .muted{color:rgba(255,255,255,.75)}
-        .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.pill{border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:6px 10px;background:rgba(255,255,255,.12);font-size:12px}
-        .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 8px 20px rgba(16,24,40,.05)}
-        .card .label{color:var(--muted);font-size:12px}.card .value{font-size:26px;font-weight:760;margin-top:4px}.card .sub{color:var(--muted);font-size:12px;margin-top:2px}
-        .wide{grid-column:span 2}.full{grid-column:1/-1}.section-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
-        .bars{display:grid;gap:10px}.bar-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:4px}.track{height:9px;background:#eef2f6;border-radius:999px;overflow:hidden}.bar{height:100%;background:linear-gradient(90deg,#155eef,#12b76a);border-radius:999px}
-        table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:700;border-bottom:1px solid var(--line);padding:8px 6px}td{border-bottom:1px solid #eaecf0;padding:8px 6px;vertical-align:top}tr:last-child td{border-bottom:0}
-        .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;background:#eef4ff;color:#1849a9}.badge.review{background:#fff6ed;color:var(--amber)}.badge.filter{background:#fef3f2;color:var(--red)}.badge.pass{background:#ecfdf3;color:var(--green)}
-        .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
-        .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#155eef}.sw.r{background:#12b76a}.sw.n{background:#7a5af8}.sw.a{background:#fff}
-        .explorer-controls{display:grid;grid-template-columns:minmax(160px,1fr) minmax(220px,2fr) minmax(170px,1fr);gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}
-        .explorer-grid{display:grid;grid-template-columns:380px minmax(0,1fr);gap:12px;margin-top:14px}.tree-pane,.matrix-pane{border:1px solid var(--line);border-radius:12px;background:#fff;overflow:auto;min-height:180px;max-height:520px}.tree-edge{stroke:#98a2b3;stroke-width:1.2;fill:none}.tip-label{font-size:10px;fill:#344054}.matrix-pane{position:relative}.matrix-pane canvas{display:block;image-rendering:pixelated}.matrix-status{margin-top:8px;font-size:12px}
-        footer{color:var(--muted);font-size:12px;margin:18px 4px}
-        @media(max-width:900px){.grid,.section-grid,.files,.explorer-grid,.explorer-controls{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:86px;height:50px}}
+        :root{color-scheme:light;--ink:#111827;--muted:#667085;--subtle:#475467;--line:#d7dde5;--soft-line:#e6eaf0;--bg:#f3f5f7;--panel:#ffffff;--navy:#182230;--blue:#2563eb;--green:#079455;--purple:#7a5af8;--amber:#b54708;--red:#b42318}
+        *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.48 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+        main{max-width:1200px;margin:0 auto;padding:28px}
+        header{background:var(--panel);border:1px solid var(--line);border-top:5px solid var(--navy);border-radius:12px;padding:24px;margin-bottom:14px;box-shadow:0 12px 28px rgba(16,24,40,.06)}
+        .header-main{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.brand{display:flex;align-items:center;gap:18px;min-width:0}.logo{width:118px;height:66px;border-radius:8px;overflow:hidden;background:#fff;border:1px solid var(--soft-line);padding:6px;flex:0 0 auto}.logo svg{width:100%;height:100%;display:block}.hero-text{min-width:0}.path{word-break:break-all;margin-top:8px;color:var(--muted);font-size:12px}
+        .kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--muted);font-weight:800}h1{margin:5px 0 7px;font-size:29px;line-height:1.12;letter-spacing:-.01em}h2{font-size:15px;margin:0 0 12px}p{margin:0}.muted{color:var(--muted)}.report-stamp{text-align:right;min-width:180px}.report-stamp strong{display:block;font-size:12px;color:var(--navy)}.report-stamp span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+        .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}.pill{border:1px solid var(--line);border-radius:999px;padding:5px 9px;background:#f8fafc;color:var(--subtle);font-size:12px}
+        .executive{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(320px,.9fr);gap:18px;margin-bottom:14px}.executive p{font-size:14px;color:#344054}.executive strong{color:var(--navy)}.summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.summary-item{border-left:3px solid var(--navy);background:#f8fafc;padding:10px 12px;border-radius:8px}.summary-item span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}.summary-item strong{display:block;margin-top:3px;font-size:16px}
+        .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px;box-shadow:0 8px 18px rgba(16,24,40,.04)}
+        .card .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}.card .value{font-size:25px;font-weight:760;margin-top:5px;letter-spacing:-.01em}.card .sub{color:var(--muted);font-size:12px;margin-top:3px}
+        .wide{grid-column:span 2}.full{grid-column:1/-1}.section-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+        .bars{display:grid;gap:10px}.bar-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:4px}.track{height:8px;background:#eef2f6;border-radius:999px;overflow:hidden}.bar{height:100%;background:linear-gradient(90deg,#1d4ed8,#079455);border-radius:999px}
+        table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:750;border-bottom:1px solid var(--line);padding:8px 6px;background:#f8fafc}td{border-bottom:1px solid #eaecf0;padding:8px 6px;vertical-align:top}tr:last-child td{border-bottom:0}
+        .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:750;background:#eef4ff;color:#1849a9;border:1px solid #d1e0ff}.badge.review{background:#fff6ed;color:var(--amber);border-color:#fedf89}.badge.filter{background:#fef3f2;color:var(--red);border-color:#fecdca}.badge.pass{background:#ecfdf3;color:var(--green);border-color:#abefc6}
+        .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
+        .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
+        .explorer-controls{display:grid;grid-template-columns:minmax(170px,1fr) minmax(260px,2fr) minmax(190px,1fr);gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}
+        .explorer-grid{display:grid;grid-template-columns:390px minmax(0,1fr);gap:12px;margin-top:14px}.tree-pane,.matrix-pane{border:1px solid var(--line);border-radius:9px;background:#fff;overflow:auto;min-height:190px;max-height:540px}.tree-edge{stroke:#98a2b3;stroke-width:1.2;fill:none}.tip-label{font-size:10px;fill:#344054}.matrix-pane{position:relative}.matrix-pane canvas{display:block;image-rendering:pixelated}.matrix-status{margin-top:8px;font-size:12px}
+        footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
+        @media(max-width:900px){.header-main,.executive{grid-template-columns:1fr;display:block}.report-stamp{text-align:left;margin-top:14px}.grid,.section-grid,.files,.explorer-grid,.explorer-controls{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:92px;height:54px}.summary-grid{grid-template-columns:1fr}}
         </style>",
     );
     html.push_str("</head><body><main>");
 
-    html.push_str("<header><div class='brand'><div class='logo'>");
+    html.push_str("<header><div class='header-main'><div class='brand'><div class='logo'>");
     html.push_str(REPORT_LOGO);
     write!(
         html,
-        "</div><div class='hero-text'><div class='kicker'>Recore run report</div><h1>Correction audit</h1><p class='muted'>Publication-oriented audit of the corrected pangenome matrix.</p><p class='muted path'>Output: {}</p></div></div><div class='meta'><span class='pill'>schema recore.outputs.v6</span><span class='pill'>policy {:?}</span><span class='pill'>synteny {}</span><span class='pill'>NSC {}</span><span class='pill'>reference {}</span></div></header>",
-        html_escape(&output_dir.display().to_string()),
+        "</div><div class='hero-text'><div class='kicker'>Recore audit report</div><h1>Corrected pangenome matrix review</h1><p class='muted'>A reproducible audit of rescued false absences, guarded matrix corrections, and downstream interpretation signals.</p></div></div><div class='report-stamp'><strong>Recore v{}</strong><span>schema recore.outputs.v6</span><span>{} clusters x {} genomes</span></div></div><div class='meta'><span class='pill'>policy {:?}</span><span class='pill'>synteny {}</span><span class='pill'>NSC {}</span><span class='pill'>reference {}</span><span class='pill'>HTML explorer {}</span></div><p class='path'>Output: {}</p></header>",
+        html_escape(env!("CARGO_PKG_VERSION")),
+        format_count(pa.n_clusters()),
+        format_count(pa.n_genomes()),
         stats.matrix_policy,
         if args.synteny { "on" } else { "off" },
         if args.nscluster { "on" } else { "off" },
         html_escape(args.reference_genome.as_deref().unwrap_or("not assessed")),
+        if phylo_tree.is_some() { "available" } else { "static" },
+        html_escape(&output_dir.display().to_string()),
+    )
+    .expect("write to String is infallible");
+
+    write!(
+        html,
+        "<section class='panel executive'><div><div class='kicker'>Executive summary</div><p><strong>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong>{}</strong> searchable gaps. Recore retained <strong>{}</strong> accepted evidence rows for audit and kept <strong>{}</strong> candidates out of the binary matrix through synteny/paralog guardrails. Core changed from <strong>{}</strong> to <strong>{}</strong> clusters ({:+}); soft-core changed from <strong>{}</strong> to <strong>{}</strong> ({:+}).</p></div><div class='summary-grid'><div class='summary-item'><span>Correction rate</span><strong>{}</strong></div><div class='summary-item'><span>Evidence retained</span><strong>{}</strong></div><div class='summary-item'><span>Guardrail rejections</span><strong>{}</strong></div><div class='summary-item'><span>Review mode</span><strong>{}</strong></div></div></section>",
+        format_count(matrix_corrected_total),
+        stats.matrix_policy,
+        format_count(stats.searchable_gaps),
+        format_count(rescued),
+        format_count(rejected_total),
+        format_count(stats.core_before),
+        format_count(core_after),
+        core_delta,
+        format_count(soft_before),
+        format_count(soft_after),
+        soft_delta,
+        format_percent(matrix_corrected_total, stats.searchable_gaps),
+        format_count(rescued),
+        format_count(rejected_total),
+        if phylo_tree.is_some() { "tree-linked" } else { "table-only" },
     )
     .expect("write to String is infallible");
 
