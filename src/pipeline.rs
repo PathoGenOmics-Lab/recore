@@ -48,8 +48,8 @@ use self::reference_audit::{
 
 #[cfg(test)]
 use self::evolution::{
-    nearest_mobile_element_for_rescue, nsc_role_for_cluster, resolve_phylo_tips,
-    summarize_phylogenetic_pattern, MobileElementHit, NewickParser, PhyloTree,
+    nearest_mobile_element_for_rescue, nsc_role_for_cluster, penalized_phylo_summary,
+    resolve_phylo_tips, summarize_phylogenetic_pattern, MobileElementHit, NewickParser, PhyloTree,
 };
 #[cfg(test)]
 use self::output::copy_text_maybe_gzip_with_header;

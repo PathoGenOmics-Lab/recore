@@ -37,7 +37,7 @@ and Recore uses semantic versioning.
   rescue burden, matrix-correction burden, and rejection burden.
 - Added reproducible utilities: `benchmarks/self_benchmark.py`,
   `benchmarks/compare_runs.py`, and `benchmarks/recore_report.py`.
-- Output manifest schema version is now `recore.outputs.v4`.
+- Output manifest schema version is now `recore.outputs.v5`.
 
 ### Fixed
 
@@ -49,6 +49,9 @@ and Recore uses semantic versioning.
   than forcing every remapped genome into `review`.
 - Dollo-like phylogenetic scoring no longer rewards clusters absent from all
   matched tree tips.
+- Evolutionary event calls now expose ambiguous Fitch root states, carrier-MRCA
+  size/purity, and Dollo origin size/purity, avoiding overconfident ancestral
+  loss calls for dispersed tie-break patterns.
 
 ## [0.2.0] - 2026-05-23
 

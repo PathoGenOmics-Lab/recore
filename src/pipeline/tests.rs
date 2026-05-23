@@ -385,6 +385,58 @@ fn newick_fitch_detects_clade_gain() {
 }
 
 #[test]
+fn ambiguous_root_is_not_called_ancestral_loss() {
+    let pa = crate::parser::PresenceAbsence::new_for_test(
+        vec!["g".into()],
+        vec!["s1".into(), "s2".into(), "s3".into(), "s4".into()],
+        vec![vec!["g_s1".into(), "".into(), "g_s3".into(), "".into()]],
+    );
+    let mut root = NewickParser::new("((s1:0.1,s2:0.1),(s3:0.1,s4:0.1));")
+        .parse()
+        .unwrap();
+    let (matched, unmatched) = resolve_phylo_tips(&mut root, &pa);
+    assert_eq!((matched, unmatched), (4, 0));
+    let tree = PhyloTree { root };
+    let present = vec![true, false, true, false];
+
+    let summary = summarize_phylogenetic_pattern(Some(&tree), &present);
+    let penalized = penalized_phylo_summary(&summary);
+
+    assert_eq!(summary.root_state, "ambiguous");
+    assert!(summary.root_state_ambiguous);
+    assert_ne!(summary.pattern, "ancestral_loss");
+    assert_eq!(summary.pattern, "ambiguous_gain_loss");
+    assert_eq!(summary.carrier_mrca_tips, 4);
+    assert_eq!(summary.dollo_loss_events_in_mrca, 2);
+    assert!(penalized.dollo_violation_count >= 1);
+}
+
+#[test]
+fn carrier_mrca_purity_tracks_single_gain_with_internal_loss() {
+    let pa = crate::parser::PresenceAbsence::new_for_test(
+        vec!["g".into()],
+        vec!["s1".into(), "s2".into(), "s3".into(), "s4".into()],
+        vec![vec!["".into(), "g_s2".into(), "".into(), "g_s4".into()]],
+    );
+    let mut root = NewickParser::new("(s1:0.1,(s2:0.1,(s3:0.1,s4:0.1):0.1):0.1);")
+        .parse()
+        .unwrap();
+    let (matched, unmatched) = resolve_phylo_tips(&mut root, &pa);
+    assert_eq!((matched, unmatched), (4, 0));
+    let tree = PhyloTree { root };
+    let present = vec![false, true, false, true];
+
+    let summary = summarize_phylogenetic_pattern(Some(&tree), &present);
+    let penalized = penalized_phylo_summary(&summary);
+
+    assert_eq!(summary.carrier_mrca_tips, 3);
+    assert!((summary.carrier_mrca_purity - 2.0 / 3.0).abs() < 1e-9);
+    assert_eq!(summary.dollo_loss_events_in_mrca, 1);
+    assert_eq!(penalized.dollo_loss_count, 1);
+    assert_eq!(penalized.dollo_origin_tips, 3);
+}
+
+#[test]
 fn mobile_element_detection_uses_gff_aliases() {
     let pa = crate::parser::PresenceAbsence::new_for_test(
         vec!["g".into()],

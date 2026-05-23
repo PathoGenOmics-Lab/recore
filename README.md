@@ -411,9 +411,10 @@ Key columns in `evolutionary_events.tsv`:
 | Column | Meaning |
 |--------|---------|
 | `phylogenetic_pattern` | parsimony pattern from the optional tree: retained, loss, gain, recurrent, homoplastic, singleton/noise, or not assessed |
-| `phylogenetic_reliability` | high/moderate/low reliability label from tree pattern and parsimony changes |
+| `phylogenetic_reliability` | high/moderate/low reliability label from tree pattern, root ambiguity, MRCA purity, and parsimony changes |
 | `phylogenetic_blink_flag` | explicit low/moderate/high flag for repeated gain/loss or singleton-like blinking patterns |
-| `penalized_phylo_model` / `penalized_phylo_score` | Dollo-like penalized model that rewards one gain plus losses and penalizes repeated independent gains |
+| `penalized_phylo_model` / `penalized_phylo_score` | Dollo-like model using the smallest carrier MRCA; broad origins, many losses, root ambiguity, and repeated gains reduce the score |
+| `carrier_mrca_tips` / `carrier_mrca_purity` | size and carrier purity of the smallest clade containing all carriers |
 | `molecular_mechanism` | conservative interpretation combining rescue evidence, reference audit, context stability, mobile-element evidence, and NSC status |
 | `mechanism_detail` | compact reason for the mechanism call, including `nsc_representative` or `nsc_member_merged_into_representative` when relevant |
 | `support_level` | confidence tier for wording, not a functional validation claim |

@@ -310,12 +310,13 @@ cluster locus context, optional GFF mobile-element labels, and optional Newick
 tree evidence into one interpretation table.
 
 When `--tree` is provided, Recore performs binary Fitch parsimony per cluster:
-tips are matched to matrix columns by exact name or embedded `ASxxxxx` ID, the
-root state is inferred on the rooted tree, and gains/losses are counted by a
-top-down assignment consistent with the Fitch state sets. This yields
-phylogenetic patterns such as ancestral retention, ancestral loss,
-lineage-specific gain, recurrent gain/loss, homoplastic gain/loss, and
-singleton/noise-like signals.
+tips are matched to matrix columns by exact name or embedded `ASxxxxx` ID, and
+gains/losses are counted by a top-down assignment consistent with the Fitch
+state sets. If the root state is ambiguous under Fitch, Recore now reports
+`ancestral_state=ambiguous` and avoids turning that arbitrary tie-break into an
+ancestral-loss claim. This yields phylogenetic patterns such as ancestral
+retention, ancestral loss, lineage-specific gain, recurrent gain/loss,
+homoplastic gain/loss, ambiguous gain/loss, and singleton/noise-like signals.
 
 The molecular mechanism call is separate from the tree pattern. Recore gives
 priority to direct sequence/locus evidence: reference-derived alleles from
@@ -331,8 +332,11 @@ coherence, mechanism support, synteny, locus-context stability, ORF integrity,
 and cluster-component risk so highly dispersed or singleton-like clusters are
 easy to filter before manuscript highlighting.
 
-Recore also reports a Dollo-like penalized model. A single gain followed by
-losses is treated as plausible, while repeated independent gains add
+Recore also reports a Dollo-like penalized model. It finds the smallest carrier
+MRCA, reports its size and carrier purity, and counts the minimum loss events
+inside that MRCA. A compact, high-purity carrier clade is treated as more
+plausible than a root-spanning pattern that would require many independent
+losses. Root ambiguity and repeated independent gains add
 `dollo_violation_count` and reduce `penalized_phylo_score`. This is deliberately
 an interpretation aid rather than a binary correction rule.
 

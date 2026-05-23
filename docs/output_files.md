@@ -187,13 +187,14 @@ corrected binary state for each cluster.
 | `n_present_corrected`, `prevalence_corrected` | Presence after accepted matrix corrections and NSC presence updates |
 | `tree_matched_tips` | Number of tree tips matched to matrix genomes; blank when no tree is provided |
 | `reference_state` | `present`, `absent`, or `not_assessed` for the requested `--reference-genome` |
-| `phylogenetic_pattern` | `ancestral_retained`, `ancestral_loss`, `lineage_specific_gain`, `clade_associated_presence`, `recurrent_gain`, `recurrent_loss`, `homoplastic_gain_loss`, `singleton_or_noise`, `dispersed_gain_loss`, or `not_assessed_no_tree` |
-| `phylogenetic_reliability` | `high`, `moderate`, `low`, or `not_assessed`, based on tree pattern and parsimony changes |
+| `phylogenetic_pattern` | `ancestral_retained`, `ancestral_loss`, `lineage_specific_gain`, `clade_associated_presence`, `clade_associated_presence_with_losses`, `recurrent_gain`, `recurrent_loss`, `homoplastic_gain_loss`, `ambiguous_gain_loss`, `singleton_or_noise`, `dispersed_gain_loss`, or `not_assessed_no_tree` |
+| `phylogenetic_reliability` | `high`, `moderate`, `low`, or `not_assessed`, based on tree pattern, root-state ambiguity, MRCA purity, and parsimony changes |
 | `phylogenetic_blink_flag` | `low_blink`, `moderate_blink`, `high_blink`, or `not_assessed`; high blink marks clusters with singleton/dispersed/homoplastic behaviour that should be filtered or reviewed before highlighting |
-| `penalized_phylo_model`, `penalized_phylo_score`, `dollo_loss_count`, `dollo_violation_count` | Dollo-like penalized model: one gain plus losses is rewarded, repeated independent gains reduce the score |
-| `ancestral_state` | Parsimony root state: `present`, `absent`, or `unknown` |
+| `penalized_phylo_model`, `penalized_phylo_score`, `dollo_loss_count`, `dollo_violation_count`, `dollo_origin_tips`, `dollo_origin_purity` | Dollo-like penalized model using the smallest carrier MRCA as the single-gain origin; broad origins, many losses, root ambiguity, and repeated independent gains reduce the score |
+| `ancestral_state`, `root_state_confidence` | Parsimony root state: `present`, `absent`, `ambiguous`, or `unknown`, plus whether the Fitch root assignment is unambiguous |
 | `phylogenetic_changes`, `phylogenetic_gains`, `phylogenetic_losses` | Parsimony counts on the matched tree |
-| `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one clade, and the largest carrier-only clade fraction |
+| `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one pure carrier-only clade, and the largest carrier-only clade fraction |
+| `carrier_mrca_tips`, `carrier_mrca_purity` | Size and carrier purity of the smallest tree clade containing all carrier tips; low purity means a single-gain story would require many internal losses |
 | `molecular_mechanism` | Best conservative mechanism call: reference-derived allele, IS interruption, pseudogenization, fragmentation, duplication/paralog expansion, context shift, acquisition/insertion candidate, deletion/loss candidate, homoplastic/unstable signal, ancestral retention, or unresolved |
 | `mechanism_detail`, `support_level`, `evolutionary_signal_score`, `highlight_priority`, `recommended_wording` | Evidence summary, integrated prioritization, and publication-facing interpretation |
 | `cluster_component_id`, `cluster_component_size`, `cluster_component_role`, `cluster_component_relations`, `cluster_component_recommendation` | Connected-component context for split, annotation-matched, NSC, and paralog-linked clusters |
@@ -452,7 +453,7 @@ Nucleotide similarity clustering:
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v4`);
+- `schema_version` (`recore.outputs.v5`);
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;

@@ -678,7 +678,7 @@ pub(super) fn write_run_manifest(
         "  \"tool_version\": {},",
         json_escape(env!("CARGO_PKG_VERSION"))
     )?;
-    writeln!(w, "  \"schema_version\": \"recore.outputs.v4\",")?;
+    writeln!(w, "  \"schema_version\": \"recore.outputs.v5\",")?;
     writeln!(w, "  \"inputs\": {{")?;
     writeln!(
         w,

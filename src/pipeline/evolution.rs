@@ -24,8 +24,12 @@ pub(super) struct PhyloPatternSummary {
     pub(super) gains: usize,
     pub(super) losses: usize,
     pub(super) root_state: &'static str,
+    pub(super) root_state_ambiguous: bool,
     pub(super) carrier_monophyly: bool,
     pub(super) max_carrier_clade_fraction: f64,
+    pub(super) carrier_mrca_tips: usize,
+    pub(super) carrier_mrca_purity: f64,
+    pub(super) dollo_loss_events_in_mrca: usize,
     pub(super) pattern: &'static str,
 }
 
@@ -34,6 +38,8 @@ pub(super) struct PenalizedPhyloSummary {
     pub(super) model: &'static str,
     pub(super) dollo_loss_count: usize,
     pub(super) dollo_violation_count: usize,
+    pub(super) dollo_origin_tips: usize,
+    pub(super) dollo_origin_purity: f64,
     pub(super) score: f64,
 }
 
@@ -387,6 +393,58 @@ pub(super) fn carrier_clade_stats(summary: &FitchNodeSummary, total_present: usi
     (exact, best as f64 / total_present as f64)
 }
 
+pub(super) fn dollo_loss_events_inside(summary: &FitchNodeSummary) -> usize {
+    if summary.matched_tips == 0 || summary.present_tips == summary.matched_tips {
+        return 0;
+    }
+    if summary.present_tips == 0 {
+        return 1;
+    }
+    summary
+        .children
+        .iter()
+        .filter(|child| child.matched_tips > 0)
+        .map(|child| {
+            if child.present_tips == 0 {
+                1
+            } else {
+                dollo_loss_events_inside(child)
+            }
+        })
+        .sum()
+}
+
+pub(super) fn carrier_mrca_stats(
+    summary: &FitchNodeSummary,
+    total_present: usize,
+) -> (usize, f64, usize) {
+    if total_present == 0 || summary.matched_tips == 0 {
+        return (0, 0.0, 0);
+    }
+
+    fn visit(summary: &FitchNodeSummary, total_present: usize, best: &mut Option<(usize, usize)>) {
+        if summary.matched_tips > 0 && summary.present_tips == total_present {
+            let losses = dollo_loss_events_inside(summary);
+            match best {
+                Some((best_tips, best_losses))
+                    if summary.matched_tips > *best_tips
+                        || (summary.matched_tips == *best_tips && losses >= *best_losses) => {}
+                _ => *best = Some((summary.matched_tips, losses)),
+            }
+        }
+        for child in &summary.children {
+            visit(child, total_present, best);
+        }
+    }
+
+    let mut best = None;
+    visit(summary, total_present, &mut best);
+    let (mrca_tips, losses) =
+        best.unwrap_or((summary.matched_tips, dollo_loss_events_inside(summary)));
+    let purity = total_present as f64 / mrca_tips.max(1) as f64;
+    (mrca_tips, purity, losses)
+}
+
 pub(super) fn classify_phylogenetic_pattern(summary: &PhyloPatternSummary) -> &'static str {
     if !summary.assessed {
         return "not_assessed_no_tree";
@@ -402,6 +460,12 @@ pub(super) fn classify_phylogenetic_pattern(summary: &PhyloPatternSummary) -> &'
     }
     if summary.parsimony_changes >= 6 {
         return "homoplastic_gain_loss";
+    }
+    if summary.root_state_ambiguous {
+        if summary.carrier_mrca_purity >= 0.80 && summary.dollo_loss_events_in_mrca <= 3 {
+            return "clade_associated_presence_with_losses";
+        }
+        return "ambiguous_gain_loss";
     }
     if summary.root_state == "present" && summary.gains == 0 && summary.losses > 0 {
         return "ancestral_loss";
@@ -445,9 +509,12 @@ pub(super) fn summarize_phylogenetic_pattern(
     }
     let mut gains = 0usize;
     let mut losses = 0usize;
+    let root_state_ambiguous = fitch.state_set == 0b11;
     let root_present = assign_fitch_states(&fitch, None, &mut gains, &mut losses).unwrap_or(false);
     let (carrier_monophyly, max_carrier_clade_fraction) =
         carrier_clade_stats(&fitch, fitch.present_tips);
+    let (carrier_mrca_tips, carrier_mrca_purity, dollo_loss_events_in_mrca) =
+        carrier_mrca_stats(&fitch, fitch.present_tips);
     let mut summary = PhyloPatternSummary {
         assessed: true,
         matched_tips: fitch.matched_tips,
@@ -456,9 +523,19 @@ pub(super) fn summarize_phylogenetic_pattern(
         parsimony_changes: fitch.changes,
         gains,
         losses,
-        root_state: if root_present { "present" } else { "absent" },
+        root_state: if root_state_ambiguous {
+            "ambiguous"
+        } else if root_present {
+            "present"
+        } else {
+            "absent"
+        },
+        root_state_ambiguous,
         carrier_monophyly,
         max_carrier_clade_fraction,
+        carrier_mrca_tips,
+        carrier_mrca_purity,
+        dollo_loss_events_in_mrca,
         pattern: "unclassified",
     };
     summary.pattern = classify_phylogenetic_pattern(&summary);
@@ -903,17 +980,24 @@ pub(super) fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static 
     }
     if matches!(
         phylo.pattern,
-        "singleton_or_noise" | "homoplastic_gain_loss" | "dispersed_gain_loss"
+        "singleton_or_noise"
+            | "homoplastic_gain_loss"
+            | "dispersed_gain_loss"
+            | "ambiguous_gain_loss"
     ) {
         return "low";
     }
     if phylo.parsimony_changes >= 6 {
         return "low";
     }
+    if phylo.root_state_ambiguous && phylo.carrier_mrca_purity < 0.80 {
+        return "low";
+    }
     if matches!(
         phylo.pattern,
         "lineage_specific_gain"
             | "clade_associated_presence"
+            | "clade_associated_presence_with_losses"
             | "ancestral_retained"
             | "ancestral_loss"
     ) && phylo.parsimony_changes <= 2
@@ -1087,6 +1171,7 @@ pub(super) fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
             phylo.pattern,
             "lineage_specific_gain"
                 | "clade_associated_presence"
+                | "clade_associated_presence_with_losses"
                 | "single_gain_with_incomplete_clade_support"
         )
     {
@@ -1153,8 +1238,12 @@ fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
         "not_assessed"
     } else if matches!(
         phylo.pattern,
-        "homoplastic_gain_loss" | "dispersed_gain_loss" | "singleton_or_noise"
+        "homoplastic_gain_loss"
+            | "dispersed_gain_loss"
+            | "singleton_or_noise"
+            | "ambiguous_gain_loss"
     ) || (phylo.parsimony_changes >= 6 && phylo.max_carrier_clade_fraction < 0.75)
+        || (phylo.carrier_mrca_purity < 0.35 && phylo.parsimony_changes >= 4)
     {
         "high_blink"
     } else if phylo.parsimony_changes >= 4 {
@@ -1164,7 +1253,7 @@ fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
     }
 }
 
-fn penalized_phylo_summary(phylo: &PhyloPatternSummary) -> PenalizedPhyloSummary {
+pub(super) fn penalized_phylo_summary(phylo: &PhyloPatternSummary) -> PenalizedPhyloSummary {
     if !phylo.assessed {
         return PenalizedPhyloSummary {
             model: "not_assessed",
@@ -1179,32 +1268,51 @@ fn penalized_phylo_summary(phylo: &PhyloPatternSummary) -> PenalizedPhyloSummary
             ..PenalizedPhyloSummary::default()
         };
     }
+    if phylo.absent_tips == 0 {
+        return PenalizedPhyloSummary {
+            model: "ancestral_retained",
+            dollo_origin_tips: phylo.matched_tips,
+            dollo_origin_purity: 1.0,
+            score: 1.0,
+            ..PenalizedPhyloSummary::default()
+        };
+    }
 
-    let allowed_gains = if phylo.present_tips > 0 { 1 } else { 0 };
-    let dollo_violation_count = phylo.gains.saturating_sub(allowed_gains);
-    let dollo_loss_count = phylo.losses;
+    let recurrent_gain_violation = phylo.gains.saturating_sub(1);
+    let ambiguous_span_violation =
+        usize::from(phylo.root_state_ambiguous && phylo.carrier_mrca_purity < 0.80);
+    let dollo_violation_count = recurrent_gain_violation.max(ambiguous_span_violation);
+    let dollo_loss_count = phylo.dollo_loss_events_in_mrca;
     let blink_penalty = match phylogenetic_blink_flag(phylo) {
         "high_blink" => 0.25,
         "moderate_blink" => 0.10,
         _ => 0.0,
     };
+    let span_penalty = (1.0 - phylo.carrier_mrca_purity).clamp(0.0, 1.0) * 0.35;
     let score = (1.0
-        - dollo_violation_count as f64 * 0.18
-        - dollo_loss_count as f64 * 0.03
+        - dollo_violation_count as f64 * 0.14
+        - dollo_loss_count as f64 * 0.05
+        - span_penalty
         - blink_penalty)
         .clamp(0.0, 1.0);
-    let model = if dollo_violation_count == 0 {
-        "dollo_compatible"
+    let model = if phylo.carrier_mrca_purity >= 0.95 && dollo_loss_count == 0 {
+        "single_gain_clade"
+    } else if phylo.carrier_mrca_purity >= 0.80 && dollo_loss_count <= 3 {
+        "single_gain_with_losses"
+    } else if phylo.carrier_mrca_purity >= 0.50 && dollo_loss_count <= 6 {
+        "broad_origin_many_losses"
     } else if dollo_violation_count <= 2 && score >= 0.45 {
-        "dollo_minor_violations"
+        "weak_dollo_fit"
     } else {
-        "dollo_incompatible"
+        "poor_single_gain_fit"
     };
 
     PenalizedPhyloSummary {
         model,
         dollo_loss_count,
         dollo_violation_count,
+        dollo_origin_tips: phylo.carrier_mrca_tips,
+        dollo_origin_purity: phylo.carrier_mrca_purity,
         score,
     }
 }
@@ -1318,7 +1426,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tpenalized_phylo_model\tpenalized_phylo_score\tdollo_loss_count\tdollo_violation_count\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tpenalized_phylo_model\tpenalized_phylo_score\tdollo_loss_count\tdollo_violation_count\tdollo_origin_tips\tdollo_origin_purity\tancestral_state\troot_state_confidence\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tcarrier_mrca_tips\tcarrier_mrca_purity\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -1476,7 +1584,26 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 } else {
                     String::new()
                 },
+                if phylo.assessed {
+                    penalized_phylo.dollo_origin_tips.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    format!("{:.3}", penalized_phylo.dollo_origin_purity)
+                } else {
+                    String::new()
+                },
                 phylo.root_state.to_string(),
+                if phylo.assessed {
+                    if phylo.root_state_ambiguous {
+                        "ambiguous".to_string()
+                    } else {
+                        "unambiguous".to_string()
+                    }
+                } else {
+                    String::new()
+                },
                 if phylo.assessed {
                     phylo.parsimony_changes.to_string()
                 } else {
@@ -1499,6 +1626,16 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 },
                 if phylo.assessed {
                     format!("{:.3}", phylo.max_carrier_clade_fraction)
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    phylo.carrier_mrca_tips.to_string()
+                } else {
+                    String::new()
+                },
+                if phylo.assessed {
+                    format!("{:.3}", phylo.carrier_mrca_purity)
                 } else {
                     String::new()
                 },
