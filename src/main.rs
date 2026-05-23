@@ -1,11 +1,11 @@
 mod cli;
-mod types;
-mod parser;
-mod search;
-mod rescue;
 mod nscluster;
-mod relationships;
+mod parser;
 mod pipeline;
+mod relationships;
+mod rescue;
+mod search;
+mod types;
 
 use anyhow::Result;
 use clap::Parser;

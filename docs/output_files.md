@@ -23,6 +23,12 @@ Primary output. One row per rescued gene. Tab-separated.
 | `strand` | char | `+` or `-` |
 | `confidence` | float | Combined quality score (0–1.2+); see [algorithm](algorithm.md#confidence-score) |
 | `synteny` | string | `PASS` or empty (not assessed). `FAIL` rows are written to `synteny_rejected_report.tsv` when `--synteny` is enabled |
+| `synteny_score` | float | Best adaptive context score across 1-to-5-neighbour windows; blank when not assessed |
+| `synteny_support_n` | int | Number of compatible reference contexts supporting the best synteny assessment |
+| `synteny_reference_contexts` | int | Number of reference locus contexts compared for the selected neighbour window |
+| `synteny_neighbors` | int | Selected upstream/downstream neighbour window size |
+| `synteny_upstream_matches`, `synteny_downstream_matches` | int | Best upstream/downstream cluster matches observed in the selected assessment |
+| `orf_integrity_signal` | string | `in_frame_span`, `out_of_frame_span_review`, `fragmented_orf`, `disrupted_orf`, or `unknown` |
 | `annotation_match` | string | GFF gene ID that overlapped the rescue region, if any |
 | `fragment_n` | int | Number of fragments in the selected multi-hit chain, if applicable |
 | `fragment_query_gap_bp` | int | Total query-space gap across the selected fragment chain |
@@ -34,12 +40,12 @@ Primary output. One row per rescued gene. Tab-separated.
 ### Example
 
 ```tsv
-gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	annotation_match	fragment_n	fragment_query_gap_bp	fragment_target_gap_bp	fragment_colinear	fragment_same_cds	fragment_note
-group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	Rv0210c	NA	NA	NA	NA	NA	NA
-group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS		NA	NA	NA	NA	NA	missing_cds_no_substantial_gff_overlap
-group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	Rv1099c	NA	NA	NA	NA	NA	NA
-group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	Rv2651c	NA	NA	NA	NA	NA	NA
-group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS		2	9	9	true	false	alignment_split
+gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	synteny_score	synteny_support_n	synteny_reference_contexts	synteny_neighbors	synteny_upstream_matches	synteny_downstream_matches	orf_integrity_signal	annotation_match	fragment_n	fragment_query_gap_bp	fragment_target_gap_bp	fragment_colinear	fragment_same_cds	fragment_note
+group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	1.000	12	18	1	1	1	in_frame_span	Rv0210c	NA	NA	NA	NA	NA	NA
+group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS	0.833	4	5	2	1	1	in_frame_span		NA	NA	NA	NA	NA	missing_cds_no_substantial_gff_overlap
+group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	1.000	8	9	1	1	1	in_frame_span	Rv1099c	NA	NA	NA	NA	NA	NA
+group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	0.750	3	4	2	1	1	disrupted_orf	Rv2651c	NA	NA	NA	NA	NA	NA
+group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS	1.000	6	6	1	1	1	fragmented_orf		2	9	9	true	false	alignment_split
 ```
 
 ### Filtering suggestions
@@ -100,6 +106,8 @@ or paralog candidate.
 | `evidence_strength` | `high`, `moderate`, `review`, or `low` |
 | `recommended_wording` | Short text for how to describe the event in downstream tables/manuscripts |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
+| `synteny_score`, `synteny_support_n`, `synteny_reference_contexts`, `synteny_neighbors`, `synteny_upstream_matches`, `synteny_downstream_matches` | Quantitative adaptive synteny evidence, same meaning as `rescue_report.tsv` |
+| `orf_integrity_signal` | ORF-level signal, same meaning as `rescue_report.tsv` |
 | `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
 | `rejection_reason` | Reason rejected, e.g. `synteny_fail` or `paralog_without_synteny` |
 | `fragment_note` | Fragment interpretation, if applicable |
@@ -178,6 +186,7 @@ corrected binary state for each cluster.
 | `tree_matched_tips` | Number of tree tips matched to matrix genomes; blank when no tree is provided |
 | `reference_state` | `present`, `absent`, or `not_assessed` for the requested `--reference-genome` |
 | `phylogenetic_pattern` | `ancestral_retained`, `ancestral_loss`, `lineage_specific_gain`, `clade_associated_presence`, `recurrent_gain`, `recurrent_loss`, `homoplastic_gain_loss`, `singleton_or_noise`, `dispersed_gain_loss`, or `not_assessed_no_tree` |
+| `phylogenetic_reliability` | `high`, `moderate`, `low`, or `not_assessed`, based on tree pattern and parsimony changes |
 | `ancestral_state` | Parsimony root state: `present`, `absent`, or `unknown` |
 | `phylogenetic_changes`, `phylogenetic_gains`, `phylogenetic_losses` | Parsimony counts on the matched tree |
 | `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one clade, and the largest carrier-only clade fraction |
@@ -185,7 +194,9 @@ corrected binary state for each cluster.
 | `mechanism_detail`, `support_level`, `recommended_wording` | Evidence summary and publication-facing interpretation |
 | `is_interruption_supported`, `mobile_element_*` | Nearby mobile element signal. `mobile_element_source=sequence` comes from `--mobile-element-reference` alignments and is name-agnostic; `mobile_element_source=annotation` is the fallback from GFF labels/products/notes. IS calls are conservative and require sequence support or an insertion-sequence-like label within 250 bp of a fragmented/disrupted rescue |
 | `reference_event_class`, `target_reference_cluster`, `target_reference_gene` | Reference-derived event evidence when available |
-| `context_interpretation`, `rescue_evidence_counts` | Locus-context stability and per-cluster rescue evidence summary |
+| `context_interpretation`, `paralog_locus_risk` | Locus-context stability and paralog/multilocus risk summary |
+| `synteny_mean_score`, `synteny_pass_fraction` | Cluster-level summary of quantitative synteny support across assessed rescue evidence |
+| `orf_integrity_summary`, `rescue_evidence_counts` | ORF signals and per-cluster accepted rescue-type summary |
 
 Use this file as the top-level evolutionary interpretation table. The most
 important guardrail is that `phylogenetic_pattern` and `molecular_mechanism`
@@ -370,7 +381,7 @@ Nucleotide similarity clustering:
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v1`);
+- `schema_version` (`recore.outputs.v2`);
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;

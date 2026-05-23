@@ -77,7 +77,10 @@ fn minhash_sketch(seq: &[u8], ksize: usize) -> Vec<u64> {
     for i in 0..=(seq.len() - ksize) {
         let kmer = &seq[i..i + ksize];
         // Skip k-mers with ambiguous bases
-        if kmer.iter().any(|&b| !matches!(b, b'A' | b'a' | b'T' | b't' | b'C' | b'c' | b'G' | b'g')) {
+        if kmer
+            .iter()
+            .any(|&b| !matches!(b, b'A' | b'a' | b'T' | b't' | b'C' | b'c' | b'G' | b'g'))
+        {
             continue;
         }
         let h = canonical_kmer_hash(kmer);
@@ -143,7 +146,11 @@ fn jaccard_from_sketches(a: &[u64], b: &[u64]) -> f64 {
         j += 1;
     }
 
-    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }
 
 /// Estimate Jaccard *containment* of `a` in `b`: |A∩B| / |A|.
@@ -159,8 +166,12 @@ fn containment_from_sketches(a: &[u64], b: &[u64]) -> f64 {
     let mut intersection = 0u64;
 
     while i < a.len() && j < b.len() {
-        if a[i] == u64::MAX { break; }
-        if b[j] == u64::MAX { break; }
+        if a[i] == u64::MAX {
+            break;
+        }
+        if b[j] == u64::MAX {
+            break;
+        }
         if a[i] == b[j] {
             intersection += 1;
             i += 1;
@@ -222,8 +233,12 @@ fn find_candidate_pairs(sketches: &[Vec<u64>]) -> HashSet<(usize, usize)> {
         }
     }
 
-    debug!("LSH banding: {} candidate pairs from {} sketches ({} bands)", 
-           candidates.len(), n, NUM_BANDS);
+    debug!(
+        "LSH banding: {} candidate pairs from {} sketches ({} bands)",
+        candidates.len(),
+        n,
+        NUM_BANDS
+    );
     candidates
 }
 
@@ -336,13 +351,22 @@ pub fn run_nscluster(
         })
         .collect();
 
-    info!("NSC: sketching {} clusters (k={}, sketch_size={})", cluster_seqs.len(), kmer_size, SKETCH_SIZE);
+    info!(
+        "NSC: sketching {} clusters (k={}, sketch_size={})",
+        cluster_seqs.len(),
+        kmer_size,
+        SKETCH_SIZE
+    );
 
     // ── 2. Compute MinHash sketches in parallel ──
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
-        .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().expect("rayon fallback"));
+        .unwrap_or_else(|_| {
+            rayon::ThreadPoolBuilder::new()
+                .build()
+                .expect("rayon fallback")
+        });
 
     let sketches: Vec<Vec<u64>> = pool.install(|| {
         cluster_seqs
@@ -376,7 +400,12 @@ pub fn run_nscluster(
         }
     }
 
-    info!("NSC: {} pairs above threshold {:.2}, {} merges performed", pairs_above.len(), threshold, n_merged);
+    info!(
+        "NSC: {} pairs above threshold {:.2}, {} merges performed",
+        pairs_above.len(),
+        threshold,
+        n_merged
+    );
 
     // ── 5. Extract components with ≥2 members ──
     let components = uf.components();
@@ -436,7 +465,10 @@ pub fn run_nscluster(
     }
 
     let n_clusters = merged_clusters.len();
-    info!("NSC: {} NS clusters formed, {} total genes merged", n_clusters, total_merged_genes);
+    info!(
+        "NSC: {} NS clusters formed, {} total genes merged",
+        n_clusters, total_merged_genes
+    );
 
     NsClusterResult {
         merged_clusters,
@@ -455,7 +487,10 @@ pub fn apply_ns_merges(
     merge_map: &HashMap<ClusterIdx, ClusterIdx>,
     is_present: impl Fn(ClusterIdx, crate::types::GenomeIdx) -> bool,
     n_genomes: usize,
-) -> (HashSet<ClusterIdx>, Vec<(ClusterIdx, crate::types::GenomeIdx)>) {
+) -> (
+    HashSet<ClusterIdx>,
+    Vec<(ClusterIdx, crate::types::GenomeIdx)>,
+) {
     let clusters_to_remove: HashSet<ClusterIdx> = merge_map.keys().copied().collect();
     let mut presence_updates = Vec::new();
 
@@ -514,8 +549,8 @@ pub fn run_nscluster_mmseqs2(
 
     // ── 1. Write concatenated FASTA (longest allele per cluster) ──
     {
-        let file = std::fs::File::create(&input_fasta)
-            .context("Cannot create input FASTA for mmseqs2")?;
+        let file =
+            std::fs::File::create(&input_fasta).context("Cannot create input FASTA for mmseqs2")?;
         let mut w = BufWriter::new(file);
         for name in cluster_names {
             if let Some(alleles) = pan_ref.get(name) {
@@ -534,15 +569,25 @@ pub fn run_nscluster_mmseqs2(
 
     // ── 2. createdb ──
     let output = Command::new("mmseqs")
-        .args(["createdb", &input_fasta.to_string_lossy(), &db_path.to_string_lossy()])
+        .args([
+            "createdb",
+            &input_fasta.to_string_lossy(),
+            &db_path.to_string_lossy(),
+        ])
         .output()
         .context("Failed to run mmseqs createdb")?;
     if !output.status.success() {
-        anyhow::bail!("mmseqs createdb failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "mmseqs createdb failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
-    info!("NSC-mmseqs2: running linclust (min_id={:.0}%, cov={:.0}%)...",
-          min_seq_id * 100.0, coverage * 100.0);
+    info!(
+        "NSC-mmseqs2: running linclust (min_id={:.0}%, cov={:.0}%)...",
+        min_seq_id * 100.0,
+        coverage * 100.0
+    );
 
     // ── 3. linclust ──
     std::fs::create_dir_all(&mmseqs_tmp)?;
@@ -552,17 +597,26 @@ pub fn run_nscluster_mmseqs2(
             &db_path.to_string_lossy(),
             &cluster_db.to_string_lossy(),
             &mmseqs_tmp.to_string_lossy(),
-            "--min-seq-id", &min_seq_id.to_string(),
-            "-c", &coverage.to_string(),
-            "--cov-mode", "0",         // bidirectional coverage
-            "--cluster-mode", "2",     // connected component clustering
-            "--threads", &threads.to_string(),
-            "--seq-id-mode", "0",      // alignment length based
+            "--min-seq-id",
+            &min_seq_id.to_string(),
+            "-c",
+            &coverage.to_string(),
+            "--cov-mode",
+            "0", // bidirectional coverage
+            "--cluster-mode",
+            "2", // connected component clustering
+            "--threads",
+            &threads.to_string(),
+            "--seq-id-mode",
+            "0", // alignment length based
         ])
         .output()
         .context("Failed to run mmseqs linclust")?;
     if !output.status.success() {
-        anyhow::bail!("mmseqs linclust failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "mmseqs linclust failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // ── 4. createtsv ──
@@ -577,7 +631,10 @@ pub fn run_nscluster_mmseqs2(
         .output()
         .context("Failed to run mmseqs createtsv")?;
     if !output.status.success() {
-        anyhow::bail!("mmseqs createtsv failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "mmseqs createtsv failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // ── 5. Parse TSV: representative\tmember ──
@@ -588,16 +645,19 @@ pub fn run_nscluster_mmseqs2(
         .collect();
 
     let mut uf = UnionFind::new(cluster_names.len());
-    let file = std::fs::File::open(&tsv_path)
-        .context("Cannot open mmseqs2 cluster TSV")?;
+    let file = std::fs::File::open(&tsv_path).context("Cannot open mmseqs2 cluster TSV")?;
     let reader = BufReader::new(file);
 
     for line_result in reader.lines() {
         let line = line_result?;
         let mut fields = line.split('\t');
         let Some(rep) = fields.next() else { continue };
-        let Some(member) = fields.next() else { continue };
-        if rep == member { continue; } // self-hit
+        let Some(member) = fields.next() else {
+            continue;
+        };
+        if rep == member {
+            continue;
+        } // self-hit
 
         if let (Some(&ri), Some(&mi)) = (name_to_idx.get(rep), name_to_idx.get(member)) {
             uf.union(ri, mi);
@@ -611,7 +671,9 @@ pub fn run_nscluster_mmseqs2(
     let mut total_merged_genes = 0usize;
 
     for members in components.values() {
-        if members.len() < 2 { continue; }
+        if members.len() < 2 {
+            continue;
+        }
 
         let member_cis: Vec<ClusterIdx> = members.iter().map(|&i| ClusterIdx(i)).collect();
 
@@ -642,7 +704,10 @@ pub fn run_nscluster_mmseqs2(
     }
 
     let n_clusters = merged_clusters.len();
-    info!("NSC-mmseqs2: {} NS clusters formed, {} total genes merged", n_clusters, total_merged_genes);
+    info!(
+        "NSC-mmseqs2: {} NS clusters formed, {} total genes merged",
+        n_clusters, total_merged_genes
+    );
 
     // Cleanup is automatic (tmpdir drops)
     Ok(NsClusterResult {
@@ -678,7 +743,11 @@ mod tests {
         let s1 = minhash_sketch(seq, 11);
         let s2 = minhash_sketch(seq, 11);
         let j = jaccard_from_sketches(&s1, &s2);
-        assert!((j - 1.0).abs() < 0.001, "identical seqs should have J≈1.0, got {}", j);
+        assert!(
+            (j - 1.0).abs() < 0.001,
+            "identical seqs should have J≈1.0, got {}",
+            j
+        );
     }
 
     #[test]
@@ -700,9 +769,12 @@ mod tests {
         let s_long = minhash_sketch(long, 7);
         let c_short_in_long = containment_from_sketches(&s_short, &s_long);
         let c_long_in_short = containment_from_sketches(&s_long, &s_short);
-        assert!(c_short_in_long > c_long_in_short,
+        assert!(
+            c_short_in_long > c_long_in_short,
             "short-in-long ({:.2}) should be > long-in-short ({:.2})",
-            c_short_in_long, c_long_in_short);
+            c_short_in_long,
+            c_long_in_short
+        );
     }
 
     #[test]
@@ -751,7 +823,10 @@ mod tests {
         pan_ref.insert("clA".into(), vec![seq.clone()]);
         pan_ref.insert("clB".into(), vec![seq.clone()]);
         // One truly different cluster
-        pan_ref.insert("clC".into(), vec![b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".to_vec()]);
+        pan_ref.insert(
+            "clC".into(),
+            vec![b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT".to_vec()],
+        );
 
         let names = vec!["clA".into(), "clB".into(), "clC".into()];
         let prevs = vec![0.8, 0.5, 0.9];

@@ -17,7 +17,7 @@ use crate::relationships::write_cluster_relationships;
 use crate::rescue::{
     build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_hit, classify_hits,
     resolve_conflicts, validate_synteny, GffGene, GffIndex, PseudogeneReason, RescueEvent,
-    RescueType,
+    RescueType, SyntenyEvidence,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -948,7 +948,7 @@ fn write_named_report(
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tfragment_n\tfragment_query_gap_bp\tfragment_target_gap_bp\tfragment_colinear\tfragment_same_cds\tfragment_note"
+        "gene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tsynteny_score\tsynteny_support_n\tsynteny_reference_contexts\tsynteny_neighbors\tsynteny_upstream_matches\tsynteny_downstream_matches\torf_integrity_signal\tannotation_match\tfragment_n\tfragment_query_gap_bp\tfragment_target_gap_bp\tfragment_colinear\tfragment_same_cds\tfragment_note"
     )?;
     for r in rescues {
         let frag = &r.fragment_evidence;
@@ -991,13 +991,24 @@ fn write_named_report(
                 r.strand.to_string(),
                 format!("{:.3}", r.confidence),
                 synteny_label(r.synteny_ok).to_string(),
+                synteny_score_value(&r.synteny_evidence),
+                synteny_count_value(r.synteny_evidence.support, &r.synteny_evidence),
+                synteny_count_value(r.synteny_evidence.reference_contexts, &r.synteny_evidence),
+                synteny_count_value(r.synteny_evidence.n_neighbors, &r.synteny_evidence),
+                synteny_count_value(r.synteny_evidence.matched_upstream, &r.synteny_evidence),
+                synteny_count_value(r.synteny_evidence.matched_downstream, &r.synteny_evidence),
+                rescue_orf_signal(r).to_string(),
                 r.annotation_match.as_deref().unwrap_or("").to_string(),
                 fragment_n,
                 query_gap,
                 target_gap,
                 colinear.to_string(),
                 same_cds.to_string(),
-                r.fragment_evidence.note.as_deref().unwrap_or("").to_string(),
+                r.fragment_evidence
+                    .note
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string(),
             ],
         )?;
     }
@@ -1026,6 +1037,40 @@ fn synteny_label(synteny_ok: Option<bool>) -> &'static str {
         Some(true) => "PASS",
         Some(false) => "FAIL",
         None => "",
+    }
+}
+
+fn synteny_score_value(evidence: &SyntenyEvidence) -> String {
+    evidence
+        .score
+        .map(|score| format!("{:.3}", score))
+        .unwrap_or_default()
+}
+
+fn synteny_count_value(value: usize, evidence: &SyntenyEvidence) -> String {
+    if evidence.score.is_some() {
+        value.to_string()
+    } else {
+        String::new()
+    }
+}
+
+// Keep the documented Rust MSRV; u64::is_multiple_of is newer.
+#[allow(clippy::manual_is_multiple_of)]
+fn rescue_orf_signal(rescue: &RescueEvent) -> &'static str {
+    match rescue.rescue_type {
+        RescueType::Pseudogene { .. } => "disrupted_orf",
+        RescueType::Fragmented { .. } | RescueType::AlignmentSplit { .. } => "fragmented_orf",
+        _ => {
+            let span = rescue.end.saturating_sub(rescue.start);
+            if span == 0 {
+                "unknown"
+            } else if span % 3 == 0 {
+                "in_frame_span"
+            } else {
+                "out_of_frame_span_review"
+            }
+        }
     }
 }
 
@@ -1250,7 +1295,7 @@ fn write_orthology_evidence(
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
+        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tsynteny_score\tsynteny_support_n\tsynteny_reference_contexts\tsynteny_neighbors\tsynteny_upstream_matches\tsynteny_downstream_matches\torf_integrity_signal\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
     )?;
 
     for rescue in rescues {
@@ -1279,6 +1324,25 @@ fn write_orthology_evidence(
                 rescue.strand.to_string(),
                 format!("{:.3}", rescue.confidence),
                 synteny_label(rescue.synteny_ok).to_string(),
+                synteny_score_value(&rescue.synteny_evidence),
+                synteny_count_value(rescue.synteny_evidence.support, &rescue.synteny_evidence),
+                synteny_count_value(
+                    rescue.synteny_evidence.reference_contexts,
+                    &rescue.synteny_evidence,
+                ),
+                synteny_count_value(
+                    rescue.synteny_evidence.n_neighbors,
+                    &rescue.synteny_evidence,
+                ),
+                synteny_count_value(
+                    rescue.synteny_evidence.matched_upstream,
+                    &rescue.synteny_evidence,
+                ),
+                synteny_count_value(
+                    rescue.synteny_evidence.matched_downstream,
+                    &rescue.synteny_evidence,
+                ),
+                rescue_orf_signal(rescue).to_string(),
                 rescue.annotation_match.as_deref().unwrap_or("").to_string(),
                 annotation_cluster,
                 String::new(),
@@ -1329,6 +1393,25 @@ fn write_orthology_evidence(
                     rescue.strand.to_string(),
                     format!("{:.3}", rescue.confidence),
                     synteny_label(rescue.synteny_ok).to_string(),
+                    synteny_score_value(&rescue.synteny_evidence),
+                    synteny_count_value(rescue.synteny_evidence.support, &rescue.synteny_evidence),
+                    synteny_count_value(
+                        rescue.synteny_evidence.reference_contexts,
+                        &rescue.synteny_evidence,
+                    ),
+                    synteny_count_value(
+                        rescue.synteny_evidence.n_neighbors,
+                        &rescue.synteny_evidence,
+                    ),
+                    synteny_count_value(
+                        rescue.synteny_evidence.matched_upstream,
+                        &rescue.synteny_evidence,
+                    ),
+                    synteny_count_value(
+                        rescue.synteny_evidence.matched_downstream,
+                        &rescue.synteny_evidence,
+                    ),
+                    rescue_orf_signal(rescue).to_string(),
                     rescue.annotation_match.as_deref().unwrap_or("").to_string(),
                     annotation_cluster,
                     reason.to_string(),
@@ -1572,6 +1655,7 @@ fn reference_hit_shadow_candidates(
                 annotation_match,
                 confidence: hit.score(),
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: crate::rescue::FragmentEvidence {
                     note: Some("reference_shadow_hit".to_string()),
                     ..crate::rescue::FragmentEvidence::default()
@@ -2972,12 +3056,8 @@ struct MobileElementSearchInput<'a> {
 fn search_mobile_element_reference(
     input: MobileElementSearchInput<'_>,
 ) -> Result<Vec<MobileElementHit>> {
-    let mobile_ref = parse_pan_reference(input.path, true).with_context(|| {
-        format!(
-            "Cannot parse mobile-element FASTA {}",
-            input.path.display()
-        )
-    })?;
+    let mobile_ref = parse_pan_reference(input.path, true)
+        .with_context(|| format!("Cannot parse mobile-element FASTA {}", input.path.display()))?;
     if mobile_ref.is_empty() {
         return Ok(Vec::new());
     }
@@ -3212,6 +3292,103 @@ fn rescue_type_counts(rescues: &[&RescueEvent]) -> String {
         .join(";")
 }
 
+fn orf_signal_counts(rescues: &[&RescueEvent]) -> String {
+    if rescues.is_empty() {
+        return String::new();
+    }
+    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for rescue in rescues {
+        *counts.entry(rescue_orf_signal(rescue)).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(signal, count)| format!("{}:{}", signal, count))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn synteny_mean_score(rescues: &[&RescueEvent]) -> String {
+    let scores: Vec<f64> = rescues
+        .iter()
+        .filter_map(|rescue| rescue.synteny_evidence.score)
+        .collect();
+    if scores.is_empty() {
+        String::new()
+    } else {
+        format!("{:.3}", scores.iter().sum::<f64>() / scores.len() as f64)
+    }
+}
+
+fn synteny_pass_fraction(rescues: &[&RescueEvent]) -> String {
+    let assessed = rescues
+        .iter()
+        .filter(|rescue| rescue.synteny_ok.is_some())
+        .count();
+    if assessed == 0 {
+        return String::new();
+    }
+    let passed = rescues
+        .iter()
+        .filter(|rescue| rescue.synteny_ok == Some(true))
+        .count();
+    format!("{:.3}", passed as f64 / assessed as f64)
+}
+
+fn paralog_locus_risk(
+    context: Option<&ClusterContextSummary>,
+    accepted: &[&RescueEvent],
+    synteny_rejected: &[&RescueEvent],
+    paralog_rejected: &[&RescueEvent],
+) -> &'static str {
+    let has_paralog = accepted
+        .iter()
+        .any(|rescue| matches!(rescue.rescue_type, RescueType::Paralog { .. }))
+        || !paralog_rejected.is_empty();
+    if has_paralog || context.is_some_and(|c| c.interpretation == "possible_multilocus_or_paralog")
+    {
+        "high"
+    } else if !synteny_rejected.is_empty()
+        || context.is_some_and(|c| c.interpretation == "mostly_stable_review_minor_contexts")
+    {
+        "moderate"
+    } else if context.is_some_and(|c| {
+        matches!(
+            c.interpretation,
+            "stable_single_locus" | "stable_single_locus_minor_noise"
+        )
+    }) {
+        "low"
+    } else {
+        "unknown"
+    }
+}
+
+fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static str {
+    if !phylo.assessed {
+        return "not_assessed";
+    }
+    if matches!(
+        phylo.pattern,
+        "singleton_or_noise" | "homoplastic_gain_loss" | "dispersed_gain_loss"
+    ) {
+        return "low";
+    }
+    if phylo.parsimony_changes >= 6 {
+        return "low";
+    }
+    if matches!(
+        phylo.pattern,
+        "lineage_specific_gain"
+            | "clade_associated_presence"
+            | "ancestral_retained"
+            | "ancestral_loss"
+    ) && phylo.parsimony_changes <= 2
+    {
+        return "high";
+    }
+    "moderate"
+}
+
 struct MechanismInput<'a> {
     pa: &'a crate::parser::PresenceAbsence,
     phylo: &'a PhyloPatternSummary,
@@ -3438,8 +3615,7 @@ fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
 }
 
 fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> {
-    let nsc_presence =
-        nsc_presence_updates(inputs.pa, inputs.nsc_result, inputs.matrix_rescue_map);
+    let nsc_presence = nsc_presence_updates(inputs.pa, inputs.nsc_result, inputs.matrix_rescue_map);
     let reference_gi = inputs
         .reference_genome
         .and_then(|name| resolve_reference_genome(inputs.pa, name));
@@ -3472,7 +3648,7 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\trescue_evidence_counts\trecommended_wording"
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -3579,6 +3755,12 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
         let context_interpretation = contexts_by_cluster[ci_val]
             .map(|context| context.interpretation)
             .unwrap_or("");
+        let paralog_risk = paralog_locus_risk(
+            contexts_by_cluster[ci_val],
+            accepted,
+            synteny_rejected,
+            paralog_rejected,
+        );
         write_tsv_fields(
             &mut w,
             &[
@@ -3592,6 +3774,7 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
                 },
                 reference_state.to_string(),
                 phylo.pattern.to_string(),
+                phylogenetic_reliability(&phylo).to_string(),
                 phylo.root_state.to_string(),
                 if phylo.assessed {
                     phylo.parsimony_changes.to_string()
@@ -3639,6 +3822,10 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
                     .map(|event| event.target_gene_id.clone())
                     .unwrap_or_default(),
                 context_interpretation.to_string(),
+                paralog_risk.to_string(),
+                synteny_mean_score(&all_rescue_evidence),
+                synteny_pass_fraction(&all_rescue_evidence),
+                orf_signal_counts(&all_rescue_evidence),
                 rescue_type_counts(accepted),
                 mechanism.wording.to_string(),
             ],
@@ -4528,7 +4715,7 @@ fn write_run_manifest(
         "  \"tool_version\": {},",
         json_escape(env!("CARGO_PKG_VERSION"))
     )?;
-    writeln!(w, "  \"schema_version\": \"recore.outputs.v1\",")?;
+    writeln!(w, "  \"schema_version\": \"recore.outputs.v2\",")?;
     writeln!(w, "  \"inputs\": {{")?;
     writeln!(
         w,
@@ -4623,7 +4810,11 @@ fn write_run_manifest(
         "    \"skipped_by_prevalence\": {},",
         stats.skipped_by_prevalence
     )?;
-    writeln!(w, "    \"missing_fasta_gaps\": {},", stats.missing_fasta_gaps)?;
+    writeln!(
+        w,
+        "    \"missing_fasta_gaps\": {},",
+        stats.missing_fasta_gaps
+    )?;
     writeln!(w, "    \"rescued\": {},", rescued)?;
     writeln!(
         w,
@@ -4700,6 +4891,7 @@ mod tests {
             annotation_match: None,
             confidence: 0.8,
             synteny_ok,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
         }
     }
@@ -4731,6 +4923,22 @@ mod tests {
     fn default_args_pass_validation() {
         let args = default_args_for_validation();
         validate_args(&args).unwrap();
+    }
+
+    #[test]
+    fn rescue_orf_signal_flags_disrupted_and_frame_review_spans() {
+        let mut rescue = rescue_with_type(RescueType::Dropped, Some(true));
+        rescue.start = 0;
+        rescue.end = 99;
+        assert_eq!(rescue_orf_signal(&rescue), "in_frame_span");
+
+        rescue.end = 100;
+        assert_eq!(rescue_orf_signal(&rescue), "out_of_frame_span_review");
+
+        rescue.rescue_type = RescueType::Pseudogene {
+            reason: PseudogeneReason::Frameshift,
+        };
+        assert_eq!(rescue_orf_signal(&rescue), "disrupted_orf");
     }
 
     #[test]
@@ -5015,6 +5223,7 @@ mod tests {
             annotation_match: None,
             confidence: 0.9,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
         };
 
@@ -5063,6 +5272,7 @@ mod tests {
             annotation_match: None,
             confidence: 0.9,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
         };
         let mobile_hits = vec![MobileElementHit {
@@ -5135,7 +5345,10 @@ mod tests {
             ..rescue_with_type(RescueType::Dropped, Some(true))
         };
         let mut rescue_map = HashMap::new();
-        rescue_map.insert((member_rescue.cluster_idx, member_rescue.genome_idx), &member_rescue);
+        rescue_map.insert(
+            (member_rescue.cluster_idx, member_rescue.genome_idx),
+            &member_rescue,
+        );
 
         let updates = nsc_presence_updates(&pa, &nsc, &rescue_map);
 

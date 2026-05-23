@@ -101,7 +101,18 @@ pub struct RescueEvent {
     pub annotation_match: Option<String>,
     pub confidence: f64,
     pub synteny_ok: Option<bool>,
+    pub synteny_evidence: SyntenyEvidence,
     pub fragment_evidence: FragmentEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SyntenyEvidence {
+    pub score: Option<f64>,
+    pub support: usize,
+    pub reference_contexts: usize,
+    pub n_neighbors: usize,
+    pub matched_upstream: usize,
+    pub matched_downstream: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -155,7 +166,9 @@ impl GffIndex {
         Self::build_with_aliases_and_labels(records)
     }
 
-    pub fn build_with_aliases_and_labels(mut records: Vec<(GffGene, Vec<String>, Vec<String>)>) -> Self {
+    pub fn build_with_aliases_and_labels(
+        mut records: Vec<(GffGene, Vec<String>, Vec<String>)>,
+    ) -> Self {
         records.sort_by(|a, b| a.0.contig.cmp(&b.0.contig).then(a.0.start.cmp(&b.0.start)));
 
         let genes: Vec<GffGene> = records.iter().map(|(gene, _, _)| gene.clone()).collect();
@@ -427,7 +440,10 @@ pub fn build_gene_to_cluster_with_gff_aliases(
 // ── Fragment analysis ──
 
 const BIOLOGICAL_FRAGMENT_MIN_GAP_BP: u64 = 50;
+#[cfg(test)]
 const SYNTENY_CONTEXT_GENES: usize = 2;
+const SYNTENY_MAX_CONTEXT_GENES: usize = 5;
+const SYNTENY_REFERENCE_SUPPORT_THRESHOLD: f64 = 0.50;
 const MISSING_CDS_MIN_IDENTITY: f64 = 95.0;
 
 #[derive(Debug, Clone)]
@@ -782,8 +798,8 @@ pub fn classify_hits(
         .filter(|hit| hit.query_coverage() >= min_coverage)
         .find(|hit| is_missing_cds_candidate(hit, gff_index))
     {
-        let confidence = missing_cds_hit.identity() / 100.0
-            * missing_cds_hit.query_coverage() / 100.0;
+        let confidence =
+            missing_cds_hit.identity() / 100.0 * missing_cds_hit.query_coverage() / 100.0;
         return Some(RescueEvent {
             cluster_idx: ci,
             genome_idx: gi,
@@ -797,6 +813,7 @@ pub fn classify_hits(
             annotation_match: None,
             confidence,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence {
                 note: Some("missing_cds_no_substantial_gff_overlap".to_string()),
                 ..FragmentEvidence::default()
@@ -839,6 +856,7 @@ pub fn classify_hits(
             annotation_match: final_ann,
             confidence: final_conf,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
         });
     }
@@ -905,6 +923,7 @@ pub fn classify_hits(
                     annotation_match: final_ann,
                     confidence: final_conf,
                     synteny_ok: None,
+                    synteny_evidence: SyntenyEvidence::default(),
                     fragment_evidence: chain.evidence,
                 });
             }
@@ -963,6 +982,7 @@ pub fn classify_hits(
                 annotation_match: None,
                 confidence,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: chain.evidence,
             });
         }
@@ -1017,6 +1037,7 @@ pub fn classify_hits(
                 annotation_match: None,
                 confidence: (best.identity() / 100.0) * (effective_cov / 100.0) * 0.4,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence,
             });
         }
@@ -1239,9 +1260,7 @@ fn is_missing_cds_candidate(hit: &Hit, gff_index: Option<&GffIndex>) -> bool {
             .min(gene.end)
             .saturating_sub(hit.target_start.max(gene.start)) as f64;
         let gene_len = gene.end.saturating_sub(gene.start) as f64;
-        hit_len > 0.0
-            && gene_len > 0.0
-            && (overlap / hit_len).min(overlap / gene_len) > 0.5
+        hit_len > 0.0 && gene_len > 0.0 && (overlap / hit_len).min(overlap / gene_len) > 0.5
     })
 }
 
@@ -1331,8 +1350,8 @@ impl SyntenyContext {
     }
 
     fn side_matches(&self, other: &SyntenyContext) -> bool {
-        let up_matches = cluster_overlap_count(&self.upstream, &other.upstream);
-        let down_matches = cluster_overlap_count(&self.downstream, &other.downstream);
+        let (_, up_matches) = weighted_side_score(&self.upstream, &other.upstream);
+        let (_, down_matches) = weighted_side_score(&self.downstream, &other.downstream);
         let up_comparable = !self.upstream.is_empty() && !other.upstream.is_empty();
         let down_comparable = !self.downstream.is_empty() && !other.downstream.is_empty();
 
@@ -1344,8 +1363,67 @@ impl SyntenyContext {
     }
 }
 
-fn cluster_overlap_count(a: &[ClusterIdx], b: &[ClusterIdx]) -> usize {
-    a.iter().filter(|x| b.iter().any(|y| *x == y)).count()
+#[derive(Debug, Clone, Default)]
+struct SyntenyAssessment {
+    passes: bool,
+    score: f64,
+    support: usize,
+    reference_contexts: usize,
+    n_neighbors: usize,
+    matched_upstream: usize,
+    matched_downstream: usize,
+}
+
+fn weighted_side_score(target: &[ClusterIdx], reference: &[ClusterIdx]) -> (f64, usize) {
+    if target.is_empty() || reference.is_empty() {
+        return (0.0, 0);
+    }
+
+    let mut matched_weight = 0.0;
+    let mut denominator = 0.0;
+    let mut matches = 0usize;
+    for (target_pos, target_cluster) in target.iter().enumerate() {
+        let target_weight = 1.0 / (target_pos + 1) as f64;
+        denominator += target_weight;
+        let best_reference_weight = reference
+            .iter()
+            .enumerate()
+            .filter(|(_, reference_cluster)| *reference_cluster == target_cluster)
+            .map(|(reference_pos, _)| 1.0 / (reference_pos + 1) as f64)
+            .fold(0.0, f64::max);
+        if best_reference_weight > 0.0 {
+            matches += 1;
+            matched_weight += target_weight * best_reference_weight;
+        }
+    }
+
+    if denominator == 0.0 {
+        (0.0, matches)
+    } else {
+        (matched_weight / denominator, matches)
+    }
+}
+
+fn context_score(target: &SyntenyContext, reference: &SyntenyContext) -> (f64, usize, usize) {
+    let (up_score, up_matches) = weighted_side_score(&target.upstream, &reference.upstream);
+    let (down_score, down_matches) = weighted_side_score(&target.downstream, &reference.downstream);
+
+    let comparable_sides =
+        usize::from(!target.upstream.is_empty()) + usize::from(!target.downstream.is_empty());
+    if comparable_sides == 0 {
+        return (0.0, up_matches, down_matches);
+    }
+
+    let score = (if target.upstream.is_empty() {
+        0.0
+    } else {
+        up_score
+    } + if target.downstream.is_empty() {
+        0.0
+    } else {
+        down_score
+    }) / comparable_sides as f64;
+    (score, up_matches, down_matches)
 }
 
 fn synteny_context(
@@ -1355,10 +1433,11 @@ fn synteny_context(
     start: u64,
     end: u64,
     center_gene_id: Option<&str>,
+    n_neighbors: usize,
 ) -> SyntenyContext {
     let mut context = SyntenyContext::default();
     let (upstream, downstream) =
-        gff.context_window(contig, start, end, center_gene_id, SYNTENY_CONTEXT_GENES);
+        gff.context_window(contig, start, end, center_gene_id, n_neighbors);
     for gene in upstream {
         if let Some(cluster) = gff.cluster_for_gene(gene, gene_to_cluster) {
             context.upstream.push(cluster);
@@ -1372,25 +1451,89 @@ fn synteny_context(
     context
 }
 
+#[cfg(test)]
 fn compatible_reference_support(
     target_context: &SyntenyContext,
     reference_contexts: &[SyntenyContext],
 ) -> usize {
-    reference_contexts
-        .iter()
-        .filter(|ref_context| target_context.side_matches(ref_context))
-        .count()
+    assess_context_support(target_context, reference_contexts, SYNTENY_CONTEXT_GENES).support
 }
 
+#[cfg(test)]
 fn has_recurrent_context_support(
     target_context: &SyntenyContext,
     reference_contexts: &[SyntenyContext],
 ) -> bool {
-    let support = compatible_reference_support(target_context, reference_contexts);
-    if reference_contexts.len() <= 3 {
-        return support > 0;
+    assess_context_support(target_context, reference_contexts, SYNTENY_CONTEXT_GENES).passes
+}
+
+fn assess_context_support(
+    target_context: &SyntenyContext,
+    reference_contexts: &[SyntenyContext],
+    n_neighbors: usize,
+) -> SyntenyAssessment {
+    let mut support = 0usize;
+    let mut support_score_sum = 0.0;
+    let mut best_score = 0.0;
+    let mut best_up = 0usize;
+    let mut best_down = 0usize;
+
+    for reference_context in reference_contexts {
+        let (score, up_matches, down_matches) = context_score(target_context, reference_context);
+        if score > best_score {
+            best_score = score;
+            best_up = up_matches;
+            best_down = down_matches;
+        }
+        if score >= SYNTENY_REFERENCE_SUPPORT_THRESHOLD
+            && target_context.side_matches(reference_context)
+        {
+            support += 1;
+            support_score_sum += score;
+        }
     }
-    support >= 2
+
+    let score = if support > 0 {
+        support_score_sum / support as f64
+    } else {
+        best_score
+    };
+    let passes = if reference_contexts.len() <= 3 {
+        support > 0
+    } else {
+        support >= 2
+    };
+
+    SyntenyAssessment {
+        passes,
+        score,
+        support,
+        reference_contexts: reference_contexts.len(),
+        n_neighbors,
+        matched_upstream: best_up,
+        matched_downstream: best_down,
+    }
+}
+
+fn better_synteny_assessment(
+    current: Option<SyntenyAssessment>,
+    candidate: SyntenyAssessment,
+) -> Option<SyntenyAssessment> {
+    let Some(current) = current else {
+        return Some(candidate);
+    };
+    if candidate.passes != current.passes {
+        return Some(if candidate.passes { candidate } else { current });
+    }
+    if candidate.score > current.score + f64::EPSILON {
+        return Some(candidate);
+    }
+    if (candidate.score - current.score).abs() <= f64::EPSILON
+        && candidate.n_neighbors < current.n_neighbors
+    {
+        return Some(candidate);
+    }
+    Some(current)
 }
 
 pub fn validate_synteny(
@@ -1413,16 +1556,100 @@ pub fn validate_synteny(
         return;
     };
 
-    let target_context = synteny_context(
-        target_gff,
-        target_g2c,
-        &rescue.contig,
-        rescue.start,
-        rescue.end,
-        rescue.annotation_match.as_deref(),
-    );
+    let mut best_assessment: Option<SyntenyAssessment> = None;
+    let mut saw_target_context = false;
+    let mut saw_reference_context = false;
 
-    if !target_context.has_any_cluster() {
+    for n_neighbors in 1..=SYNTENY_MAX_CONTEXT_GENES {
+        let target_context = synteny_context(
+            target_gff,
+            target_g2c,
+            &rescue.contig,
+            rescue.start,
+            rescue.end,
+            rescue.annotation_match.as_deref(),
+            n_neighbors,
+        );
+
+        if !target_context.has_any_cluster() {
+            continue;
+        }
+        saw_target_context = true;
+
+        let mut reference_contexts = Vec::new();
+        let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
+        ref_genomes.sort_by_key(|gi| gi.val());
+        for ref_gi in ref_genomes {
+            let Some(ref_gff) = gff_indices.get(&ref_gi) else {
+                continue;
+            };
+            let Some(ref_g2c) = gene_to_cluster_maps.get(&ref_gi) else {
+                continue;
+            };
+
+            let ref_cell = pa.cell(ci, ref_gi);
+            if ref_cell.is_empty() {
+                continue;
+            }
+            for ref_gene_id in ref_cell
+                .split(';')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
+                    let stripped = ref_gene_id
+                        .strip_suffix("_pseudo")
+                        .or_else(|| ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i]));
+                    stripped.and_then(|s| ref_gff.get_by_id(s))
+                });
+                let Some(ref_gene) = ref_gene else {
+                    if verbose && n_neighbors == 1 {
+                        log::debug!(
+                            "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
+                            ref_gene_id,
+                            ref_gi.val()
+                        );
+                    }
+                    continue;
+                };
+
+                let ref_context = synteny_context(
+                    ref_gff,
+                    ref_g2c,
+                    &ref_gene.contig,
+                    ref_gene.start,
+                    ref_gene.end,
+                    Some(ref_gene.gene_id.as_str()),
+                    n_neighbors,
+                );
+
+                if ref_context.has_any_cluster() {
+                    reference_contexts.push(ref_context);
+                }
+            }
+        }
+
+        if reference_contexts.is_empty() {
+            continue;
+        }
+        saw_reference_context = true;
+        let assessment = assess_context_support(&target_context, &reference_contexts, n_neighbors);
+        best_assessment = better_synteny_assessment(best_assessment, assessment);
+    }
+
+    let assessment = if let Some(assessment) = best_assessment {
+        assessment
+    } else if saw_target_context && !saw_reference_context {
+        SyntenyAssessment {
+            passes: false,
+            score: 0.0,
+            support: 0,
+            reference_contexts: 0,
+            n_neighbors: SYNTENY_MAX_CONTEXT_GENES,
+            matched_upstream: 0,
+            matched_downstream: 0,
+        }
+    } else {
         if verbose {
             log::debug!(
                 "Synteny skip: no flanking genes mapped to clusters for rescue cluster={} genome={} at {}:{}-{}",
@@ -1448,63 +1675,19 @@ pub fn validate_synteny(
             }
         }
         return;
-    }
+    };
 
-    let mut reference_contexts = Vec::new();
-    let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
-    ref_genomes.sort_by_key(|gi| gi.val());
-    for ref_gi in ref_genomes {
-        let Some(ref_gff) = gff_indices.get(&ref_gi) else {
-            continue;
-        };
-        let Some(ref_g2c) = gene_to_cluster_maps.get(&ref_gi) else {
-            continue;
-        };
+    rescue.synteny_ok = Some(assessment.passes);
+    rescue.synteny_evidence = SyntenyEvidence {
+        score: Some(assessment.score),
+        support: assessment.support,
+        reference_contexts: assessment.reference_contexts,
+        n_neighbors: assessment.n_neighbors,
+        matched_upstream: assessment.matched_upstream,
+        matched_downstream: assessment.matched_downstream,
+    };
 
-        let ref_cell = pa.cell(ci, ref_gi);
-        if ref_cell.is_empty() {
-            continue;
-        }
-        let ref_gene_id = ref_cell.split(';').next().unwrap_or(ref_cell).trim();
-
-        // Try exact ID first, then strip common suffixes (_pseudo, _dup_N)
-        let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
-            let stripped = ref_gene_id.strip_suffix("_pseudo").or_else(|| {
-                // Strip _dup_N suffix
-                ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i])
-            });
-            stripped.and_then(|s| ref_gff.get_by_id(s))
-        });
-        let Some(ref_gene) = ref_gene else {
-            if verbose {
-                log::debug!(
-                    "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
-                    ref_gene_id,
-                    ref_gi.val()
-                );
-            }
-            continue;
-        };
-
-        let ref_context = synteny_context(
-            ref_gff,
-            ref_g2c,
-            &ref_gene.contig,
-            ref_gene.start,
-            ref_gene.end,
-            Some(ref_gene.gene_id.as_str()),
-        );
-
-        if ref_context.has_any_cluster() {
-            reference_contexts.push(ref_context);
-        }
-    }
-
-    let synteny_match = has_recurrent_context_support(&target_context, &reference_contexts);
-
-    rescue.synteny_ok = Some(synteny_match);
-
-    if synteny_match {
+    if assessment.passes {
         rescue.confidence *= 1.2;
     } else {
         rescue.confidence *= 0.6;
@@ -1809,6 +1992,7 @@ mod tests {
             annotation_match: Some("target_center".into()),
             confidence: 0.95,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
         };
 
@@ -1902,6 +2086,7 @@ mod tests {
             annotation_match: Some("target_center".into()),
             confidence: 1.0,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
         };
 
@@ -2042,11 +2227,130 @@ mod tests {
             annotation_match: Some("candidate".into()),
             confidence: 1.0,
             synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
         };
 
         validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
         assert_eq!(rescue.synteny_ok, Some(true));
+    }
+
+    #[test]
+    fn test_synteny_uses_all_gene_ids_in_multicopy_reference_cell() {
+        let pa = PresenceAbsence::new_for_test(
+            vec![
+                "target_gene".into(),
+                "shared_up".into(),
+                "shared_down".into(),
+                "wrong_up".into(),
+                "wrong_down".into(),
+            ],
+            vec!["target".into(), "reference".into()],
+            vec![
+                vec!["".into(), "ref_bad;ref_good".into()],
+                vec!["target_up".into(), "ref_good_up".into()],
+                vec!["target_down".into(), "ref_good_down".into()],
+                vec!["".into(), "ref_bad_up".into()],
+                vec!["".into(), "ref_bad_down".into()],
+            ],
+        );
+
+        let target_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "target_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 200,
+                end: 300,
+                strand: '+',
+                gene_id: "candidate".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "target_down".into(),
+            },
+        ]);
+        let ref_gff = GffIndex::build(vec![
+            GffGene {
+                contig: "chr".into(),
+                start: 100,
+                end: 200,
+                strand: '+',
+                gene_id: "ref_bad_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 200,
+                end: 300,
+                strand: '+',
+                gene_id: "ref_bad".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 300,
+                end: 400,
+                strand: '+',
+                gene_id: "ref_bad_down".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 1000,
+                end: 1100,
+                strand: '+',
+                gene_id: "ref_good_up".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 1100,
+                end: 1200,
+                strand: '+',
+                gene_id: "ref_good".into(),
+            },
+            GffGene {
+                contig: "chr".into(),
+                start: 1200,
+                end: 1300,
+                strand: '+',
+                gene_id: "ref_good_down".into(),
+            },
+        ]);
+
+        let mut gff_indices = HashMap::new();
+        gff_indices.insert(GenomeIdx(0), target_gff);
+        gff_indices.insert(GenomeIdx(1), ref_gff);
+
+        let mut g2c = HashMap::new();
+        g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
+        g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+
+        let mut rescue = RescueEvent {
+            cluster_idx: ClusterIdx(0),
+            genome_idx: GenomeIdx(0),
+            rescue_type: RescueType::Dropped,
+            identity: 99.0,
+            coverage: 99.0,
+            contig: "chr".into(),
+            start: 200,
+            end: 300,
+            strand: '+',
+            annotation_match: Some("candidate".into()),
+            confidence: 1.0,
+            synteny_ok: None,
+            synteny_evidence: SyntenyEvidence::default(),
+            fragment_evidence: FragmentEvidence::default(),
+        };
+
+        validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
+        assert_eq!(rescue.synteny_ok, Some(true));
+        assert_eq!(rescue.synteny_evidence.support, 1);
     }
 
     #[test]
@@ -2356,6 +2660,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.99,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
             },
             RescueEvent {
@@ -2371,6 +2676,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.85,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
             },
         ];
@@ -2395,6 +2701,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.99,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
             },
             RescueEvent {
@@ -2410,6 +2717,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.85,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
             },
         ];
@@ -2433,6 +2741,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.99,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
             },
             RescueEvent {
@@ -2448,6 +2757,7 @@ mod tests {
                 annotation_match: None,
                 confidence: 0.98,
                 synteny_ok: None,
+                synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
             },
         ];
@@ -2925,9 +3235,16 @@ mod tests {
             mapq: 60,
         };
 
-        let result =
-            classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0)
-                .unwrap();
+        let result = classify_hits(
+            &[hit],
+            ClusterIdx(0),
+            GenomeIdx(0),
+            &pa,
+            Some(&gff),
+            &g2c,
+            80.0,
+        )
+        .unwrap();
         assert_eq!(result.annotation_match, Some("Rv0001".to_string()));
         assert_eq!(
             result.rescue_type,

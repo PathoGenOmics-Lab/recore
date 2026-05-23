@@ -39,6 +39,37 @@ Interpretation:
 This is a regression benchmark for Recore behavior, not a species-specific
 biological truth set.
 
+## Biological event benchmark
+
+`biological_event_benchmark.py` is a small GFF/synteny truth set for the
+guardrails that matter most in real pangenomes:
+
+- a same-locus sequence with no CDS annotation should be rescued as
+  `MISSING_CDS` when synteny supports it
+- an identical sequence at a wrong/paralogous context should be rejected to
+  `synteny_rejected_report.tsv`
+- `evolutionary_events.tsv` should expose quantitative synteny, ORF integrity,
+  phylogenetic reliability, and paralog-risk columns
+
+Run it from the repository root:
+
+```bash
+python3 benchmarks/biological_event_benchmark.py
+```
+
+If `minimap2` is installed outside `PATH`, pass it explicitly:
+
+```bash
+python3 benchmarks/biological_event_benchmark.py --minimap2 /path/to/minimap2
+```
+
+Output:
+
+- `benchmarks/biological_event_benchmark_metrics.tsv`
+
+This is a regression benchmark for Recore's locus-context and audit logic, not
+a species-specific biological truth set.
+
 ## AMAP performance benchmark
 
 `amap_performance_benchmark.py` profiles Recore on the full local AMAP

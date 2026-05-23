@@ -637,10 +637,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
         }
 
         let mut labels = aliases.clone();
-        for value in [
-            product.as_str(),
-            note.as_str(),
-        ] {
+        for value in [product.as_str(), note.as_str()] {
             if !value.is_empty() && !labels.iter().any(|x: &String| x == value) {
                 labels.push(value.to_string());
             }

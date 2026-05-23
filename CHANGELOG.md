@@ -56,6 +56,17 @@ No changes yet.
   product names.
 - `run_manifest.json` with tool version, output schema version, input paths,
   key parameters, and headline run counts for reproducible archiving.
+- Quantitative adaptive synteny evidence in `rescue_report.tsv` and
+  `orthology_evidence.tsv`, including score, support count, reference-context
+  count, selected neighbour window, and upstream/downstream matches.
+- ORF integrity signals in rescue and orthology reports.
+- Cluster-level `phylogenetic_reliability`, `paralog_locus_risk`,
+  `synteny_mean_score`, `synteny_pass_fraction`, and `orf_integrity_summary`
+  fields in `evolutionary_events.tsv`.
+- Biological event benchmark for same-locus missing-CDS rescue, wrong-context
+  paralog rejection, and evolutionary audit columns.
+- Output manifest schema version `recore.outputs.v2` for the expanded TSV
+  report schema.
 
 ### Changed
 
@@ -63,12 +74,14 @@ No changes yet.
   targets to reduce IO overhead.
 - Rescue decisions are more conservative for fragments, pseudogenes, paralogs,
   and incompatible synteny contexts.
-- Synteny validation now uses recurrent compatible context support rather than a
-  single exact-context match.
+- Synteny validation now uses adaptive 1-to-5-neighbour quantitative context
+  scoring rather than a single exact-context match.
 - GFF seqids can be normalized against FASTA contig names to handle common
   annotation/assembly naming mismatches.
 - Gene-to-cluster matching now uses unambiguous GFF aliases, so locus tags and
   gene names from different annotation layers are treated consistently.
+- Multi-copy reference cells now contribute all resolved gene IDs to synteny
+  validation instead of only the first semicolon-separated ID.
 - Output reports are sorted deterministically for reproducible downstream review.
 - TSV report fields are normalized to single-line values so annotation-derived
   tabs or line breaks cannot corrupt tabular outputs.

@@ -186,14 +186,16 @@ When `--synteny` is enabled and GFF files are loaded, each rescue is validated a
 ### Algorithm
 
 For the rescued gene at position (contig, start, end) in the target genome:
-1. Build a small side-specific context window around the rescued locus: up to two upstream and two downstream CDSs mapped to Panaroo clusters. If the rescue substantially overlaps an annotated CDS, that CDS is used as the centre so short start-site differences and overlapping CDS boundaries do not shift the context. Otherwise the locus midpoint is used, which is important for missing-CDS calls with only tiny overlaps into adjacent genes.
+1. Build side-specific context windows around the rescued locus using 1, 2, 3, 4, and 5 upstream/downstream CDS neighbours. If the rescue substantially overlaps an annotated CDS, that CDS is used as the centre so short start-site differences and overlapping CDS boundaries do not shift the context. Otherwise the locus midpoint is used, which is important for missing-CDS calls with only tiny overlaps into adjacent genes.
 2. For every reference genome where this cluster IS present, in deterministic genome order:
-   a. Find the reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes)
-   b. Build the same side-specific context window around the reference gene
-   c. Count recurrent reference contexts
-3. If three or fewer reference contexts are available, any compatible reference context can validate the rescue. If more than three are available, a compatible context must be observed at least twice. This prevents a single noisy/paralogous context from validating a rescue in a large dataset.
-4. If both sides are comparable, require at least one upstream and one downstream match on the same side. If only one side is comparable, require a same-side match on that side.
-5. Otherwise → FAIL
+   a. Read every gene ID in the matrix cell, not only the first one. This keeps multi-copy/paralogous clusters from being represented by an arbitrary copy.
+   b. Find each reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes).
+   c. Build the same side-specific context window around each resolved reference gene.
+3. Score each target/reference context comparison. Nearest neighbours contribute most, distal neighbours contribute less, and upstream/downstream sides are scored separately.
+4. A reference context is compatible when its score is at least 0.50 and it satisfies the side rule: if both sides are comparable, at least one upstream and one downstream cluster must match; if only one side is comparable, that side must match.
+5. If three or fewer reference contexts are available, one compatible context can validate the rescue. If more than three contexts are available, compatibility must be observed at least twice. This prevents a single noisy/paralogous context from validating a rescue in a large dataset.
+6. Recore keeps the best assessment across neighbour windows, preferring passing assessments, then higher score, then the smallest informative window.
+7. Otherwise -> FAIL.
 
 Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty.
 
@@ -249,7 +251,7 @@ Uses MMseqs2 `linclust` for linear-time clustering with alignment-based identity
 
 ### rescue_report.tsv
 
-One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, annotation_match, plus fragment-chain evidence columns for multi-hit rescues.
+One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, quantitative synteny evidence (`synteny_score`, support count, reference context count, selected neighbour window, upstream/downstream matches), ORF integrity signal, annotation_match, plus fragment-chain evidence columns for multi-hit rescues.
 
 ### synteny_rejected_report.tsv
 
@@ -261,7 +263,7 @@ Written only when PARALOG candidates lack explicit synteny support. It uses the 
 
 ### orthology_evidence.tsv
 
-One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, evidence state (`STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, `REJECTED_CONTEXT`), matrix action, publication status, annotation-matched cluster, synteny state, confidence, coordinates, and rejection reason.
+One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, evidence state (`STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, `REJECTED_CONTEXT`), matrix action, publication status, annotation-matched cluster, synteny state, quantitative synteny evidence, ORF integrity signal, confidence, coordinates, and rejection reason.
 
 ### reference_genome_audit.tsv
 
@@ -326,7 +328,7 @@ fragmented or disrupted rescue plus close mobile-element evidence within
 
 ### cluster_locus_context.tsv / cluster_locus_summary.tsv
 
-Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context.
+Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context. Synteny validation uses an adaptive 1-to-5-neighbour model, but this summary remains fixed-width so locus stability can be compared across clusters.
 
 ### gene_presence_absence_recore.csv
 
@@ -395,7 +397,7 @@ NSC-merged clusters are excluded from the count (their presences are absorbed in
 | minimap2 | O(queries × target_size) | O(streaming) — PAF not buffered |
 | Classification | O(hits) with rayon parallelism | O(rescues) |
 | Internal stops | O(DROPPED_rescues × hit_length) | O(genome) per genome |
-| Synteny | O(rescues × 5_references) | O(1) per rescue |
+| Synteny | O(rescues × neighbour_windows × present_cluster_copies) | O(contexts per cluster) per rescue |
 | Conflict resolution | O(rescues × log(rescues)) | O(rescues) |
 | NSC MinHash | O(clusters × seq_length) + O(candidates) | O(clusters × sketch_size) |
 | NSC MMseqs2 | O(clusters) linear time | O(mmseqs2 internal) |

@@ -185,7 +185,17 @@ If `minimap2` is outside `PATH`:
 python3 benchmarks/synthetic_benchmark.py --minimap2 /path/to/minimap2
 ```
 
-This benchmark validates policy behavior on synthetic ground truth. It is not a
+The biological event benchmark adds a small GFF/synteny truth set. It checks
+that a same-locus missing CDS is rescued, an identical paralog in the wrong
+context is rejected, and the evolutionary audit table contains quantitative
+synteny, ORF, phylogenetic-reliability, and paralog-risk columns.
+
+```bash
+python3 benchmarks/biological_event_benchmark.py
+```
+
+The synthetic benchmark validates policy behavior on matrix ground truth; the
+biological benchmark validates the locus-context guardrails. Neither is a
 species-specific biological truth benchmark.
 
 ## Inputs
@@ -395,9 +405,13 @@ Key columns in `evolutionary_events.tsv`:
 | Column | Meaning |
 |--------|---------|
 | `phylogenetic_pattern` | parsimony pattern from the optional tree: retained, loss, gain, recurrent, homoplastic, singleton/noise, or not assessed |
+| `phylogenetic_reliability` | high/moderate/low reliability label from tree pattern and parsimony changes |
 | `molecular_mechanism` | conservative interpretation combining rescue evidence, reference audit, context stability, mobile-element evidence, and NSC status |
 | `mechanism_detail` | compact reason for the mechanism call, including `nsc_representative` or `nsc_member_merged_into_representative` when relevant |
 | `support_level` | confidence tier for wording, not a functional validation claim |
+| `paralog_locus_risk` | cluster-level risk flag from locus context, synteny rejections, and paralog evidence |
+| `synteny_mean_score` / `synteny_pass_fraction` | quantitative summary of local-context support across rescue evidence |
+| `orf_integrity_summary` | counts of in-frame, out-of-frame, fragmented, or disrupted ORF signals |
 | `mobile_element_source` | `sequence` when supported by `--mobile-element-reference`, `annotation` when supported by GFF labels |
 | `target_reference_gene` | reference locus/gene when the cluster is best explained as reference-derived homology |
 | `recommended_wording` | conservative wording for manuscripts and manual review |
@@ -498,10 +512,18 @@ This keeps large pangenome audits fast and memory-stable.
 
 When `--synteny` is enabled, Recore compares flanking gene context around the
 candidate rescue with contexts from genomes where the cluster is already
-present. The model uses recurrent compatible contexts, not one fragile exact
-string, so minor annotation boundary differences do not create artificial
-failures. Explicit incompatible contexts are rejected and written to audit
-tables.
+present. It tests adaptive windows from one to five upstream/downstream
+neighbours, scores upstream and downstream sides separately, gives nearest
+neighbours the highest weight, and keeps the smallest high-scoring passing
+window. If a reference genome has multiple gene IDs for the cluster, all copies
+are evaluated rather than only the first matrix entry.
+
+The model uses recurrent compatible contexts, not one fragile exact string, so
+minor annotation boundary differences do not create artificial failures.
+Explicit incompatible contexts are rejected and written to audit tables, while
+`rescue_report.tsv` and `orthology_evidence.tsv` expose the score, support
+count, reference-context count, selected neighbour window, and upstream/downstream
+matches.
 
 ### Nucleotide Similarity Clustering
 
