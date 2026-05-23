@@ -65,6 +65,9 @@ and Recore uses semantic versioning.
 - The embedded viewer can now color tree tips by MTBC lineage using the
   mycolorsTB Nature palette, and places the interactive viewer controls next to
   the tree/matrix viewport.
+- Evolutionary mechanism cards in the embedded viewer now filter matrix columns
+  interactively, and selected-cluster details report the reference gene/cell or
+  reference-derived event source when available.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

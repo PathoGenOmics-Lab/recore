@@ -1021,6 +1021,9 @@ struct ExplorerEvolutionRow {
     support: String,
     phylo: String,
     wording: String,
+    reference_event_class: String,
+    target_reference_cluster: String,
+    target_reference_gene: String,
 }
 
 fn explorer_evolution_rows(
@@ -1044,6 +1047,9 @@ fn explorer_evolution_rows(
     let support_idx = idx("support_level");
     let phylo_idx = idx("phylogenetic_pattern");
     let wording_idx = idx("recommended_wording");
+    let reference_event_class_idx = idx("reference_event_class");
+    let target_reference_cluster_idx = idx("target_reference_cluster");
+    let target_reference_gene_idx = idx("target_reference_gene");
 
     for record in reader.records() {
         let record = record?;
@@ -1071,6 +1077,18 @@ fn explorer_evolution_rows(
                     .unwrap_or("")
                     .to_string(),
                 wording: wording_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                reference_event_class: reference_event_class_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                target_reference_cluster: target_reference_cluster_idx
+                    .and_then(|i| record.get(i))
+                    .unwrap_or("")
+                    .to_string(),
+                target_reference_gene: target_reference_gene_idx
                     .and_then(|i| record.get(i))
                     .unwrap_or("")
                     .to_string(),
@@ -1355,36 +1373,45 @@ fn build_explorer_data_json(
             .get(cluster_name)
             .cloned()
             .unwrap_or_default();
+        let reference_cell = reference_gi.map(|gi| pa.cell(ci, gi)).unwrap_or("");
         if let Some(reference_state) = reference_state {
             write!(
                 out,
-                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":{},\"referenceAbsent\":{},\"mechanism\":{},\"mechanismDetail\":{},\"support\":{},\"phylo\":{},\"wording\":{}}}",
+                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":{},\"referenceAbsent\":{},\"referenceCell\":{},\"mechanism\":{},\"mechanismDetail\":{},\"support\":{},\"phylo\":{},\"wording\":{},\"referenceEventClass\":{},\"targetReferenceCluster\":{},\"targetReferenceGene\":{}}}",
                 json_script_escape(cluster_name),
                 json_script_escape(annotation),
                 present_after,
                 prevalence,
                 json_script_escape(&reference_state.to_string()),
                 if reference_state == 'A' { "true" } else { "false" },
+                json_script_escape(reference_cell),
                 json_script_escape(&evolution.mechanism),
                 json_script_escape(&evolution.detail),
                 json_script_escape(&evolution.support),
                 json_script_escape(&evolution.phylo),
-                json_script_escape(&evolution.wording)
+                json_script_escape(&evolution.wording),
+                json_script_escape(&evolution.reference_event_class),
+                json_script_escape(&evolution.target_reference_cluster),
+                json_script_escape(&evolution.target_reference_gene)
             )
             .expect("write to String is infallible");
         } else {
             write!(
                 out,
-                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":null,\"referenceAbsent\":false,\"mechanism\":{},\"mechanismDetail\":{},\"support\":{},\"phylo\":{},\"wording\":{}}}",
+                "{{\"name\":{},\"annotation\":{},\"present\":{},\"prevalence\":{:.5},\"referenceState\":null,\"referenceAbsent\":false,\"referenceCell\":{},\"mechanism\":{},\"mechanismDetail\":{},\"support\":{},\"phylo\":{},\"wording\":{},\"referenceEventClass\":{},\"targetReferenceCluster\":{},\"targetReferenceGene\":{}}}",
                 json_script_escape(cluster_name),
                 json_script_escape(annotation),
                 present_after,
                 prevalence,
+                json_script_escape(reference_cell),
                 json_script_escape(&evolution.mechanism),
                 json_script_escape(&evolution.detail),
                 json_script_escape(&evolution.support),
                 json_script_escape(&evolution.phylo),
-                json_script_escape(&evolution.wording)
+                json_script_escape(&evolution.wording),
+                json_script_escape(&evolution.reference_event_class),
+                json_script_escape(&evolution.target_reference_cluster),
+                json_script_escape(&evolution.target_reference_gene)
             )
             .expect("write to String is infallible");
         }
@@ -1608,6 +1635,7 @@ let renderQueued = false;
 let detailsKey = "";
 let treeMode = "phylogram";
 let referenceOnly = false;
+let mechanismFilter = "";
 let treeRoot = data.tree;
 
 function stateAt(clusterIdx, genomeIdx) {
@@ -1622,13 +1650,27 @@ function countsForCluster(clusterIdx) {
   }
   return counts;
 }
+function passesActiveFilters(idx, includeMechanism = true) {
+  const cluster = data.clusters[idx];
+  if (referenceOnly && !cluster.referenceAbsent) return false;
+  if (includeMechanism && mechanismFilter && processKind(cluster) !== mechanismFilter) return false;
+  return true;
+}
 function refreshVisibleClusters() {
   visibleClusters = data.clusters
     .map((_, idx) => idx)
-    .filter(idx => !referenceOnly || data.clusters[idx].referenceAbsent);
+    .filter(idx => passesActiveFilters(idx, true));
   if (!visibleClusters.length) {
-    referenceOnly = false;
-    visibleClusters = data.clusters.map((_, idx) => idx);
+    if (referenceOnly) {
+      referenceOnly = false;
+      visibleClusters = data.clusters
+        .map((_, idx) => idx)
+        .filter(idx => passesActiveFilters(idx, true));
+    }
+    if (!visibleClusters.length && mechanismFilter) {
+      mechanismFilter = "";
+      visibleClusters = data.clusters.map((_, idx) => idx);
+    }
   }
   if (!visibleClusters.includes(selected)) {
     selected = visibleClusters.length ? visibleClusters[0] : 0;
@@ -1722,7 +1764,10 @@ function renderLineageLegend() {
 }
 function visibleProcessCounts() {
   const counts = new Map();
-  visibleClusters.forEach(idx => {
+  data.clusters
+    .map((_, idx) => idx)
+    .filter(idx => passesActiveFilters(idx, false))
+    .forEach(idx => {
     const mechanism = processKind(data.clusters[idx]);
     const row = counts.get(mechanism) || {clusters:0, present:0};
     row.clusters += 1;
@@ -1737,11 +1782,15 @@ function renderProcessLegend() {
   if (!processLegend) return;
   const cluster = data.clusters[selected] || {};
   const selectedMechanism = processKind(cluster);
+  const filterLabel = mechanismFilter
+    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing only ${escapeHtml(processLabel(mechanismFilter))} (${visibleClusters.length} clusters). Clear filter</button>`
+    : `<span>Click a mechanism card to filter the matrix columns.</span>`;
   const items = visibleProcessCounts().map(([mechanism, row]) => {
     const active = mechanism === selectedMechanism ? " active" : "";
-    return `<div class="process-item${active}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${row.clusters} clusters; ${row.present} present cells. ${escapeHtml(processDescription(mechanism))}</small></div></div>`;
+    const filtered = mechanism === mechanismFilter ? " filtered" : "";
+    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${row.clusters} clusters; ${row.present} present cells. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
   }).join("");
-  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span></div><div class="process-list">${items}</div>`;
+  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
 }
 function tipStyle(genomeIdx) {
   const mode = colorMode.value;
@@ -1924,6 +1973,32 @@ function updateCellGeometry() {
 }
 function clusterLabel(cluster) {
   return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
+}
+function referenceInterpretation(cluster) {
+  const referenceCell = (cluster.referenceCell || "").trim();
+  const targetGene = (cluster.targetReferenceGene || "").trim();
+  const targetCluster = (cluster.targetReferenceCluster || "").trim();
+  const eventClass = (cluster.referenceEventClass || "").trim();
+  const parts = [];
+  if (referenceCell) {
+    parts.push(`<span>reference gene(s): ${escapeHtml(referenceCell)}</span>`);
+  }
+  if (targetGene || targetCluster || eventClass) {
+    const sourceBits = [];
+    if (targetGene) sourceBits.push(`source gene ${targetGene}`);
+    if (targetCluster) sourceBits.push(`source cluster ${targetCluster}`);
+    if (eventClass) sourceBits.push(eventClass);
+    parts.push(`<span>reference-derived/event source: ${escapeHtml(sourceBits.join("; "))}</span>`);
+  }
+  if (!parts.length) {
+    const mechanism = processKind(cluster);
+    const text = mechanism === "clean_insertion_or_acquisition_candidate"
+      ? "no reference equivalent detected; candidate de novo/reference-absent locus"
+      : "no reference equivalent detected by Recore";
+    parts.push(`<span>${escapeHtml(text)}</span>`);
+  }
+  const state = cluster.referenceState ? `reference state ${cluster.referenceState}` : "reference state not assessed";
+  return `<div class="reference-meta"><strong>Reference equivalent</strong>${parts.join("")}<span>${escapeHtml(state)}</span></div>`;
 }
 function xForNode(node) {
   const labelPad = labelToggle.checked && leafOrder.length <= 1500 ? 150 : 24;
@@ -2111,7 +2186,7 @@ function renderMatrix(scrollToSelected) {
   }
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
-    ? `${selected}|${referenceOnly}|${visibleClusters.length}`
+    ? `${selected}|${referenceOnly}|${mechanismFilter}|${visibleClusters.length}`
     : "none";
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
@@ -2121,7 +2196,7 @@ function renderMatrix(scrollToSelected) {
     const detail = cluster.mechanismDetail ? `<span>${escapeHtml(cluster.mechanismDetail)}</span>` : "";
     const wording = cluster.wording ? `<div class="process-wording">${escapeHtml(cluster.wording)}</div>` : "";
     info.textContent = `${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)`;
-    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div><div class="process-note"><span class="process-chip" style="--process-color:${processColor(mechanism)}"><i></i>${escapeHtml(processLabel(mechanism))}</span><span>${escapeHtml(processDescription(mechanism))}</span></div><div class="process-meta">${support}${phylo}${detail}</div>${wording}`;
+    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div><div class="process-note"><span class="process-chip" style="--process-color:${processColor(mechanism)}"><i></i>${escapeHtml(processLabel(mechanism))}</span><span>${escapeHtml(processDescription(mechanism))}</span></div>${referenceInterpretation(cluster)}<div class="process-meta">${support}${phylo}${detail}</div>${wording}`;
     renderProcessLegend();
     detailsKey = nextDetailsKey;
   } else if (nextDetailsKey !== detailsKey) {
@@ -2199,6 +2274,21 @@ cladogramButton.addEventListener("click", () => setTreeMode("cladogram"));
 referenceButton.addEventListener("click", () => {
   if (!data.referenceGenome) return;
   referenceOnly = !referenceOnly;
+  refreshVisibleClusters();
+  populateOptions();
+  resetMatrixCache();
+  render(true);
+});
+processLegend.addEventListener("click", event => {
+  const clear = event.target.closest("[data-clear-mechanism]");
+  const card = event.target.closest("[data-mechanism]");
+  if (!clear && !card) return;
+  if (clear) {
+    mechanismFilter = "";
+  } else {
+    const mechanism = card.getAttribute("data-mechanism") || "";
+    mechanismFilter = mechanismFilter === mechanism ? "" : mechanism;
+  }
   refreshVisibleClusters();
   populateOptions();
   resetMatrixCache();
@@ -2395,7 +2485,7 @@ pub(super) fn write_html_report(
         .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:750;background:#eef4ff;color:#1849a9;border:1px solid #d1e0ff}.badge.review{background:#fff6ed;color:var(--amber);border-color:#fedf89}.badge.filter{background:#fef3f2;color:var(--red);border-color:#fecdca}.badge.pass{background:#ecfdf3;color:var(--green);border-color:#abefc6}
         .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
         .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
-        .explorer-controls,.viewer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.cluster-controls{grid-template-columns:minmax(240px,1fr) minmax(280px,1.2fr) auto}.viewer-controls{position:sticky;top:8px;z-index:6;margin-top:12px;padding:10px;border:1px solid var(--soft-line);border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 8px 20px rgba(16,24,40,.08)}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}.process-note{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;color:#344054;font-size:12px}.process-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px;font-size:11px;font-weight:750;color:#344054}.process-chip i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--process-color)}.process-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:11px}.process-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-wording{margin-top:7px;color:#344054;font-size:12px}.process-legend{display:grid;gap:8px;margin-top:10px}.process-selected{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:#344054;font-size:12px}.process-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.process-item{display:grid;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:start;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px}.process-item.active{border-color:#84adff;background:#eef4ff}.process-swatch{width:11px;height:11px;border-radius:3px;margin-top:3px}.process-item strong{display:block;font-size:12px}.process-item small{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.35}.lineage-legend{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px 10px}.lineage-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.lineage-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--soft-line);border-radius:999px;padding:3px 7px;background:#f8fafc}.lineage-chip i{width:9px;height:9px;border-radius:2px;display:inline-block}.lineage-chip strong{font-size:11px}.lineage-chip small{font-size:11px;color:var(--muted)}
+        .explorer-controls,.viewer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.cluster-controls{grid-template-columns:minmax(240px,1fr) minmax(280px,1.2fr) auto}.viewer-controls{position:sticky;top:8px;z-index:6;margin-top:12px;padding:10px;border:1px solid var(--soft-line);border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 8px 20px rgba(16,24,40,.08)}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}.process-note{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;color:#344054;font-size:12px}.process-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px;font-size:11px;font-weight:750;color:#344054}.process-chip i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--process-color)}.reference-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px;color:#344054;font-size:11px}.reference-meta strong{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.reference-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:11px}.process-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-wording{margin-top:7px;color:#344054;font-size:12px}.process-legend{display:grid;gap:8px;margin-top:10px}.process-selected{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:#344054;font-size:12px}.process-clear{border-radius:999px!important;padding:4px 9px!important;background:#eef4ff!important;border-color:#84adff!important;color:#1849a9!important;font-size:11px!important}.process-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.process-item{display:grid!important;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:start;text-align:left;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px}.process-item:hover{border-color:#84adff;background:#f8fbff}.process-item.active{border-color:#84adff;background:#eef4ff}.process-item.filtered{outline:2px solid #1849a9;outline-offset:0}.process-swatch{width:11px;height:11px;border-radius:3px;margin-top:3px}.process-item strong{display:block;font-size:12px}.process-item small{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.35;font-weight:400}.lineage-legend{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px 10px}.lineage-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.lineage-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--soft-line);border-radius:999px;padding:3px 7px;background:#f8fafc}.lineage-chip i{width:9px;height:9px;border-radius:2px;display:inline-block}.lineage-chip strong{font-size:11px}.lineage-chip small{font-size:11px;color:var(--muted)}
         .viewer{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:88px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
         footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
         @media(max-width:1100px){.explorer-controls,.viewer-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
