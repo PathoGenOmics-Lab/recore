@@ -42,7 +42,7 @@ and Recore uses semantic versioning.
   headline QC, correction counts, mechanisms, top candidate clusters, and
   links to the underlying audit tables.
 - The HTML report now embeds an interactive phylogeny plus matrix explorer
-  for small `--tree` runs, with searchable clusters, clickable matrix columns,
+  for large `--tree` runs, with searchable clusters, clickable matrix columns,
   and dynamic tip coloring by corrected gene state.
 - The HTML report layout was redesigned as a more mature audit document, with
   a sober header, executive summary, clearer review metrics, and richer
@@ -50,6 +50,10 @@ and Recore uses semantic versioning.
 - The embedded tree/matrix viewer now uses an aligned vertical viewport,
   synchronized matrix column header, adjustable cell size, row/column hover
   highlighting, and per-cell tooltips.
+- The embedded tree/matrix viewer now caches the matrix canvas, auto-compacts
+  dense trees, supports mouse inspection on the tree and column header, and can
+  recolor tips by selected cluster state, rescue burden, absence burden, or any
+  correction burden.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

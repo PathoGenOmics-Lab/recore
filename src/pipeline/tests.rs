@@ -284,6 +284,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("clusterDetails"));
     assert!(text.contains("columnHeaderCanvas"));
     assert!(text.contains("cellSize"));
+    assert!(text.contains("tipColorMode"));
+    assert!(text.contains("tipLabels"));
+    assert!(text.contains("rebuildBaseMatrix"));
     assert!(text.contains("\"states\":[\"PA\",\"AP\"]"));
     assert!(text.contains("matrixCanvas"));
 }

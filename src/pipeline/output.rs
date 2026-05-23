@@ -1120,8 +1120,8 @@ fn file_link_html(path: &str, description: &str) -> String {
 }
 
 const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
-const EXPLORER_MAX_TIPS: usize = 250;
-const EXPLORER_MAX_CELLS: usize = 500_000;
+const EXPLORER_MAX_TIPS: usize = 5_000;
+const EXPLORER_MAX_CELLS: usize = 25_000_000;
 
 fn json_script_escape(value: &str) -> String {
     json_escape(value).replace("</", "<\\/")
@@ -1334,8 +1334,8 @@ fn phylo_matrix_explorer_html(
     let mut html = String::new();
     html.push_str("<section class='panel full explorer' style='margin-top:14px'>");
     html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
-    html.push_str("<div class='explorer-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><label class='scale-control'>Cell size <input id='cellSize' type='range' min='4' max='16' value='8'></label><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='matrixStatus' class='matrix-status muted'>Hover over the matrix to inspect a cell.</div>");
+    html.push_str("<div class='explorer-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><label class='scale-control'>Cell size <input id='cellSize' type='range' min='2' max='16' value='8'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><span id='clusterInfo' class='muted'></span></div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='matrixStatus' class='matrix-status muted'>Hover over the tree or matrix to inspect a genome/cluster cell.</div>");
     html.push_str("<script>window.recoreExplorerData=");
     html.push_str(&data_json);
     html.push_str(
@@ -1348,6 +1348,8 @@ const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC
 const select = document.getElementById("clusterSelect");
 const search = document.getElementById("clusterSearch");
 const sizeControl = document.getElementById("cellSize");
+const colorMode = document.getElementById("tipColorMode");
+const labelToggle = document.getElementById("tipLabels");
 const info = document.getElementById("clusterInfo");
 const details = document.getElementById("clusterDetails");
 const status = document.getElementById("matrixStatus");
@@ -1356,6 +1358,8 @@ const headerCanvas = document.getElementById("columnHeaderCanvas");
 const headerCtx = headerCanvas.getContext("2d");
 const canvas = document.getElementById("matrixCanvas");
 const ctx = canvas.getContext("2d");
+const baseCanvas = document.createElement("canvas");
+const baseCtx = baseCanvas.getContext("2d");
 const matrixPane = document.getElementById("matrixPane");
 const headerScroller = document.getElementById("headerScroller");
 const tooltip = document.getElementById("matrixTooltip");
@@ -1363,12 +1367,19 @@ let selected = 0;
 let hoverRow = -1;
 let hoverCol = -1;
 let leafOrder = [];
+let genomeStats = [];
+let maxGenomeStats = {R:1, N:1, A:1, correction:1};
 let maxDepth = 0;
 let treeHeight = 0;
 const treeWidth = 410;
 const headerH = 88;
 let cellH = 12;
 let cellW = 8;
+let baseCellH = 0;
+let baseCellW = 0;
+let baseValid = false;
+let treeDirty = true;
+let renderQueued = false;
 
 function stateAt(clusterIdx, genomeIdx) {
   return (data.states[clusterIdx] && data.states[clusterIdx][genomeIdx]) || "A";
@@ -1381,6 +1392,46 @@ function countsForCluster(clusterIdx) {
     counts[state] = (counts[state] || 0) + 1;
   }
   return counts;
+}
+function computeGenomeStats() {
+  genomeStats = data.genomes.map(() => ({P:0, R:0, N:0, A:0}));
+  data.states.forEach(row => {
+    for (let gi = 0; gi < data.genomes.length; gi += 1) {
+      const state = row[gi] || "A";
+      genomeStats[gi][state] = (genomeStats[gi][state] || 0) + 1;
+    }
+  });
+  maxGenomeStats = genomeStats.reduce((acc, s) => ({
+    R: Math.max(acc.R, s.R),
+    N: Math.max(acc.N, s.N),
+    A: Math.max(acc.A, s.A),
+    correction: Math.max(acc.correction, s.R + s.N),
+  }), {R:1, N:1, A:1, correction:1});
+}
+function gradientColor(value, maxValue, low, high) {
+  if (!maxValue) return low;
+  const t = Math.max(0, Math.min(1, value / maxValue));
+  const parse = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  const a = parse(low);
+  const b = parse(high);
+  const rgb = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
+function tipStyle(genomeIdx) {
+  const mode = colorMode.value;
+  if (mode === "cluster") {
+    const state = stateAt(selected, genomeIdx);
+    return {fill: colors[state], stroke: strokes[state], title: labels[state]};
+  }
+  const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
+  if (mode === "rescue") {
+    return {fill: gradientColor(stats.R, maxGenomeStats.R, "#e0f2fe", "#0369a1"), stroke: "#0369a1", title: `rescued cells ${stats.R}`};
+  }
+  if (mode === "absence") {
+    return {fill: gradientColor(stats.A, maxGenomeStats.A, "#f8fafc", "#b42318"), stroke: "#b42318", title: `absent cells ${stats.A}`};
+  }
+  const correction = stats.R + stats.N;
+  return {fill: gradientColor(correction, maxGenomeStats.correction, "#ecfdf3", "#067647"), stroke: "#067647", title: `corrected/NSC cells ${correction}`};
 }
 function layout(node, depth) {
   node.depth = depth;
@@ -1414,7 +1465,16 @@ function populateOptions() {
 }
 function currentCellSize() {
   const value = Number(sizeControl.value || 8);
-  return Math.max(4, Math.min(16, value));
+  return Math.max(2, Math.min(16, value));
+}
+function updateCellGeometry() {
+  const rows = leafOrder.length;
+  const cols = data.clusters.length;
+  const size = currentCellSize();
+  cellH = size;
+  cellW = Math.max(2, Math.round(size * 0.82));
+  treeHeight = Math.max(70, rows * cellH);
+  return {rows, cols};
 }
 function clusterLabel(cluster) {
   return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
@@ -1431,11 +1491,13 @@ function drawNode(node, parts, xScale) {
       drawNode(child, parts, xScale);
     });
   } else {
-    const state = stateAt(selected, node.genome);
+    const style = tipStyle(node.genome);
     const label = data.genomes[node.genome] || node.label || "";
     const radius = Math.max(3, Math.min(5, cellH / 2 - 1));
-    parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${colors[state]}" stroke="${strokes[state]}" stroke-width="1.2"><title>${label}: ${labels[state]}</title></circle>`);
-    parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
+    parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="1.2"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
+    if (labelToggle.checked && leafOrder.length <= 1500 && cellH >= 4) {
+      parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
+    }
   }
 }
 function escapeHtml(text) {
@@ -1443,16 +1505,25 @@ function escapeHtml(text) {
 }
 function renderTree() {
   const xScale = Math.max(24, (treeWidth - 155) / Math.max(1, maxDepth));
-  const parts = [];
+  if (treeDirty) {
+    const parts = [];
+    drawNode(data.tree, parts, xScale);
+    svg.setAttribute("width", String(treeWidth));
+    svg.setAttribute("height", String(treeHeight));
+    svg.setAttribute("viewBox", `0 0 ${treeWidth} ${treeHeight}`);
+    svg.innerHTML = `<line id="treeHoverGuide" x1="0" y1="0" x2="${treeWidth}" y2="0" class="tree-row-guide" style="display:none"/>${parts.join("")}`;
+    treeDirty = false;
+  }
+  const guide = document.getElementById("treeHoverGuide");
+  if (!guide) return;
   if (hoverRow >= 0) {
     const hy = hoverRow * cellH + cellH / 2;
-    parts.push(`<line x1="0" y1="${hy}" x2="${treeWidth}" y2="${hy}" class="tree-row-guide"/>`);
+    guide.setAttribute("y1", String(hy));
+    guide.setAttribute("y2", String(hy));
+    guide.style.display = "block";
+  } else {
+    guide.style.display = "none";
   }
-  drawNode(data.tree, parts, xScale);
-  svg.setAttribute("width", String(treeWidth));
-  svg.setAttribute("height", String(treeHeight));
-  svg.setAttribute("viewBox", `0 0 ${treeWidth} ${treeHeight}`);
-  svg.innerHTML = parts.join("");
 }
 function renderColumnHeader() {
   const cols = data.clusters.length;
@@ -1490,32 +1561,46 @@ function renderColumnHeader() {
     }
   }
 }
-function renderMatrix(scrollToSelected) {
-  const rows = leafOrder.length;
-  const cols = data.clusters.length;
-  const size = currentCellSize();
-  cellH = size;
-  cellW = Math.max(3, Math.round(size * 0.82));
-  treeHeight = Math.max(70, rows * cellH);
-  canvas.width = Math.max(1, cols * cellW);
-  canvas.height = Math.max(1, rows * cellH);
-  canvas.style.width = `${canvas.width}px`;
-  canvas.style.height = `${canvas.height}px`;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (hoverRow >= 0) {
-    ctx.fillStyle = "#fff7ed";
-    ctx.fillRect(0, hoverRow * cellH, canvas.width, cellH);
-  }
-  ctx.fillStyle = "#eff6ff";
-  ctx.fillRect(selected * cellW, 0, cellW, canvas.height);
+function rebuildBaseMatrix() {
+  const {rows, cols} = updateCellGeometry();
+  baseCanvas.width = Math.max(1, cols * cellW);
+  baseCanvas.height = Math.max(1, rows * cellH);
+  baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+  baseCtx.fillStyle = "#ffffff";
+  baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
   for (let r = 0; r < rows; r += 1) {
     const genomeIdx = leafOrder[r];
     for (let c = 0; c < cols; c += 1) {
-      ctx.fillStyle = colors[stateAt(c, genomeIdx)] || colors.A;
-      ctx.fillRect(c * cellW, r * cellH, Math.max(1, cellW - 1), Math.max(1, cellH - 1));
+      baseCtx.fillStyle = colors[stateAt(c, genomeIdx)] || colors.A;
+      baseCtx.fillRect(c * cellW, r * cellH, Math.max(1, cellW - 1), Math.max(1, cellH - 1));
     }
+  }
+  baseCellH = cellH;
+  baseCellW = cellW;
+  baseValid = true;
+}
+function renderMatrix(scrollToSelected) {
+  const {rows, cols} = updateCellGeometry();
+  if (!baseValid || baseCellH !== cellH || baseCellW !== cellW) {
+    rebuildBaseMatrix();
+  }
+  canvas.width = baseCanvas.width;
+  canvas.height = baseCanvas.height;
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(baseCanvas, 0, 0);
+  if (selected >= 0 && selected < cols) {
+    ctx.fillStyle = "rgba(37,99,235,.13)";
+    ctx.fillRect(selected * cellW, 0, cellW, canvas.height);
+  }
+  if (hoverRow >= 0 && hoverRow < rows) {
+    ctx.fillStyle = "rgba(181,71,8,.11)";
+    ctx.fillRect(0, hoverRow * cellH, canvas.width, cellH);
+  }
+  if (hoverCol >= 0 && hoverCol < cols) {
+    ctx.fillStyle = "rgba(181,71,8,.09)";
+    ctx.fillRect(hoverCol * cellW, 0, cellW, canvas.height);
   }
   if (hoverCol >= 0) {
     ctx.strokeStyle = "#b54708";
@@ -1549,37 +1634,101 @@ function render(scrollToSelected = false) {
   renderColumnHeader();
   renderTree();
 }
+function scheduleRender(scrollToSelected = false) {
+  if (scrollToSelected) {
+    render(true);
+    return;
+  }
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    render(false);
+  });
+}
+function setHover(row, col, text) {
+  const changed = hoverRow !== row || hoverCol !== col;
+  hoverRow = row;
+  hoverCol = col;
+  if (text) status.textContent = text;
+  if (changed) scheduleRender(false);
+}
 layout(data.tree, 0);
+computeGenomeStats();
+if (leafOrder.length > 1500) {
+  labelToggle.checked = false;
+  sizeControl.value = "2";
+} else if (leafOrder.length > 800) {
+  labelToggle.checked = false;
+  sizeControl.value = "3";
+} else if (leafOrder.length > 300) {
+  labelToggle.checked = false;
+  sizeControl.value = "4";
+}
 populateOptions();
 render(true);
-search.addEventListener("input", () => { populateOptions(); render(true); });
-select.addEventListener("change", () => { selected = Number(select.value || 0); render(true); });
-sizeControl.addEventListener("input", () => { render(false); });
+search.addEventListener("input", () => { populateOptions(); treeDirty = true; render(true); });
+select.addEventListener("change", () => { selected = Number(select.value || 0); treeDirty = true; render(true); });
+colorMode.addEventListener("change", () => { treeDirty = true; render(false); });
+labelToggle.addEventListener("change", () => { treeDirty = true; render(false); });
+sizeControl.addEventListener("input", () => { baseValid = false; treeDirty = true; render(false); });
 matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });
 headerScroller.addEventListener("scroll", () => { matrixPane.scrollLeft = headerScroller.scrollLeft; });
+svg.addEventListener("mousemove", event => {
+  const rect = svg.getBoundingClientRect();
+  const r = Math.floor((event.clientY - rect.top) / cellH);
+  if (r < 0 || r >= leafOrder.length) return;
+  const genomeIdx = leafOrder[r];
+  const state = stateAt(selected, genomeIdx);
+  const cluster = data.clusters[selected];
+  const tip = tipStyle(genomeIdx);
+  const detail = colorMode.value === "cluster" && cluster
+    ? `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}`
+    : `${data.genomes[genomeIdx]}: ${tip.title}`;
+  tooltip.style.display = "none";
+  setHover(r, -1, detail);
+});
+svg.addEventListener("mouseleave", () => {
+  setHover(-1, -1, "Hover over the tree or matrix to inspect a genome/cluster cell.");
+});
+headerCanvas.addEventListener("mousemove", event => {
+  const rect = headerCanvas.getBoundingClientRect();
+  const c = Math.floor((event.clientX - rect.left) / cellW);
+  if (c < 0 || c >= data.clusters.length) return;
+  const cluster = data.clusters[c];
+  setHover(-1, c, `${cluster.name}: ${cluster.annotation || "No annotation provided"}`);
+});
+headerCanvas.addEventListener("mouseleave", () => {
+  setHover(-1, -1, "Hover over the tree or matrix to inspect a genome/cluster cell.");
+});
+headerCanvas.addEventListener("click", event => {
+  const rect = headerCanvas.getBoundingClientRect();
+  const c = Math.floor((event.clientX - rect.left) / cellW);
+  if (c < 0 || c >= data.clusters.length) return;
+  selected = c;
+  search.value = "";
+  populateOptions();
+  treeDirty = true;
+  render(true);
+});
 canvas.addEventListener("mousemove", event => {
   const rect = canvas.getBoundingClientRect();
   const c = Math.floor((event.clientX - rect.left) / cellW);
   const r = Math.floor((event.clientY - rect.top) / cellH);
   if (c < 0 || r < 0 || c >= data.clusters.length || r >= leafOrder.length) return;
-  hoverCol = c;
-  hoverRow = r;
   const genomeIdx = leafOrder[r];
   const state = stateAt(c, genomeIdx);
   const cluster = data.clusters[c];
-  status.textContent = `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}`;
+  setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}`);
+  const paneRect = matrixPane.getBoundingClientRect();
   tooltip.style.display = "block";
-  tooltip.style.left = `${event.clientX - rect.left + matrixPane.scrollLeft + 12}px`;
-  tooltip.style.top = `${event.clientY - rect.top + 12}px`;
+  tooltip.style.left = `${event.clientX - paneRect.left + matrixPane.scrollLeft + 12}px`;
+  tooltip.style.top = `${event.clientY - paneRect.top + 12}px`;
   tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(cluster.annotation || "")}</span>`;
-  render(false);
 });
 canvas.addEventListener("mouseleave", () => {
-  hoverRow = -1;
-  hoverCol = -1;
   tooltip.style.display = "none";
-  status.textContent = "Hover over the matrix to inspect a cell.";
-  render(false);
+  setHover(-1, -1, "Hover over the tree or matrix to inspect a genome/cluster cell.");
 });
 canvas.addEventListener("click", event => {
   const rect = canvas.getBoundingClientRect();
@@ -1588,6 +1737,7 @@ canvas.addEventListener("click", event => {
   selected = c;
   search.value = "";
   populateOptions();
+  treeDirty = true;
   render(true);
 });
 })();</script>"##,
@@ -1662,9 +1812,10 @@ pub(super) fn write_html_report(
         .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:750;background:#eef4ff;color:#1849a9;border:1px solid #d1e0ff}.badge.review{background:#fff6ed;color:var(--amber);border-color:#fedf89}.badge.filter{background:#fef3f2;color:var(--red);border-color:#fecdca}.badge.pass{background:#ecfdf3;color:var(--green);border-color:#abefc6}
         .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
         .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
-        .explorer-controls{display:grid;grid-template-columns:minmax(170px,1fr) minmax(260px,2fr) minmax(170px,.75fr) minmax(190px,.85fr);gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.scale-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}
-        .viewer{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:88px;image-rendering:auto}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:560px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.2;fill:none}.tree-row-guide{stroke:#eef2f6;stroke-width:1}.tip-label{font-size:10px;fill:#344054}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.matrix-status{margin-top:8px;font-size:12px}
+        .explorer-controls{display:grid;grid-template-columns:minmax(150px,1fr) minmax(240px,1.6fr) minmax(220px,1.2fr) minmax(150px,.7fr);gap:10px;align-items:center;margin-top:14px}.explorer input,.explorer select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}
+        .viewer{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:88px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.2;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tip-label{font-size:10px;fill:#344054}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.matrix-status{margin-top:8px;font-size:12px}
         footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
+        @media(max-width:1100px){.explorer-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
         @media(max-width:900px){.header-main,.executive{grid-template-columns:1fr;display:block}.report-stamp{text-align:left;margin-top:14px}.grid,.section-grid,.files,.explorer-grid,.explorer-controls{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:92px;height:54px}.summary-grid{grid-template-columns:1fr}}
         </style>",
     );
