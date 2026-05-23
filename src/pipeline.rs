@@ -13,7 +13,7 @@ use crate::parser::{
     normalize_gff_records_to_fasta, parse_gff_genes, parse_pan_reference, parse_presence_absence,
     resolve_genome_files_for_pa, validate_inputs,
 };
-use crate::relationships::write_cluster_relationships;
+use crate::relationships::{write_cluster_components, write_cluster_relationships};
 use crate::rescue::{
     build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_hit, classify_hits,
     panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GffGene,
@@ -24,6 +24,7 @@ use crate::types::{ClusterIdx, GenomeIdx};
 
 mod evolution;
 mod output;
+mod quality;
 mod reference_audit;
 
 use self::evolution::{
@@ -35,6 +36,10 @@ use self::output::{
     count_core_after, count_soft_core_after, write_corrected_csv, write_corrected_gffs,
     write_multistate_matrix, write_nsc_report, write_run_manifest, write_summary,
     MultistateMatrixInputs, SummaryStats,
+};
+use self::quality::{
+    cluster_prevalences, cluster_sequence_lengths, orthology_quality,
+    quality_allows_matrix_correction, OrthologyQuality,
 };
 use self::reference_audit::{
     build_reference_cluster_events, reference_hit_shadow_candidates, resolve_reference_genome,
@@ -116,6 +121,8 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 1. Parse inputs ──
     let pa = parse_presence_absence(&args.presence_absence)?;
     let pan_ref = parse_pan_reference(&args.pan_reference, args.multi_allele)?;
+    let cluster_seq_lengths = cluster_sequence_lengths(&pa, &pan_ref);
+    let cluster_prevalence_by_idx = cluster_prevalences(&pa);
     let raw_genome_files = find_genome_files(&args.genomes)?;
     let genome_files = resolve_genome_files_for_pa(&pa, &raw_genome_files);
     let alias_resolved = genome_files
@@ -820,7 +827,15 @@ pub fn run(args: &Args) -> Result<()> {
     let all_rescue_map = build_best_rescue_map(rescues.iter());
     let matrix_rescue_map = build_best_rescue_map(rescues.iter().filter(|r| {
         let state = accepted_rescue_evidence_state(r, &pa, &gene_to_cluster_maps);
+        let quality = orthology_quality(
+            r,
+            state,
+            true,
+            cluster_prevalence_by_idx[r.cluster_idx.val()],
+            cluster_seq_lengths[r.cluster_idx.val()],
+        );
         matrix_policy_corrects(args.matrix_policy, state)
+            && quality_allows_matrix_correction(state, &quality)
     }));
 
     write_report(&rescues, &pa, &args.output)?;
@@ -840,15 +855,17 @@ pub fn run(args: &Args) -> Result<()> {
             "paralog_rejected_report.tsv",
         )?;
     }
-    write_orthology_evidence(
-        &rescues,
-        &synteny_rejected,
-        &paralog_rejected,
-        &pa,
-        &gene_to_cluster_maps,
-        args.matrix_policy,
-        &args.output,
-    )?;
+    write_orthology_evidence(OrthologyEvidenceInputs {
+        rescues: &rescues,
+        synteny_rejected: &synteny_rejected,
+        paralog_rejected: &paralog_rejected,
+        pa: &pa,
+        gene_to_cluster_maps: &gene_to_cluster_maps,
+        cluster_prevalences: &cluster_prevalence_by_idx,
+        cluster_seq_lengths: &cluster_seq_lengths,
+        matrix_policy: args.matrix_policy,
+        output_dir: &args.output,
+    })?;
     if let Some(reference_genome) = args.reference_genome.as_deref() {
         write_reference_genome_audit(ReferenceAuditInputs {
             requested_reference: reference_genome,
@@ -893,6 +910,15 @@ pub fn run(args: &Args) -> Result<()> {
     if n_relationships > 0 {
         info!("Cluster relationships: {} rows", n_relationships);
     }
+    let component_info = write_cluster_components(&pa, &rescues, &nsc_result, &args.output)?;
+    let n_components = component_info
+        .iter()
+        .filter_map(|info| info.as_ref().map(|i| i.component_id.as_str()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    if n_components > 0 {
+        info!("Cluster components: {} non-singleton groups", n_components);
+    }
     write_evolutionary_events(EvolutionaryEventInputs {
         pa: &pa,
         matrix_rescue_map: &matrix_rescue_map,
@@ -907,6 +933,7 @@ pub fn run(args: &Args) -> Result<()> {
         phylo_tree: phylo_tree.as_ref(),
         reference_genome: args.reference_genome.as_deref(),
         nsc_result: &nsc_result,
+        component_info: &component_info,
         output_dir: &args.output,
     })?;
     if args.write_corrected_gff {
@@ -1304,6 +1331,25 @@ fn matrix_action(policy: MatrixPolicy, accepted: bool, state: &str) -> &'static 
     }
 }
 
+fn matrix_action_with_quality(
+    policy: MatrixPolicy,
+    accepted: bool,
+    state: &str,
+    quality: &OrthologyQuality,
+) -> &'static str {
+    if accepted && matrix_policy_corrects(policy, state) {
+        if quality_allows_matrix_correction(state, quality) {
+            "correct_presence"
+        } else {
+            "audit_only_quality"
+        }
+    } else if accepted {
+        "audit_only_policy"
+    } else {
+        "audit_only"
+    }
+}
+
 fn accepted_rescue_evidence_state(
     rescue: &RescueEvent,
     pa: &crate::parser::PresenceAbsence,
@@ -1370,21 +1416,36 @@ fn recommended_wording(state: &str, accepted: bool) -> &'static str {
     }
 }
 
-fn write_orthology_evidence(
-    rescues: &[RescueEvent],
-    synteny_rejected: &[RescueEvent],
-    paralog_rejected: &[RescueEvent],
-    pa: &crate::parser::PresenceAbsence,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+struct OrthologyEvidenceInputs<'a> {
+    rescues: &'a [RescueEvent],
+    synteny_rejected: &'a [RescueEvent],
+    paralog_rejected: &'a [RescueEvent],
+    pa: &'a crate::parser::PresenceAbsence,
+    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    cluster_prevalences: &'a [f64],
+    cluster_seq_lengths: &'a [usize],
     matrix_policy: MatrixPolicy,
-    output_dir: &std::path::Path,
-) -> Result<()> {
+    output_dir: &'a std::path::Path,
+}
+
+fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
+    let OrthologyEvidenceInputs {
+        rescues,
+        synteny_rejected,
+        paralog_rejected,
+        pa,
+        gene_to_cluster_maps,
+        cluster_prevalences,
+        cluster_seq_lengths,
+        matrix_policy,
+        output_dir,
+    } = inputs;
     let path = output_dir.join("orthology_evidence.tsv");
     let file = fs::File::create(&path)?;
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tsynteny\tsynteny_score\tsynteny_support_n\tsynteny_reference_contexts\tsynteny_neighbors\tsynteny_upstream_matches\tsynteny_downstream_matches\torf_integrity_signal\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
+        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tadaptive_identity_floor\tadaptive_coverage_floor\tadaptive_sequence_pass\torthology_confidence_score\torthology_confidence_tier\trisk_flags\tsynteny\tsynteny_score\tsynteny_support_n\tsynteny_reference_contexts\tsynteny_neighbors\tsynteny_upstream_matches\tsynteny_downstream_matches\torf_integrity_signal\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
     )?;
 
     for rescue in rescues {
@@ -1392,13 +1453,20 @@ fn write_orthology_evidence(
         let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
         let status = accepted_orthology_status(rescue, query_cluster, &annotation_cluster);
         let state = evidence_state(rescue, true, query_cluster, &annotation_cluster, "");
+        let quality = orthology_quality(
+            rescue,
+            state,
+            true,
+            cluster_prevalences[rescue.cluster_idx.val()],
+            cluster_seq_lengths[rescue.cluster_idx.val()],
+        );
         write_tsv_fields(
             &mut w,
             &[
                 "accepted".to_string(),
                 status.to_string(),
                 state.to_string(),
-                matrix_action(matrix_policy, true, state).to_string(),
+                matrix_action_with_quality(matrix_policy, true, state, &quality).to_string(),
                 publication_status(true, state).to_string(),
                 evidence_strength(state).to_string(),
                 recommended_wording(state, true).to_string(),
@@ -1412,6 +1480,12 @@ fn write_orthology_evidence(
                 rescue.end.to_string(),
                 rescue.strand.to_string(),
                 format!("{:.3}", rescue.confidence),
+                format!("{:.1}", quality.adaptive_identity_floor),
+                format!("{:.1}", quality.adaptive_coverage_floor),
+                quality.adaptive_sequence_pass.to_string(),
+                format!("{:.3}", quality.integrated_score),
+                quality.tier.to_string(),
+                quality.risk_flags,
                 synteny_label(rescue.synteny_ok).to_string(),
                 synteny_score_value(&rescue.synteny_evidence),
                 synteny_count_value(rescue.synteny_evidence.support, &rescue.synteny_evidence),
@@ -1461,13 +1535,20 @@ fn write_orthology_evidence(
             let query_cluster = pa.cluster_name(rescue.cluster_idx);
             let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
             let state = evidence_state(rescue, false, query_cluster, &annotation_cluster, reason);
+            let quality = orthology_quality(
+                rescue,
+                state,
+                false,
+                cluster_prevalences[rescue.cluster_idx.val()],
+                cluster_seq_lengths[rescue.cluster_idx.val()],
+            );
             write_tsv_fields(
                 &mut w,
                 &[
                     "rejected".to_string(),
                     status.to_string(),
                     state.to_string(),
-                    matrix_action(matrix_policy, false, state).to_string(),
+                    matrix_action_with_quality(matrix_policy, false, state, &quality).to_string(),
                     publication_status(false, state).to_string(),
                     evidence_strength(state).to_string(),
                     recommended_wording(state, false).to_string(),
@@ -1481,6 +1562,12 @@ fn write_orthology_evidence(
                     rescue.end.to_string(),
                     rescue.strand.to_string(),
                     format!("{:.3}", rescue.confidence),
+                    format!("{:.1}", quality.adaptive_identity_floor),
+                    format!("{:.1}", quality.adaptive_coverage_floor),
+                    quality.adaptive_sequence_pass.to_string(),
+                    format!("{:.3}", quality.integrated_score),
+                    quality.tier.to_string(),
+                    quality.risk_flags,
                     synteny_label(rescue.synteny_ok).to_string(),
                     synteny_score_value(&rescue.synteny_evidence),
                     synteny_count_value(rescue.synteny_evidence.support, &rescue.synteny_evidence),

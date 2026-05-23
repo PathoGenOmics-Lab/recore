@@ -16,6 +16,20 @@ and Recore uses semantic versioning.
   instead of hash maps/sets for genome/cluster pairs.
 - Release builds use a single codegen unit for stronger whole-binary
   optimization.
+- Matrix correction now applies an adaptive orthology-quality guard on top of
+  the selected matrix policy. Rare and short clusters require stronger
+  sequence evidence unless same-locus/synteny evidence supports the rescue.
+- `orthology_evidence.tsv` now reports adaptive identity/coverage floors,
+  whether the sequence evidence passes them, an integrated orthology confidence
+  score, confidence tier, and risk flags.
+- Related clusters are now grouped into explicit components in
+  `cluster_components.tsv` and `cluster_component_members.tsv`, so split,
+  annotation-matched, NSC, and paralog-linked clusters can be reviewed as one
+  biological/technical unit.
+- `evolutionary_events.tsv` now includes phylogenetic blink flags,
+  evolutionary signal scores, highlight priorities, and cluster-component
+  context for each cluster.
+- Output manifest schema version is now `recore.outputs.v3`.
 
 ## [0.2.0] - 2026-05-23
 

@@ -1,5 +1,6 @@
 use super::reference_audit::ReferenceClusterEvent;
 use super::*;
+use crate::relationships::ClusterComponentInfo;
 
 #[derive(Debug, Clone)]
 pub(super) struct PhyloNode {
@@ -502,6 +503,7 @@ pub(super) struct EvolutionaryEventInputs<'a> {
     pub(super) phylo_tree: Option<&'a PhyloTree>,
     pub(super) reference_genome: Option<&'a str>,
     pub(super) nsc_result: &'a Option<nscluster::NsClusterResult>,
+    pub(super) component_info: &'a [Option<ClusterComponentInfo>],
     pub(super) output_dir: &'a Path,
 }
 
@@ -1138,6 +1140,95 @@ pub(super) fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
     }
 }
 
+fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
+    if !phylo.assessed {
+        "not_assessed"
+    } else if matches!(
+        phylo.pattern,
+        "homoplastic_gain_loss" | "dispersed_gain_loss" | "singleton_or_noise"
+    ) || (phylo.parsimony_changes >= 6 && phylo.max_carrier_clade_fraction < 0.75)
+    {
+        "high_blink"
+    } else if phylo.parsimony_changes >= 4 {
+        "moderate_blink"
+    } else {
+        "low_blink"
+    }
+}
+
+fn evolutionary_signal_score(
+    phylo: &PhyloPatternSummary,
+    mechanism: &MechanismCall,
+    context: Option<&ClusterContextSummary>,
+    component: Option<&ClusterComponentInfo>,
+    rescue_evidence: &[&RescueEvent],
+) -> f64 {
+    let mut score: f64 = 0.35;
+    score += match phylogenetic_reliability(phylo) {
+        "high" => 0.25,
+        "moderate" => 0.10,
+        "low" => -0.20,
+        _ => 0.0,
+    };
+    score += match mechanism.support {
+        "high" => 0.25,
+        "moderate" => 0.12,
+        "low" => -0.10,
+        "review" => -0.05,
+        _ => 0.0,
+    };
+    score += match context.map(|c| c.interpretation) {
+        Some("stable_single_locus") => 0.12,
+        Some("stable_single_locus_minor_noise") => 0.08,
+        Some("mostly_stable_review_minor_contexts") => 0.03,
+        Some("possible_multilocus_or_paralog") => -0.22,
+        _ => 0.0,
+    };
+    if rescue_evidence.iter().any(|r| r.synteny_ok == Some(true)) {
+        score += 0.08;
+    }
+    if rescue_evidence.iter().any(|r| r.synteny_ok == Some(false)) {
+        score -= 0.18;
+    }
+    if let Some(component) = component {
+        if component.recommendation.contains("paralog") {
+            score -= 0.22;
+        } else if component.recommendation.contains("collapse_aliases") {
+            score -= 0.08;
+        }
+    }
+    match phylogenetic_blink_flag(phylo) {
+        "high_blink" => score -= 0.25,
+        "moderate_blink" => score -= 0.10,
+        _ => {}
+    }
+    score.clamp(0.0, 1.0)
+}
+
+fn highlight_priority(
+    score: f64,
+    phylo: &PhyloPatternSummary,
+    component: Option<&ClusterComponentInfo>,
+    mechanism: &MechanismCall,
+) -> &'static str {
+    if component.is_some_and(|c| c.recommendation.contains("paralog")) {
+        return "review_paralog_component";
+    }
+    if phylogenetic_blink_flag(phylo) == "high_blink" {
+        return "filter_or_review_blinking";
+    }
+    if mechanism.mechanism == "annotation_or_clustering_artifact" {
+        return "deprioritize_cluster_artifact";
+    }
+    if score >= 0.75 {
+        "highlight"
+    } else if score >= 0.55 {
+        "candidate"
+    } else {
+        "review"
+    }
+}
+
 pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> {
     let nsc_presence = nsc_presence_updates(inputs.pa, inputs.nsc_result, inputs.matrix_rescue_map);
     let reference_gi = inputs
@@ -1172,7 +1263,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tancestral_state\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -1239,6 +1330,18 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
             mobile,
             nsc_role: &nsc_role,
         });
+        let component = inputs
+            .component_info
+            .get(ci_val)
+            .and_then(|info| info.as_ref());
+        let signal_score = evolutionary_signal_score(
+            &phylo,
+            &mechanism,
+            contexts_by_cluster[ci_val],
+            component,
+            &all_rescue_evidence,
+        );
+        let priority = highlight_priority(signal_score, &phylo, component, &mechanism);
         let is_interruption = mechanism.mechanism == "IS_interruption_supported";
         let (
             mobile_source,
@@ -1299,6 +1402,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 reference_state.to_string(),
                 phylo.pattern.to_string(),
                 phylogenetic_reliability(&phylo).to_string(),
+                phylogenetic_blink_flag(&phylo).to_string(),
                 phylo.root_state.to_string(),
                 if phylo.assessed {
                     phylo.parsimony_changes.to_string()
@@ -1328,6 +1432,21 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 mechanism.mechanism.to_string(),
                 mechanism.detail,
                 mechanism.support.to_string(),
+                format!("{:.3}", signal_score),
+                priority.to_string(),
+                component
+                    .map(|info| info.component_id.clone())
+                    .unwrap_or_default(),
+                component
+                    .map(|info| info.component_size.to_string())
+                    .unwrap_or_default(),
+                component.map(|info| info.role.clone()).unwrap_or_default(),
+                component
+                    .map(|info| info.relation_types.clone())
+                    .unwrap_or_default(),
+                component
+                    .map(|info| info.recommendation.clone())
+                    .unwrap_or_default(),
                 is_interruption.to_string(),
                 mobile_source,
                 mobile_kind,

@@ -366,6 +366,8 @@ recore_output/
 ├── cluster_locus_context.tsv               # per-cluster locus-context rows when GFFs are loaded
 ├── cluster_locus_summary.tsv               # cluster-level context stability flags
 ├── cluster_relationships.tsv               # SPLIT/PARALOG/annotation-match/NSC relationships
+├── cluster_components.tsv                  # connected components of related clusters
+├── cluster_component_members.tsv           # per-cluster component role and recommendation
 ├── nscluster_report.tsv                    # NSC groups when --nscluster is enabled
 ├── corrected_gff/                          # optional GFF3 files with appended Recore CDSs
 ├── run_manifest.json                       # version, schema, parameters, inputs, and run counts
@@ -385,7 +387,9 @@ For publication figures:
 - Use `gene_presence_absence_recore_states.csv` when plotting uncertainty,
   pseudogenes, partial homology, or rejected contexts.
 - Use `orthology_evidence.tsv` to justify whether a cluster is "present",
-  "partial/disrupted", "possible paralog", or "not supported".
+  "partial/disrupted", "possible paralog", or "not supported". It also reports
+  adaptive sequence floors, an integrated orthology confidence score, and
+  risk flags before a rescue is allowed into the binary matrix.
 - Use `reference_genome_audit.tsv` to support claims such as "absent from
   H37Rv/reference" instead of relying only on the original matrix. The
   `publication_confidence` column flags clean absences separately from
@@ -406,9 +410,12 @@ Key columns in `evolutionary_events.tsv`:
 |--------|---------|
 | `phylogenetic_pattern` | parsimony pattern from the optional tree: retained, loss, gain, recurrent, homoplastic, singleton/noise, or not assessed |
 | `phylogenetic_reliability` | high/moderate/low reliability label from tree pattern and parsimony changes |
+| `phylogenetic_blink_flag` | explicit low/moderate/high flag for repeated gain/loss or singleton-like blinking patterns |
 | `molecular_mechanism` | conservative interpretation combining rescue evidence, reference audit, context stability, mobile-element evidence, and NSC status |
 | `mechanism_detail` | compact reason for the mechanism call, including `nsc_representative` or `nsc_member_merged_into_representative` when relevant |
 | `support_level` | confidence tier for wording, not a functional validation claim |
+| `evolutionary_signal_score` / `highlight_priority` | integrated prioritization for manuscript review; blinking/paralog components are deprioritized |
+| `cluster_component_*` | whether the cluster belongs to a split/paralog/NSC/annotation-linked component and how to review that component |
 | `paralog_locus_risk` | cluster-level risk flag from locus context, synteny rejections, and paralog evidence |
 | `synteny_mean_score` / `synteny_pass_fraction` | quantitative summary of local-context support across rescue evidence |
 | `orf_integrity_summary` | counts of in-frame, out-of-frame, fragmented, or disrupted ORF signals |
@@ -545,6 +552,22 @@ from Recore-corrected member clusters, while
 `evolutionary_events.tsv`, `cluster_relationships.tsv`, and
 `nscluster_report.tsv` keep the redundant members visible for review.
 
+### Adaptive Orthology Guard
+
+Matrix policy is not the only gate. Every accepted rescue is also scored by an
+adaptive guard that combines sequence identity, query coverage, locus/synteny
+evidence, ORF integrity, evidence state, cluster prevalence, and representative
+sequence length. Rare clusters and very short clusters require stronger
+sequence support because they are easier to over-call from weak homology.
+Same-locus evidence such as a passing synteny context can override this stricter
+sequence floor for `STRICT_PRESENT` or `ALIAS_CLUSTER` calls, but weak
+sequence-only evidence is kept as `audit_only_quality`.
+
+The guard is reported in `orthology_evidence.tsv` as
+`adaptive_identity_floor`, `adaptive_coverage_floor`,
+`adaptive_sequence_pass`, `orthology_confidence_score`,
+`orthology_confidence_tier`, and `risk_flags`.
+
 ### Evolutionary Event Interpretation
 
 `evolutionary_events.tsv` is an interpretation layer, not a new correction
@@ -555,6 +578,8 @@ policy. It combines:
 3. local locus-context stability and synteny/paralog rejection evidence;
 4. optional tree parsimony;
 5. optional sequence-based mobile-element support.
+6. connected components of related clusters, so paralogous, redundant, split,
+   or annotation-linked clusters are interpreted together.
 
 Tree tips are matched to matrix columns by exact name or embedded `ASxxxxx`
 identifier. If only a subset of tips matches, evolutionary counts and patterns

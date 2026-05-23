@@ -7,6 +7,7 @@
 
 use ahash::{HashMap, HashMapExt};
 use anyhow::Result;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -14,6 +15,7 @@ use std::path::Path;
 use crate::nscluster::NsClusterResult;
 use crate::parser::PresenceAbsence;
 use crate::rescue::{panaroo_gene_id_suffix_variants, RescueEvent, RescueType};
+use crate::types::ClusterIdx;
 
 #[derive(Debug, Clone)]
 struct RelationshipAccumulator {
@@ -27,6 +29,60 @@ struct RelationshipAccumulator {
     synteny_fail: usize,
     synteny_not_tested: usize,
     examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ClusterComponentInfo {
+    pub component_id: String,
+    pub component_size: usize,
+    pub role: String,
+    pub relation_types: String,
+    pub recommendation: String,
+}
+
+#[derive(Debug, Clone)]
+struct ComponentEdge {
+    a: usize,
+    b: usize,
+    relation_type: String,
+}
+
+#[derive(Debug, Clone)]
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+
+    fn find(&mut self, x: usize) -> usize {
+        if self.parent[x] != x {
+            let root = self.find(self.parent[x]);
+            self.parent[x] = root;
+        }
+        self.parent[x]
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let mut ra = self.find(a);
+        let mut rb = self.find(b);
+        if ra == rb {
+            return;
+        }
+        if self.rank[ra] < self.rank[rb] {
+            std::mem::swap(&mut ra, &mut rb);
+        }
+        self.parent[rb] = ra;
+        if self.rank[ra] == self.rank[rb] {
+            self.rank[ra] += 1;
+        }
+    }
 }
 
 impl RelationshipAccumulator {
@@ -316,6 +372,196 @@ pub fn write_cluster_relationships(
     Ok(row_count)
 }
 
+pub fn write_cluster_components(
+    pa: &PresenceAbsence,
+    rescues: &[RescueEvent],
+    nsc_result: &Option<NsClusterResult>,
+    output_dir: &Path,
+) -> Result<Vec<Option<ClusterComponentInfo>>> {
+    let name_to_idx = pa.cluster_index();
+    let mut edges = Vec::new();
+
+    for rescue in rescues {
+        let related = match &rescue.rescue_type {
+            RescueType::Split { other_cluster } => Some((other_cluster.as_str(), "split")),
+            RescueType::Paralog { other_cluster } => Some((other_cluster.as_str(), "paralog")),
+            _ => None,
+        };
+        if let Some((related_name, relation_type)) = related {
+            if let Some(&other_ci) = name_to_idx.get(related_name) {
+                edges.push(ComponentEdge {
+                    a: rescue.cluster_idx.val(),
+                    b: other_ci.val(),
+                    relation_type: relation_type.to_string(),
+                });
+            }
+        }
+    }
+
+    let mut gene_to_cluster_by_genome: HashMap<usize, HashMap<String, usize>> = HashMap::new();
+    for rescue in rescues {
+        if matches!(
+            rescue.rescue_type,
+            RescueType::Split { .. } | RescueType::Paralog { .. }
+        ) {
+            continue;
+        }
+        let Some(annotation_match) = rescue.annotation_match.as_deref() else {
+            continue;
+        };
+        let genome_map = gene_to_cluster_by_genome
+            .entry(rescue.genome_idx.val())
+            .or_insert_with(|| build_gene_cluster_map(pa, rescue.genome_idx));
+        let Some(&related_idx) = genome_map.get(annotation_match) else {
+            continue;
+        };
+        if related_idx != rescue.cluster_idx.val() {
+            edges.push(ComponentEdge {
+                a: rescue.cluster_idx.val(),
+                b: related_idx,
+                relation_type: "annotation_match_cluster".to_string(),
+            });
+        }
+    }
+
+    let mut nsc_members = BTreeSet::new();
+    let mut nsc_representatives = BTreeSet::new();
+    if let Some(nsc) = nsc_result {
+        for (&member, &representative) in &nsc.merge_map {
+            edges.push(ComponentEdge {
+                a: member.val(),
+                b: representative.val(),
+                relation_type: "nucleotide_similarity_cluster".to_string(),
+            });
+            nsc_members.insert(member.val());
+            nsc_representatives.insert(representative.val());
+        }
+    }
+
+    let mut uf = UnionFind::new(pa.n_clusters());
+    for edge in &edges {
+        uf.union(edge.a, edge.b);
+    }
+
+    let mut members_by_root: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for ci_val in 0..pa.n_clusters() {
+        let root = uf.find(ci_val);
+        members_by_root.entry(root).or_default().push(ci_val);
+    }
+    let mut relation_types_by_root: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+    for edge in &edges {
+        let root = uf.find(edge.a);
+        relation_types_by_root
+            .entry(root)
+            .or_default()
+            .insert(edge.relation_type.clone());
+    }
+
+    let component_path = output_dir.join("cluster_components.tsv");
+    let component_file = fs::File::create(&component_path)?;
+    let mut component_w = BufWriter::new(component_file);
+    writeln!(
+        component_w,
+        "component_id\tn_clusters\trelation_types\trecommendation\tmember_clusters"
+    )?;
+
+    let member_path = output_dir.join("cluster_component_members.tsv");
+    let member_file = fs::File::create(&member_path)?;
+    let mut member_w = BufWriter::new(member_file);
+    writeln!(
+        member_w,
+        "gene_cluster\tcomponent_id\tcomponent_size\tcomponent_role\trelation_types\trecommendation"
+    )?;
+
+    let mut component_info = vec![None; pa.n_clusters()];
+    let mut component_idx = 1usize;
+    for (root, mut members) in members_by_root {
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort_unstable();
+        let relation_types = relation_types_by_root
+            .get(&root)
+            .map(|types| types.iter().cloned().collect::<Vec<_>>().join(";"))
+            .unwrap_or_default();
+        let recommendation = component_recommendation(&relation_types);
+        let component_id = format!("component_{component_idx:04}");
+        component_idx += 1;
+
+        write_tsv_fields(
+            &mut component_w,
+            &[
+                component_id.clone(),
+                members.len().to_string(),
+                relation_types.clone(),
+                recommendation.to_string(),
+                members
+                    .iter()
+                    .map(|&ci| pa.cluster_name(ClusterIdx(ci)))
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            ],
+        )?;
+
+        for &ci in &members {
+            let role = component_role(ci, &relation_types, &nsc_members, &nsc_representatives);
+            let info = ClusterComponentInfo {
+                component_id: component_id.clone(),
+                component_size: members.len(),
+                role: role.to_string(),
+                relation_types: relation_types.clone(),
+                recommendation: recommendation.to_string(),
+            };
+            write_tsv_fields(
+                &mut member_w,
+                &[
+                    pa.cluster_name(ClusterIdx(ci)).to_string(),
+                    info.component_id.clone(),
+                    info.component_size.to_string(),
+                    info.role.clone(),
+                    info.relation_types.clone(),
+                    info.recommendation.clone(),
+                ],
+            )?;
+            component_info[ci] = Some(info);
+        }
+    }
+
+    component_w.flush()?;
+    member_w.flush()?;
+    Ok(component_info)
+}
+
+fn component_recommendation(relation_types: &str) -> &'static str {
+    if relation_types.contains("paralog") {
+        "review_component_keep_paralogs_distinct"
+    } else if relation_types.contains("nucleotide_similarity_cluster")
+        || relation_types.contains("split")
+        || relation_types.contains("annotation_match_cluster")
+    {
+        "review_or_collapse_aliases"
+    } else {
+        "review"
+    }
+}
+
+fn component_role(
+    ci: usize,
+    relation_types: &str,
+    nsc_members: &BTreeSet<usize>,
+    nsc_representatives: &BTreeSet<usize>,
+) -> &'static str {
+    if relation_types.contains("paralog") {
+        "paralog_component_member"
+    } else if nsc_representatives.contains(&ci) {
+        "nsc_representative"
+    } else if nsc_members.contains(&ci) {
+        "nsc_member"
+    } else {
+        "related_cluster_member"
+    }
+}
+
 fn build_gene_cluster_map(
     pa: &PresenceAbsence,
     gi: crate::types::GenomeIdx,
@@ -410,5 +656,62 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("cluster_relationships.tsv")).unwrap();
         assert!(text.contains("group_a\tgroup_b\tannotation_match_cluster"));
         assert!(text.contains("review_alias_without_full_synteny"));
+    }
+
+    #[test]
+    fn cluster_components_group_related_clusters() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["group_a".into(), "group_b".into(), "group_c".into()],
+            vec!["genome_1".into()],
+            vec![
+                vec!["".into()],
+                vec!["gene_b".into()],
+                vec!["gene_c".into()],
+            ],
+        );
+        let rescues = vec![
+            RescueEvent {
+                cluster_idx: ClusterIdx(0),
+                genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Split {
+                    other_cluster: "group_b".into(),
+                },
+                identity: 99.2,
+                coverage: 98.5,
+                contig: "ctg".into(),
+                start: 10,
+                end: 110,
+                strand: '+',
+                annotation_match: Some("gene_b".into()),
+                confidence: 1.1,
+                synteny_ok: Some(true),
+                synteny_evidence: SyntenyEvidence::default(),
+                fragment_evidence: FragmentEvidence::default(),
+            },
+            RescueEvent {
+                cluster_idx: ClusterIdx(2),
+                genome_idx: GenomeIdx(0),
+                rescue_type: RescueType::Dropped,
+                identity: 99.2,
+                coverage: 98.5,
+                contig: "ctg".into(),
+                start: 210,
+                end: 310,
+                strand: '+',
+                annotation_match: None,
+                confidence: 1.1,
+                synteny_ok: Some(true),
+                synteny_evidence: SyntenyEvidence::default(),
+                fragment_evidence: FragmentEvidence::default(),
+            },
+        ];
+        let dir = tempdir().unwrap();
+        let components = write_cluster_components(&pa, &rescues, &None, dir.path()).unwrap();
+        assert_eq!(components[0].as_ref().unwrap().component_size, 2);
+        assert_eq!(components[1].as_ref().unwrap().component_size, 2);
+        assert!(components[2].is_none());
+        let text = std::fs::read_to_string(dir.path().join("cluster_components.tsv")).unwrap();
+        assert!(text.contains("group_a;group_b"));
+        assert!(text.contains("review_or_collapse_aliases"));
     }
 }

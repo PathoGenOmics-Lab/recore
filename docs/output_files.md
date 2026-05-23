@@ -101,11 +101,13 @@ or paralog candidate.
 | `decision` | `accepted` or `rejected` |
 | `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
 | `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `MISSING_CDS_UNVALIDATED`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
-| `matrix_action` | `correct_presence` for accepted rescues, `audit_only` for rejected candidates |
+| `matrix_action` | `correct_presence` for accepted rescues, `audit_only_quality` for accepted evidence that fails the adaptive guard, `audit_only_policy` for accepted evidence excluded by policy, or `audit_only` for rejected candidates |
 | `publication_status` | Conservative publication-level interpretation of the evidence |
 | `evidence_strength` | `high`, `moderate`, `review`, or `low` |
 | `recommended_wording` | Short text for how to describe the event in downstream tables/manuscripts |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
+| `adaptive_identity_floor`, `adaptive_coverage_floor`, `adaptive_sequence_pass` | Per-cluster sequence guard used before a rescue can enter the binary matrix; rare or short clusters require stronger evidence unless same-locus context supports the rescue |
+| `orthology_confidence_score`, `orthology_confidence_tier`, `risk_flags` | Integrated confidence and review flags combining sequence, synteny, ORF, state, prevalence, and cluster length |
 | `synteny_score`, `synteny_support_n`, `synteny_reference_contexts`, `synteny_neighbors`, `synteny_upstream_matches`, `synteny_downstream_matches` | Quantitative adaptive synteny evidence, same meaning as `rescue_report.tsv` |
 | `orf_integrity_signal` | ORF-level signal, same meaning as `rescue_report.tsv` |
 | `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
@@ -187,11 +189,13 @@ corrected binary state for each cluster.
 | `reference_state` | `present`, `absent`, or `not_assessed` for the requested `--reference-genome` |
 | `phylogenetic_pattern` | `ancestral_retained`, `ancestral_loss`, `lineage_specific_gain`, `clade_associated_presence`, `recurrent_gain`, `recurrent_loss`, `homoplastic_gain_loss`, `singleton_or_noise`, `dispersed_gain_loss`, or `not_assessed_no_tree` |
 | `phylogenetic_reliability` | `high`, `moderate`, `low`, or `not_assessed`, based on tree pattern and parsimony changes |
+| `phylogenetic_blink_flag` | `low_blink`, `moderate_blink`, `high_blink`, or `not_assessed`; high blink marks clusters with singleton/dispersed/homoplastic behaviour that should be filtered or reviewed before highlighting |
 | `ancestral_state` | Parsimony root state: `present`, `absent`, or `unknown` |
 | `phylogenetic_changes`, `phylogenetic_gains`, `phylogenetic_losses` | Parsimony counts on the matched tree |
 | `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one clade, and the largest carrier-only clade fraction |
 | `molecular_mechanism` | Best conservative mechanism call: reference-derived allele, IS interruption, pseudogenization, fragmentation, duplication/paralog expansion, context shift, acquisition/insertion candidate, deletion/loss candidate, homoplastic/unstable signal, ancestral retention, or unresolved |
-| `mechanism_detail`, `support_level`, `recommended_wording` | Evidence summary and publication-facing interpretation |
+| `mechanism_detail`, `support_level`, `evolutionary_signal_score`, `highlight_priority`, `recommended_wording` | Evidence summary, integrated prioritization, and publication-facing interpretation |
+| `cluster_component_id`, `cluster_component_size`, `cluster_component_role`, `cluster_component_relations`, `cluster_component_recommendation` | Connected-component context for split, annotation-matched, NSC, and paralog-linked clusters |
 | `is_interruption_supported`, `mobile_element_*` | Nearby mobile element signal. `mobile_element_source=sequence` comes from `--mobile-element-reference` alignments and is name-agnostic; `mobile_element_source=annotation` is the fallback from GFF labels/products/notes. IS calls are conservative and require sequence support or an insertion-sequence-like label within 250 bp of a fragmented/disrupted rescue |
 | `reference_event_class`, `target_reference_cluster`, `target_reference_gene` | Reference-derived event evidence when available |
 | `context_interpretation`, `paralog_locus_risk` | Locus-context stability and paralog/multilocus risk summary |
@@ -329,6 +333,36 @@ the output matrix automatically.
 
 ---
 
+## cluster_components.tsv / cluster_component_members.tsv
+
+Written for every run. These tables convert pairwise relationships into
+connected components, so split clusters, annotation-matched clusters, NSC
+members, and paralog-linked clusters can be reviewed as one unit.
+
+`cluster_components.tsv` contains one row per non-singleton component:
+
+| Column | Description |
+|--------|-------------|
+| `component_id` | Stable component label for the run |
+| `n_clusters` | Number of clusters in the component |
+| `relation_types` | Relationship classes connecting the component |
+| `recommendation` | Component-level action, such as `review_or_collapse_aliases` or `review_component_keep_paralogs_distinct` |
+| `member_clusters` | Semicolon-separated cluster names |
+
+`cluster_component_members.tsv` contains one row per member cluster:
+
+| Column | Description |
+|--------|-------------|
+| `gene_cluster` | Panaroo cluster name |
+| `component_id`, `component_size` | Component membership |
+| `component_role` | `nsc_representative`, `nsc_member`, `related_cluster_member`, or `paralog_component_member` |
+| `relation_types`, `recommendation` | Same component evidence and review action |
+
+These components are also reported in `evolutionary_events.tsv` so manuscript
+highlighting can deprioritize redundant aliases or paralog components.
+
+---
+
 ## summary.txt
 
 Human-readable run summary. Example:
@@ -381,7 +415,7 @@ Nucleotide similarity clustering:
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v2`);
+- `schema_version` (`recore.outputs.v3`);
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;

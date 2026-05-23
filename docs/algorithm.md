@@ -265,6 +265,16 @@ Written only when PARALOG candidates lack explicit synteny support. It uses the 
 
 One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, evidence state (`STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, `REJECTED_CONTEXT`), matrix action, publication status, annotation-matched cluster, synteny state, quantitative synteny evidence, ORF integrity signal, confidence, coordinates, and rejection reason.
 
+Before an accepted rescue enters the binary matrix, Recore also applies an
+adaptive orthology-quality guard. The guard raises the required sequence
+identity/coverage for rare or very short clusters, while allowing strong
+same-locus evidence such as passing synteny to support strict/alias calls. The
+guard writes `adaptive_identity_floor`, `adaptive_coverage_floor`,
+`adaptive_sequence_pass`, `orthology_confidence_score`,
+`orthology_confidence_tier`, and `risk_flags`. Accepted evidence that passes
+the selected `--matrix-policy` but fails this guard is kept as
+`audit_only_quality`.
+
 ### reference_genome_audit.tsv
 
 Written when `--reference-genome` is provided. The reference can be an exact matrix column or an embedded `ASxxxxx` identifier. For every cluster, Recore reports whether the reference matrix already contains it, whether Recore rescued reference evidence, whether only rejected/paralog/partial evidence exists, or whether no evidence was found. The `reference_absence_class` column is deliberately simple:
@@ -315,6 +325,12 @@ shifts, acquisition/insertion candidates, deletion/loss candidates, and
 unresolved accessory variation. These calls are audit-only and are intended for
 manual review and manuscript wording, not automatic binary correction.
 
+The table also reports a `phylogenetic_blink_flag`, an
+`evolutionary_signal_score`, and a `highlight_priority`. These combine tree
+coherence, mechanism support, synteny, locus-context stability, ORF integrity,
+and cluster-component risk so highly dispersed or singleton-like clusters are
+easy to filter before manuscript highlighting.
+
 Mobile-element support has two tiers. If `--mobile-element-reference` is
 provided, Recore aligns that nucleotide FASTA of mobile elements, IS, or
 transposase loci against genomes with rescue/disruption evidence and reports
@@ -330,11 +346,20 @@ fragmented or disrupted rescue plus close mobile-element evidence within
 
 Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context. Synteny validation uses an adaptive 1-to-5-neighbour model, but this summary remains fixed-width so locus stability can be compared across clusters.
 
+### cluster_components.tsv / cluster_component_members.tsv
+
+Written for every run. Recore converts pairwise cluster relationships into
+connected components. Edges come from split-cluster evidence, annotation-match
+evidence, NSC merges, and paralog evidence. The component tables make it clear
+whether a cluster should be reviewed as a possible alias/redundant component or
+as part of a paralog family that should remain distinct by default. Component
+membership is mirrored in `evolutionary_events.tsv`.
+
 ### gene_presence_absence_recore.csv
 
 Drop-in replacement for Panaroo's CSV. Changes:
 - Rescued genes: cell value `RESCUED:contig:start-end` (1-based coordinates)
-- Binary correction is controlled by `--matrix-policy` (`strict`, `balanced`, `sensitive`)
+- Binary correction is controlled by `--matrix-policy` (`strict`, `balanced`, `sensitive`) plus the adaptive orthology-quality guard
 - NSC-merged genes: cell value `NSC_MERGED`
 - Clusters absorbed by NSC are removed (rows dropped)
 - Metadata columns (No. isolates, No. sequences) updated to reflect rescues
