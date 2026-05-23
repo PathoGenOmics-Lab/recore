@@ -1,4 +1,6 @@
-fn write_corrected_csv(
+use super::*;
+
+pub(super) fn write_corrected_csv(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     output_dir: &std::path::Path,
@@ -99,18 +101,18 @@ fn write_corrected_csv(
     Ok(())
 }
 
-struct MultistateMatrixInputs<'a> {
-    pa: &'a crate::parser::PresenceAbsence,
-    accepted_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
-    nsc_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
-    synteny_rejected: &'a [RescueEvent],
-    paralog_rejected: &'a [RescueEvent],
-    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
-    output_dir: &'a std::path::Path,
-    nsc_result: &'a Option<nscluster::NsClusterResult>,
+pub(super) struct MultistateMatrixInputs<'a> {
+    pub(super) pa: &'a crate::parser::PresenceAbsence,
+    pub(super) accepted_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    pub(super) nsc_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    pub(super) synteny_rejected: &'a [RescueEvent],
+    pub(super) paralog_rejected: &'a [RescueEvent],
+    pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    pub(super) output_dir: &'a std::path::Path,
+    pub(super) nsc_result: &'a Option<nscluster::NsClusterResult>,
 }
 
-fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Result<()> {
+pub(super) fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Result<()> {
     let pa = inputs.pa;
     let clusters_to_skip: ahash::HashSet<usize> = inputs
         .nsc_result
@@ -200,7 +202,10 @@ fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Result<()> {
     Ok(())
 }
 
-fn copy_text_maybe_gzip_with_header(path: &std::path::Path, writer: &mut impl Write) -> Result<()> {
+pub(super) fn copy_text_maybe_gzip_with_header(
+    path: &std::path::Path,
+    writer: &mut impl Write,
+) -> Result<()> {
     let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     let mut reader: Box<dyn BufRead> = if path.extension().is_some_and(|e| e == "gz") {
         Box::new(BufReader::new(flate2::read::GzDecoder::new(file)))
@@ -255,7 +260,7 @@ fn copy_text_maybe_gzip_with_header(path: &std::path::Path, writer: &mut impl Wr
     Ok(())
 }
 
-fn gff_escape(value: &str) -> String {
+pub(super) fn gff_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {
@@ -272,7 +277,7 @@ fn gff_escape(value: &str) -> String {
     out
 }
 
-fn safe_id_component(value: &str) -> String {
+pub(super) fn safe_id_component(value: &str) -> String {
     value
         .chars()
         .map(|ch| {
@@ -285,7 +290,7 @@ fn safe_id_component(value: &str) -> String {
         .collect()
 }
 
-fn write_corrected_gffs(
+pub(super) fn write_corrected_gffs(
     rescues: &[RescueEvent],
     pa: &crate::parser::PresenceAbsence,
     gff_paths: &HashMap<GenomeIdx, PathBuf>,
@@ -391,7 +396,7 @@ fn write_corrected_gffs(
     Ok(())
 }
 
-fn count_core_after(
+pub(super) fn count_core_after(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     nsc_result: &Option<nscluster::NsClusterResult>,
@@ -426,7 +431,7 @@ fn count_core_after(
         .count()
 }
 
-fn count_soft_core_after(
+pub(super) fn count_soft_core_after(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     nsc_result: &Option<nscluster::NsClusterResult>,
@@ -462,32 +467,32 @@ fn count_soft_core_after(
         .count()
 }
 
-struct SummaryStats {
-    core_before: usize,
-    total_gaps: usize,
-    filtered_gaps: usize,
-    skipped_by_prevalence: usize,
-    searchable_gaps: usize,
-    missing_fasta_gaps: usize,
-    dropped: usize,
-    missing_cds: usize,
-    split: usize,
-    fragmented: usize,
-    alignment_split: usize,
-    start_variant: usize,
-    paralog: usize,
-    pseudogene: usize,
-    synteny_rejected: usize,
-    paralog_rejected: usize,
-    matrix_policy: MatrixPolicy,
-    matrix_corrected: usize,
-    nsc_matrix_corrected: usize,
-    synteny_enabled: bool,
-    nsc_clusters: usize,
-    nsc_merged_genes: usize,
+pub(super) struct SummaryStats {
+    pub(super) core_before: usize,
+    pub(super) total_gaps: usize,
+    pub(super) filtered_gaps: usize,
+    pub(super) skipped_by_prevalence: usize,
+    pub(super) searchable_gaps: usize,
+    pub(super) missing_fasta_gaps: usize,
+    pub(super) dropped: usize,
+    pub(super) missing_cds: usize,
+    pub(super) split: usize,
+    pub(super) fragmented: usize,
+    pub(super) alignment_split: usize,
+    pub(super) start_variant: usize,
+    pub(super) paralog: usize,
+    pub(super) pseudogene: usize,
+    pub(super) synteny_rejected: usize,
+    pub(super) paralog_rejected: usize,
+    pub(super) matrix_policy: MatrixPolicy,
+    pub(super) matrix_corrected: usize,
+    pub(super) nsc_matrix_corrected: usize,
+    pub(super) synteny_enabled: bool,
+    pub(super) nsc_clusters: usize,
+    pub(super) nsc_merged_genes: usize,
 }
 
-fn write_nsc_report(
+pub(super) fn write_nsc_report(
     nsc: &nscluster::NsClusterResult,
     cluster_names: &[String],
     output_dir: &std::path::Path,
@@ -516,7 +521,7 @@ fn write_nsc_report(
     Ok(())
 }
 
-fn write_summary(
+pub(super) fn write_summary(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     rescues: &[RescueEvent],
@@ -621,7 +626,7 @@ fn write_summary(
     Ok(())
 }
 
-fn json_escape(value: &str) -> String {
+pub(super) fn json_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for ch in value.chars() {
@@ -643,11 +648,11 @@ fn json_escape(value: &str) -> String {
     out
 }
 
-fn json_path(path: &std::path::Path) -> String {
+pub(super) fn json_path(path: &std::path::Path) -> String {
     json_escape(&path.display().to_string())
 }
 
-fn write_run_manifest(
+pub(super) fn write_run_manifest(
     args: &Args,
     pa: &crate::parser::PresenceAbsence,
     stats: &SummaryStats,

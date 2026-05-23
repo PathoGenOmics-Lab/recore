@@ -1,50 +1,53 @@
+use super::reference_audit::ReferenceClusterEvent;
+use super::*;
+
 #[derive(Debug, Clone)]
-struct PhyloNode {
-    label: Option<String>,
-    genome_idx: Option<GenomeIdx>,
-    children: Vec<PhyloNode>,
+pub(super) struct PhyloNode {
+    pub(super) label: Option<String>,
+    pub(super) genome_idx: Option<GenomeIdx>,
+    pub(super) children: Vec<PhyloNode>,
 }
 
 #[derive(Debug, Clone)]
-struct PhyloTree {
-    root: PhyloNode,
+pub(super) struct PhyloTree {
+    pub(super) root: PhyloNode,
 }
 
 #[derive(Debug, Clone, Default)]
-struct PhyloPatternSummary {
-    assessed: bool,
-    matched_tips: usize,
-    present_tips: usize,
-    absent_tips: usize,
-    parsimony_changes: usize,
-    gains: usize,
-    losses: usize,
-    root_state: &'static str,
-    carrier_monophyly: bool,
-    max_carrier_clade_fraction: f64,
-    pattern: &'static str,
+pub(super) struct PhyloPatternSummary {
+    pub(super) assessed: bool,
+    pub(super) matched_tips: usize,
+    pub(super) present_tips: usize,
+    pub(super) absent_tips: usize,
+    pub(super) parsimony_changes: usize,
+    pub(super) gains: usize,
+    pub(super) losses: usize,
+    pub(super) root_state: &'static str,
+    pub(super) carrier_monophyly: bool,
+    pub(super) max_carrier_clade_fraction: f64,
+    pub(super) pattern: &'static str,
 }
 
 #[derive(Debug, Clone, Default)]
-struct FitchNodeSummary {
-    state_set: u8,
-    matched_tips: usize,
-    present_tips: usize,
-    changes: usize,
-    children: Vec<FitchNodeSummary>,
+pub(super) struct FitchNodeSummary {
+    pub(super) state_set: u8,
+    pub(super) matched_tips: usize,
+    pub(super) present_tips: usize,
+    pub(super) changes: usize,
+    pub(super) children: Vec<FitchNodeSummary>,
 }
 
-struct NewickParser<'a> {
-    input: &'a str,
-    pos: usize,
+pub(super) struct NewickParser<'a> {
+    pub(super) input: &'a str,
+    pub(super) pos: usize,
 }
 
 impl<'a> NewickParser<'a> {
-    fn new(input: &'a str) -> Self {
+    pub(super) fn new(input: &'a str) -> Self {
         Self { input, pos: 0 }
     }
 
-    fn parse(mut self) -> Result<PhyloNode> {
+    pub(super) fn parse(mut self) -> Result<PhyloNode> {
         self.skip_ignored();
         let root = self.parse_subtree()?;
         self.skip_ignored();
@@ -169,7 +172,10 @@ impl<'a> NewickParser<'a> {
     }
 }
 
-fn load_phylo_tree(path: &Path, pa: &crate::parser::PresenceAbsence) -> Result<PhyloTree> {
+pub(super) fn load_phylo_tree(
+    path: &Path,
+    pa: &crate::parser::PresenceAbsence,
+) -> Result<PhyloTree> {
     let text =
         fs::read_to_string(path).with_context(|| format!("Cannot read tree {}", path.display()))?;
     let mut root = NewickParser::new(&text)
@@ -194,7 +200,10 @@ fn load_phylo_tree(path: &Path, pa: &crate::parser::PresenceAbsence) -> Result<P
     Ok(PhyloTree { root })
 }
 
-fn resolve_phylo_tips(node: &mut PhyloNode, pa: &crate::parser::PresenceAbsence) -> (usize, usize) {
+pub(super) fn resolve_phylo_tips(
+    node: &mut PhyloNode,
+    pa: &crate::parser::PresenceAbsence,
+) -> (usize, usize) {
     if node.children.is_empty() {
         node.genome_idx = node
             .label
@@ -216,7 +225,10 @@ fn resolve_phylo_tips(node: &mut PhyloNode, pa: &crate::parser::PresenceAbsence)
     (matched, unmatched)
 }
 
-fn resolve_tree_tip(label: &str, pa: &crate::parser::PresenceAbsence) -> Option<GenomeIdx> {
+pub(super) fn resolve_tree_tip(
+    label: &str,
+    pa: &crate::parser::PresenceAbsence,
+) -> Option<GenomeIdx> {
     for gi_val in 0..pa.n_genomes() {
         let gi = GenomeIdx(gi_val);
         if pa.genome_name(gi) == label {
@@ -235,7 +247,7 @@ fn resolve_tree_tip(label: &str, pa: &crate::parser::PresenceAbsence) -> Option<
     None
 }
 
-fn fitch_postorder(node: &PhyloNode, present_by_genome: &[bool]) -> FitchNodeSummary {
+pub(super) fn fitch_postorder(node: &PhyloNode, present_by_genome: &[bool]) -> FitchNodeSummary {
     const ABSENT: u8 = 0b01;
     const PRESENT: u8 = 0b10;
 
@@ -290,12 +302,12 @@ fn fitch_postorder(node: &PhyloNode, present_by_genome: &[bool]) -> FitchNodeSum
     }
 }
 
-fn state_set_contains(state_set: u8, present: bool) -> bool {
+pub(super) fn state_set_contains(state_set: u8, present: bool) -> bool {
     let bit = if present { 0b10 } else { 0b01 };
     state_set & bit != 0
 }
 
-fn choose_root_state(summary: &FitchNodeSummary) -> bool {
+pub(super) fn choose_root_state(summary: &FitchNodeSummary) -> bool {
     if summary.state_set == 0b10 {
         true
     } else if summary.state_set == 0b01 {
@@ -305,7 +317,7 @@ fn choose_root_state(summary: &FitchNodeSummary) -> bool {
     }
 }
 
-fn assign_fitch_states(
+pub(super) fn assign_fitch_states(
     summary: &FitchNodeSummary,
     parent_state: Option<bool>,
     gains: &mut usize,
@@ -337,7 +349,7 @@ fn assign_fitch_states(
     Some(state)
 }
 
-fn carrier_clade_stats(summary: &FitchNodeSummary, total_present: usize) -> (bool, f64) {
+pub(super) fn carrier_clade_stats(summary: &FitchNodeSummary, total_present: usize) -> (bool, f64) {
     if total_present == 0 {
         return (false, 0.0);
     }
@@ -366,7 +378,7 @@ fn carrier_clade_stats(summary: &FitchNodeSummary, total_present: usize) -> (boo
     (exact, best as f64 / total_present as f64)
 }
 
-fn classify_phylogenetic_pattern(summary: &PhyloPatternSummary) -> &'static str {
+pub(super) fn classify_phylogenetic_pattern(summary: &PhyloPatternSummary) -> &'static str {
     if !summary.assessed {
         return "not_assessed_no_tree";
     }
@@ -403,7 +415,7 @@ fn classify_phylogenetic_pattern(summary: &PhyloPatternSummary) -> &'static str 
     "dispersed_gain_loss"
 }
 
-fn summarize_phylogenetic_pattern(
+pub(super) fn summarize_phylogenetic_pattern(
     tree: Option<&PhyloTree>,
     present_by_genome: &[bool],
 ) -> PhyloPatternSummary {
@@ -445,55 +457,55 @@ fn summarize_phylogenetic_pattern(
 }
 
 #[derive(Debug, Clone)]
-struct MobileElementHit {
-    genome_idx: GenomeIdx,
-    query_name: String,
-    contig: String,
-    start: u64,
-    end: u64,
-    strand: char,
-    identity: f64,
-    coverage: f64,
+pub(super) struct MobileElementHit {
+    pub(super) genome_idx: GenomeIdx,
+    pub(super) query_name: String,
+    pub(super) contig: String,
+    pub(super) start: u64,
+    pub(super) end: u64,
+    pub(super) strand: char,
+    pub(super) identity: f64,
+    pub(super) coverage: f64,
 }
 
 #[derive(Debug, Clone)]
-struct MobileElementEvidence {
-    genome_name: String,
-    source: &'static str,
-    kind: &'static str,
-    label: String,
-    distance_bp: u64,
-    identity: Option<f64>,
-    coverage: Option<f64>,
+pub(super) struct MobileElementEvidence {
+    pub(super) genome_name: String,
+    pub(super) source: &'static str,
+    pub(super) kind: &'static str,
+    pub(super) label: String,
+    pub(super) distance_bp: u64,
+    pub(super) identity: Option<f64>,
+    pub(super) coverage: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
-struct MechanismCall {
-    mechanism: &'static str,
-    detail: String,
-    support: &'static str,
-    wording: &'static str,
-    mobile: Option<MobileElementEvidence>,
+pub(super) struct MechanismCall {
+    pub(super) mechanism: &'static str,
+    pub(super) detail: String,
+    pub(super) support: &'static str,
+    pub(super) wording: &'static str,
+    pub(super) mobile: Option<MobileElementEvidence>,
 }
 
-struct EvolutionaryEventInputs<'a> {
-    pa: &'a crate::parser::PresenceAbsence,
-    matrix_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
-    rescues: &'a [RescueEvent],
-    synteny_rejected: &'a [RescueEvent],
-    paralog_rejected: &'a [RescueEvent],
-    reference_cluster_events: &'a [ReferenceClusterEvent],
-    context_summaries: &'a [ClusterContextSummary],
-    gff_indices: &'a HashMap<GenomeIdx, GffIndex>,
-    mobile_element_hits: &'a [MobileElementHit],
-    mobile_element_window: u64,
-    phylo_tree: Option<&'a PhyloTree>,
-    reference_genome: Option<&'a str>,
-    nsc_result: &'a Option<nscluster::NsClusterResult>,
-    output_dir: &'a Path,
+pub(super) struct EvolutionaryEventInputs<'a> {
+    pub(super) pa: &'a crate::parser::PresenceAbsence,
+    pub(super) matrix_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
+    pub(super) rescues: &'a [RescueEvent],
+    pub(super) synteny_rejected: &'a [RescueEvent],
+    pub(super) paralog_rejected: &'a [RescueEvent],
+    pub(super) reference_cluster_events: &'a [ReferenceClusterEvent],
+    pub(super) context_summaries: &'a [ClusterContextSummary],
+    pub(super) gff_indices: &'a HashMap<GenomeIdx, GffIndex>,
+    pub(super) mobile_element_hits: &'a [MobileElementHit],
+    pub(super) mobile_element_window: u64,
+    pub(super) phylo_tree: Option<&'a PhyloTree>,
+    pub(super) reference_genome: Option<&'a str>,
+    pub(super) nsc_result: &'a Option<nscluster::NsClusterResult>,
+    pub(super) output_dir: &'a Path,
 }
 
-fn nsc_presence_updates(
+pub(super) fn nsc_presence_updates(
     pa: &crate::parser::PresenceAbsence,
     nsc_result: &Option<nscluster::NsClusterResult>,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
@@ -514,7 +526,7 @@ fn nsc_presence_updates(
         .unwrap_or_default()
 }
 
-fn corrected_cluster_present(
+pub(super) fn corrected_cluster_present(
     pa: &crate::parser::PresenceAbsence,
     ci: ClusterIdx,
     gi: GenomeIdx,
@@ -526,7 +538,7 @@ fn corrected_cluster_present(
         || nsc_presence.contains(&(ci.val(), gi.val()))
 }
 
-fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
+pub(super) fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
     let joined = labels.join("|");
     let normalized = joined
         .to_ascii_lowercase()
@@ -551,20 +563,20 @@ fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
     Some((kind, joined))
 }
 
-struct MobileElementSearchInput<'a> {
-    path: &'a Path,
-    genome_files: &'a HashMap<String, PathBuf>,
-    pa: &'a crate::parser::PresenceAbsence,
-    rescues: &'a [RescueEvent],
-    synteny_rejected: &'a [RescueEvent],
-    paralog_rejected: &'a [RescueEvent],
-    threads: usize,
-    min_identity: f64,
-    min_coverage: f64,
-    preset: &'a str,
+pub(super) struct MobileElementSearchInput<'a> {
+    pub(super) path: &'a Path,
+    pub(super) genome_files: &'a HashMap<String, PathBuf>,
+    pub(super) pa: &'a crate::parser::PresenceAbsence,
+    pub(super) rescues: &'a [RescueEvent],
+    pub(super) synteny_rejected: &'a [RescueEvent],
+    pub(super) paralog_rejected: &'a [RescueEvent],
+    pub(super) threads: usize,
+    pub(super) min_identity: f64,
+    pub(super) min_coverage: f64,
+    pub(super) preset: &'a str,
 }
 
-fn search_mobile_element_reference(
+pub(super) fn search_mobile_element_reference(
     input: MobileElementSearchInput<'_>,
 ) -> Result<Vec<MobileElementHit>> {
     let mobile_ref = parse_pan_reference(input.path, true)
@@ -648,7 +660,7 @@ fn search_mobile_element_reference(
     Ok(mobile_hits)
 }
 
-fn interval_distance(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> u64 {
+pub(super) fn interval_distance(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> u64 {
     if end_a < start_b {
         start_b - end_a
     } else {
@@ -656,7 +668,7 @@ fn interval_distance(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> u64 
     }
 }
 
-fn nearest_mobile_element_for_rescue(
+pub(super) fn nearest_mobile_element_for_rescue(
     rescue: &RescueEvent,
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
@@ -732,7 +744,7 @@ fn nearest_mobile_element_for_rescue(
     best
 }
 
-fn nearest_mobile_element_for_cluster(
+pub(super) fn nearest_mobile_element_for_cluster(
     rescues: &[&RescueEvent],
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
@@ -753,7 +765,7 @@ fn nearest_mobile_element_for_cluster(
         })
 }
 
-fn mobile_source_priority(source: &str) -> u8 {
+pub(super) fn mobile_source_priority(source: &str) -> u8 {
     if source == "sequence" {
         0
     } else {
@@ -761,7 +773,7 @@ fn mobile_source_priority(source: &str) -> u8 {
     }
 }
 
-fn mobile_evidence_is_better(
+pub(super) fn mobile_evidence_is_better(
     candidate: &MobileElementEvidence,
     current: &MobileElementEvidence,
 ) -> bool {
@@ -773,7 +785,10 @@ fn mobile_evidence_is_better(
         .is_lt()
 }
 
-fn nsc_role_for_cluster(ci: ClusterIdx, nsc_result: &Option<nscluster::NsClusterResult>) -> String {
+pub(super) fn nsc_role_for_cluster(
+    ci: ClusterIdx,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+) -> String {
     let Some(nsc) = nsc_result else {
         return String::new();
     };
@@ -788,7 +803,7 @@ fn nsc_role_for_cluster(ci: ClusterIdx, nsc_result: &Option<nscluster::NsCluster
     String::new()
 }
 
-fn rescue_type_counts(rescues: &[&RescueEvent]) -> String {
+pub(super) fn rescue_type_counts(rescues: &[&RescueEvent]) -> String {
     if rescues.is_empty() {
         return String::new();
     }
@@ -803,7 +818,7 @@ fn rescue_type_counts(rescues: &[&RescueEvent]) -> String {
         .join(";")
 }
 
-fn orf_signal_counts(rescues: &[&RescueEvent]) -> String {
+pub(super) fn orf_signal_counts(rescues: &[&RescueEvent]) -> String {
     if rescues.is_empty() {
         return String::new();
     }
@@ -818,7 +833,7 @@ fn orf_signal_counts(rescues: &[&RescueEvent]) -> String {
         .join(";")
 }
 
-fn synteny_mean_score(rescues: &[&RescueEvent]) -> String {
+pub(super) fn synteny_mean_score(rescues: &[&RescueEvent]) -> String {
     let scores: Vec<f64> = rescues
         .iter()
         .filter_map(|rescue| rescue.synteny_evidence.score)
@@ -830,7 +845,7 @@ fn synteny_mean_score(rescues: &[&RescueEvent]) -> String {
     }
 }
 
-fn synteny_pass_fraction(rescues: &[&RescueEvent]) -> String {
+pub(super) fn synteny_pass_fraction(rescues: &[&RescueEvent]) -> String {
     let assessed = rescues
         .iter()
         .filter(|rescue| rescue.synteny_ok.is_some())
@@ -845,7 +860,7 @@ fn synteny_pass_fraction(rescues: &[&RescueEvent]) -> String {
     format!("{:.3}", passed as f64 / assessed as f64)
 }
 
-fn paralog_locus_risk(
+pub(super) fn paralog_locus_risk(
     context: Option<&ClusterContextSummary>,
     accepted: &[&RescueEvent],
     synteny_rejected: &[&RescueEvent],
@@ -874,7 +889,7 @@ fn paralog_locus_risk(
     }
 }
 
-fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static str {
+pub(super) fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static str {
     if !phylo.assessed {
         return "not_assessed";
     }
@@ -900,20 +915,20 @@ fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static str {
     "moderate"
 }
 
-struct MechanismInput<'a> {
-    pa: &'a crate::parser::PresenceAbsence,
-    phylo: &'a PhyloPatternSummary,
-    reference_state: &'a str,
-    reference_event: Option<&'a ReferenceClusterEvent>,
-    accepted: &'a [&'a RescueEvent],
-    synteny_rejected: &'a [&'a RescueEvent],
-    paralog_rejected: &'a [&'a RescueEvent],
-    context: Option<&'a ClusterContextSummary>,
-    mobile: Option<MobileElementEvidence>,
-    nsc_role: &'a str,
+pub(super) struct MechanismInput<'a> {
+    pub(super) pa: &'a crate::parser::PresenceAbsence,
+    pub(super) phylo: &'a PhyloPatternSummary,
+    pub(super) reference_state: &'a str,
+    pub(super) reference_event: Option<&'a ReferenceClusterEvent>,
+    pub(super) accepted: &'a [&'a RescueEvent],
+    pub(super) synteny_rejected: &'a [&'a RescueEvent],
+    pub(super) paralog_rejected: &'a [&'a RescueEvent],
+    pub(super) context: Option<&'a ClusterContextSummary>,
+    pub(super) mobile: Option<MobileElementEvidence>,
+    pub(super) nsc_role: &'a str,
 }
 
-fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
+pub(super) fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
     let MechanismInput {
         pa,
         phylo,
@@ -1125,7 +1140,7 @@ fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
     }
 }
 
-fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> {
+pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> {
     let nsc_presence = nsc_presence_updates(inputs.pa, inputs.nsc_result, inputs.matrix_rescue_map);
     let reference_gi = inputs
         .reference_genome
@@ -1348,24 +1363,24 @@ fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> Result<()> 
 }
 
 #[derive(Debug, Clone, Default)]
-struct ContextAccumulator {
-    count: usize,
-    examples: Vec<String>,
+pub(super) struct ContextAccumulator {
+    pub(super) count: usize,
+    pub(super) examples: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct ClusterContextSummary {
-    cluster_idx: ClusterIdx,
-    n_present: usize,
-    n_mapped: usize,
-    n_unresolved: usize,
-    n_unique_contexts: usize,
-    dominant_count: usize,
-    dominant_fraction: f64,
-    interpretation: &'static str,
+pub(super) struct ClusterContextSummary {
+    pub(super) cluster_idx: ClusterIdx,
+    pub(super) n_present: usize,
+    pub(super) n_mapped: usize,
+    pub(super) n_unresolved: usize,
+    pub(super) n_unique_contexts: usize,
+    pub(super) dominant_count: usize,
+    pub(super) dominant_fraction: f64,
+    pub(super) interpretation: &'static str,
 }
 
-fn context_signature(
+pub(super) fn context_signature(
     gff: &GffIndex,
     genes: &[&GffGene],
     gene_to_cluster: &HashMap<String, ClusterIdx>,
@@ -1383,7 +1398,7 @@ fn context_signature(
     }
 }
 
-fn context_interpretation(
+pub(super) fn context_interpretation(
     n_mapped: usize,
     n_unique_contexts: usize,
     dominant_fraction: f64,
@@ -1401,7 +1416,7 @@ fn context_interpretation(
     }
 }
 
-fn write_cluster_locus_contexts(
+pub(super) fn write_cluster_locus_contexts(
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,

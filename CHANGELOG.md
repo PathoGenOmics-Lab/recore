@@ -91,7 +91,8 @@ No changes yet.
   tabs or line breaks cannot corrupt tabular outputs.
 - Large pipeline and rescue implementation files were split into smaller
   section files, separating tests, reference audits, evolutionary summaries,
-  and output writers without changing runtime behaviour.
+  and output writers into real Rust modules without changing runtime
+  behaviour.
 
 ### Fixed
 

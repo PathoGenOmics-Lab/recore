@@ -22,6 +22,38 @@ use crate::rescue::{
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
 
+mod evolution;
+mod output;
+mod reference_audit;
+
+use self::evolution::{
+    load_phylo_tree, nsc_presence_updates, search_mobile_element_reference,
+    write_cluster_locus_contexts, write_evolutionary_events, EvolutionaryEventInputs,
+    MobileElementSearchInput,
+};
+use self::output::{
+    count_core_after, count_soft_core_after, write_corrected_csv, write_corrected_gffs,
+    write_multistate_matrix, write_nsc_report, write_run_manifest, write_summary,
+    MultistateMatrixInputs, SummaryStats,
+};
+use self::reference_audit::{
+    build_reference_cluster_events, reference_hit_shadow_candidates, resolve_reference_genome,
+    write_reference_cluster_events, write_reference_genome_audit, ReferenceAuditInputs,
+};
+
+#[cfg(test)]
+use self::evolution::{
+    nearest_mobile_element_for_rescue, nsc_role_for_cluster, resolve_phylo_tips,
+    summarize_phylogenetic_pattern, MobileElementHit, NewickParser, PhyloTree,
+};
+#[cfg(test)]
+use self::output::copy_text_maybe_gzip_with_header;
+#[cfg(test)]
+use self::reference_audit::{
+    best_reference_candidate, display_reference_gene_id, reference_publication_confidence,
+    reference_publication_status, reference_shadow_state, reference_status_for,
+};
+
 fn rescue_type_priority(rescue_type: &RescueType) -> u8 {
     match rescue_type {
         RescueType::Split { .. } => 7,
@@ -1477,15 +1509,6 @@ fn write_orthology_evidence(
     w.flush()?;
     Ok(())
 }
-
-// reference-genome audit and reference-event helpers.
-include!("pipeline/reference_audit.rs");
-
-// phylogeny, evolutionary-event, mobile-element, and locus-context helpers.
-include!("pipeline/evolution.rs");
-
-// corrected-matrix, GFF, summary, and manifest writers.
-include!("pipeline/output.rs");
 
 #[cfg(test)]
 mod tests;

@@ -1,4 +1,6 @@
-fn resolve_reference_genome(
+use super::*;
+
+pub(super) fn resolve_reference_genome(
     pa: &crate::parser::PresenceAbsence,
     requested: &str,
 ) -> Option<GenomeIdx> {
@@ -22,7 +24,7 @@ fn resolve_reference_genome(
     None
 }
 
-fn reference_status_for(state: &str, accepted: bool) -> &'static str {
+pub(super) fn reference_status_for(state: &str, accepted: bool) -> &'static str {
     if !accepted {
         return match state {
             "HOMOLOG_PARALOG" => "reference_homolog_paralog_rejected",
@@ -46,7 +48,7 @@ fn reference_status_for(state: &str, accepted: bool) -> &'static str {
     }
 }
 
-fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
+pub(super) fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
     if !accepted {
         if state == "EVENT_DERIVED_REFERENCE_CLUSTER" {
             return "flag_reference_event_derived_cluster";
@@ -69,7 +71,7 @@ fn reference_publication_status(state: &str, accepted: bool) -> &'static str {
     }
 }
 
-fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
+pub(super) fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
     if !accepted {
         if state == "EVENT_DERIVED_REFERENCE_CLUSTER" {
             return "Do not call a clean novel gene; keep the cluster separate and report the inferred reference-gene event.";
@@ -108,7 +110,10 @@ fn reference_recommended_wording(state: &str, accepted: bool) -> &'static str {
     }
 }
 
-fn reference_publication_confidence(state: &str, reference_status: &str) -> &'static str {
+pub(super) fn reference_publication_confidence(
+    state: &str,
+    reference_status: &str,
+) -> &'static str {
     match state {
         "STRICT_PRESENT" | "ALIAS_CLUSTER" | "SEQUENCE_ONLY" => "not_reference_absent",
         "PARTIAL_PARALOG_EVIDENCE" | "HOMOLOG_PARALOG" => "complex_paralog",
@@ -122,7 +127,7 @@ fn reference_publication_confidence(state: &str, reference_status: &str) -> &'st
     }
 }
 
-fn reference_shadow_state(
+pub(super) fn reference_shadow_state(
     rescue: &RescueEvent,
     query_cluster: &str,
     annotation_cluster: &str,
@@ -147,7 +152,7 @@ fn reference_shadow_state(
     evidence_state(rescue, true, query_cluster, annotation_cluster, "")
 }
 
-fn best_overlap_gene_id(gff: &GffIndex, hit: &Hit) -> Option<String> {
+pub(super) fn best_overlap_gene_id(gff: &GffIndex, hit: &Hit) -> Option<String> {
     let hit_len = hit.target_end.saturating_sub(hit.target_start) as f64;
     if hit_len == 0.0 {
         return None;
@@ -171,7 +176,7 @@ fn best_overlap_gene_id(gff: &GffIndex, hit: &Hit) -> Option<String> {
         .map(|(gene_id, _)| gene_id)
 }
 
-fn reference_hit_shadow_candidates(
+pub(super) fn reference_hit_shadow_candidates(
     hits: &HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>>,
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
@@ -235,7 +240,7 @@ fn reference_hit_shadow_candidates(
     candidates
 }
 
-fn reference_candidate_score(rescue: &RescueEvent) -> f64 {
+pub(super) fn reference_candidate_score(rescue: &RescueEvent) -> f64 {
     let synteny_bonus = match rescue.synteny_ok {
         Some(true) => 2.0,
         Some(false) => -1.0,
@@ -244,7 +249,7 @@ fn reference_candidate_score(rescue: &RescueEvent) -> f64 {
     rescue.confidence + (rescue.identity / 100.0) + (rescue.coverage / 100.0) + synteny_bonus
 }
 
-fn best_reference_candidate(
+pub(super) fn best_reference_candidate(
     candidates: &[RescueEvent],
     ci: ClusterIdx,
     reference_gi: GenomeIdx,
@@ -255,40 +260,40 @@ fn best_reference_candidate(
         .max_by(|a, b| reference_candidate_score(a).total_cmp(&reference_candidate_score(b)))
 }
 
-const REFERENCE_EVENT_KMER: usize = 15;
-const REFERENCE_EVENT_TOP_CANDIDATES: usize = 12;
-const REFERENCE_EVENT_MAX_DP_CELLS: usize = 5_000_000;
+pub(super) const REFERENCE_EVENT_KMER: usize = 15;
+pub(super) const REFERENCE_EVENT_TOP_CANDIDATES: usize = 12;
+pub(super) const REFERENCE_EVENT_MAX_DP_CELLS: usize = 5_000_000;
 
-struct ReferenceClusterEvent {
-    query_cluster_idx: ClusterIdx,
-    target_cluster_idx: ClusterIdx,
-    target_gene_id: String,
-    event_class: &'static str,
+pub(super) struct ReferenceClusterEvent {
+    pub(super) query_cluster_idx: ClusterIdx,
+    pub(super) target_cluster_idx: ClusterIdx,
+    pub(super) target_gene_id: String,
+    pub(super) event_class: &'static str,
+    pub(super) identity: f64,
+    pub(super) query_coverage: f64,
+    pub(super) reference_coverage: f64,
+    pub(super) query_length: usize,
+    pub(super) reference_length: usize,
+    pub(super) event_size_nt: i64,
+    pub(super) event_size_aa: Option<i64>,
+    pub(super) matches: usize,
+    pub(super) mismatches: usize,
+    pub(super) gaps_in_query: usize,
+    pub(super) gaps_in_reference: usize,
+    pub(super) shared_kmers: usize,
+    pub(super) interpretation: &'static str,
+}
+pub(super) struct PairwiseEventStats {
     identity: f64,
     query_coverage: f64,
     reference_coverage: f64,
-    query_length: usize,
-    reference_length: usize,
-    event_size_nt: i64,
-    event_size_aa: Option<i64>,
     matches: usize,
     mismatches: usize,
     gaps_in_query: usize,
     gaps_in_reference: usize,
-    shared_kmers: usize,
-    interpretation: &'static str,
-}
-struct PairwiseEventStats {
-    identity: f64,
-    query_coverage: f64,
-    reference_coverage: f64,
-    matches: usize,
-    mismatches: usize,
-    gaps_in_query: usize,
-    gaps_in_reference: usize,
 }
 
-fn longest_cluster_sequence<'a>(
+pub(super) fn longest_cluster_sequence<'a>(
     pan_ref: &'a HashMap<String, Vec<Vec<u8>>>,
     cluster_name: &str,
 ) -> Option<&'a [u8]> {
@@ -299,7 +304,7 @@ fn longest_cluster_sequence<'a>(
         .map(Vec::as_slice)
 }
 
-fn base_bits(base: u8) -> Option<u64> {
+pub(super) fn base_bits(base: u8) -> Option<u64> {
     match base.to_ascii_uppercase() {
         b'A' => Some(0),
         b'C' => Some(1),
@@ -309,7 +314,7 @@ fn base_bits(base: u8) -> Option<u64> {
     }
 }
 
-fn canonical_kmer_hash(seq: &[u8]) -> Option<u64> {
+pub(super) fn canonical_kmer_hash(seq: &[u8]) -> Option<u64> {
     let mut forward = 0u64;
     let mut reverse = 0u64;
     for &base in seq {
@@ -322,7 +327,7 @@ fn canonical_kmer_hash(seq: &[u8]) -> Option<u64> {
     Some(forward.min(reverse))
 }
 
-fn sequence_kmers(seq: &[u8], k: usize) -> Vec<u64> {
+pub(super) fn sequence_kmers(seq: &[u8], k: usize) -> Vec<u64> {
     if seq.len() < k {
         return Vec::new();
     }
@@ -334,7 +339,7 @@ fn sequence_kmers(seq: &[u8], k: usize) -> Vec<u64> {
     kmers
 }
 
-fn global_event_alignment(query: &[u8], reference: &[u8]) -> Option<PairwiseEventStats> {
+pub(super) fn global_event_alignment(query: &[u8], reference: &[u8]) -> Option<PairwiseEventStats> {
     let m = query.len();
     let n = reference.len();
     if m == 0 || n == 0 || (m + 1).saturating_mul(n + 1) > REFERENCE_EVENT_MAX_DP_CELLS {
@@ -427,7 +432,7 @@ fn global_event_alignment(query: &[u8], reference: &[u8]) -> Option<PairwiseEven
     })
 }
 
-fn classify_reference_event(
+pub(super) fn classify_reference_event(
     query_len: usize,
     reference_len: usize,
     stats: &PairwiseEventStats,
@@ -486,7 +491,7 @@ fn classify_reference_event(
     ))
 }
 
-fn is_h37rv_locus_token(token: &str) -> bool {
+pub(super) fn is_h37rv_locus_token(token: &str) -> bool {
     let Some(rest) = token.strip_prefix("Rv") else {
         return false;
     };
@@ -496,7 +501,7 @@ fn is_h37rv_locus_token(token: &str) -> bool {
     rest[4..].chars().all(|ch| ch.is_ascii_alphabetic())
 }
 
-fn display_reference_gene_id(gene_id: &str) -> String {
+pub(super) fn display_reference_gene_id(gene_id: &str) -> String {
     let cleaned = stripped_gene_id(gene_id.trim()).unwrap_or(gene_id.trim());
     cleaned
         .split('_')
@@ -505,7 +510,11 @@ fn display_reference_gene_id(gene_id: &str) -> String {
         .to_string()
 }
 
-fn reference_gene_id(pa: &crate::parser::PresenceAbsence, ci: ClusterIdx, gi: GenomeIdx) -> String {
+pub(super) fn reference_gene_id(
+    pa: &crate::parser::PresenceAbsence,
+    ci: ClusterIdx,
+    gi: GenomeIdx,
+) -> String {
     let gene_id = pa
         .cell(ci, gi)
         .split(';')
@@ -520,7 +529,7 @@ fn reference_gene_id(pa: &crate::parser::PresenceAbsence, ci: ClusterIdx, gi: Ge
     }
 }
 
-fn build_reference_cluster_events(
+pub(super) fn build_reference_cluster_events(
     pa: &crate::parser::PresenceAbsence,
     pan_ref: &HashMap<String, Vec<Vec<u8>>>,
     reference_gi: GenomeIdx,
@@ -626,14 +635,14 @@ fn build_reference_cluster_events(
     events
 }
 
-fn reference_event_score(event: &ReferenceClusterEvent) -> f64 {
+pub(super) fn reference_event_score(event: &ReferenceClusterEvent) -> f64 {
     event.identity
         + event.query_coverage
         + event.reference_coverage
         + (event.shared_kmers as f64 / 10.0)
 }
 
-struct ReferenceEventRow<'a> {
+pub(super) struct ReferenceEventRow<'a> {
     reference_name: &'a str,
     rescue: &'a RescueEvent,
     gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
@@ -643,20 +652,20 @@ struct ReferenceEventRow<'a> {
     rejection_reason: &'a str,
 }
 
-struct ReferenceAuditInputs<'a> {
-    requested_reference: &'a str,
-    rescues: &'a [RescueEvent],
-    synteny_rejected: &'a [RescueEvent],
-    paralog_rejected: &'a [RescueEvent],
-    reference_candidates: &'a [RescueEvent],
-    reference_cluster_events: &'a [ReferenceClusterEvent],
-    pa: &'a crate::parser::PresenceAbsence,
-    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
-    matrix_policy: MatrixPolicy,
-    output_dir: &'a std::path::Path,
+pub(super) struct ReferenceAuditInputs<'a> {
+    pub(super) requested_reference: &'a str,
+    pub(super) rescues: &'a [RescueEvent],
+    pub(super) synteny_rejected: &'a [RescueEvent],
+    pub(super) paralog_rejected: &'a [RescueEvent],
+    pub(super) reference_candidates: &'a [RescueEvent],
+    pub(super) reference_cluster_events: &'a [ReferenceClusterEvent],
+    pub(super) pa: &'a crate::parser::PresenceAbsence,
+    pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    pub(super) matrix_policy: MatrixPolicy,
+    pub(super) output_dir: &'a std::path::Path,
 }
 
-fn write_reference_event_row(
+pub(super) fn write_reference_event_row(
     w: &mut BufWriter<fs::File>,
     pa: &crate::parser::PresenceAbsence,
     row: ReferenceEventRow<'_>,
@@ -716,7 +725,7 @@ fn write_reference_event_row(
     Ok(())
 }
 
-fn write_reference_shadow_candidate_row(
+pub(super) fn write_reference_shadow_candidate_row(
     w: &mut BufWriter<fs::File>,
     pa: &crate::parser::PresenceAbsence,
     row: ReferenceEventRow<'_>,
@@ -765,7 +774,7 @@ fn write_reference_shadow_candidate_row(
     Ok(())
 }
 
-fn write_reference_cluster_event_row(
+pub(super) fn write_reference_cluster_event_row(
     w: &mut BufWriter<fs::File>,
     pa: &crate::parser::PresenceAbsence,
     reference_name: &str,
@@ -823,7 +832,7 @@ fn write_reference_cluster_event_row(
     Ok(())
 }
 
-fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> {
+pub(super) fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> {
     let Some(reference_gi) = resolve_reference_genome(inputs.pa, inputs.requested_reference) else {
         warn!(
             "--reference-genome {} did not match any matrix column; skipping reference audit",
@@ -996,7 +1005,7 @@ fn write_reference_genome_audit(inputs: ReferenceAuditInputs<'_>) -> Result<()> 
     Ok(())
 }
 
-fn write_reference_cluster_events(
+pub(super) fn write_reference_cluster_events(
     events: &[ReferenceClusterEvent],
     pa: &crate::parser::PresenceAbsence,
     output_dir: &std::path::Path,
