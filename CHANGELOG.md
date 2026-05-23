@@ -67,6 +67,8 @@ No changes yet.
   single exact-context match.
 - GFF seqids can be normalized against FASTA contig names to handle common
   annotation/assembly naming mismatches.
+- Gene-to-cluster matching now uses unambiguous GFF aliases, so locus tags and
+  gene names from different annotation layers are treated consistently.
 - Output reports are sorted deterministically for reproducible downstream review.
 - TSV report fields are normalized to single-line values so annotation-derived
   tabs or line breaks cannot corrupt tabular outputs.
@@ -91,6 +93,8 @@ No changes yet.
   support checks.
 - Tree-based evolutionary audits now warn when only a subset of matrix genomes
   is matched by the supplied Newick tree.
+- Invalid numeric options and mistyped NSC engines are rejected before the
+  pipeline starts, avoiding silent fallback to unintended behaviour.
 
 ## [0.1.0] - 2026-04-04
 

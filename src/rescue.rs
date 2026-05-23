@@ -133,6 +133,7 @@ pub struct GffIndex {
     contig_ranges: HashMap<String, (usize, usize)>,
     gene_id_index: HashMap<String, usize>,
     gene_aliases: HashMap<String, Vec<String>>,
+    gene_labels: HashMap<String, Vec<String>>,
 }
 
 impl GffIndex {
@@ -147,9 +148,17 @@ impl GffIndex {
     }
 
     pub fn build_with_aliases(mut records: Vec<(GffGene, Vec<String>)>) -> Self {
+        let records = records
+            .drain(..)
+            .map(|(gene, aliases)| (gene, aliases.clone(), aliases))
+            .collect();
+        Self::build_with_aliases_and_labels(records)
+    }
+
+    pub fn build_with_aliases_and_labels(mut records: Vec<(GffGene, Vec<String>, Vec<String>)>) -> Self {
         records.sort_by(|a, b| a.0.contig.cmp(&b.0.contig).then(a.0.start.cmp(&b.0.start)));
 
-        let genes: Vec<GffGene> = records.iter().map(|(gene, _)| gene.clone()).collect();
+        let genes: Vec<GffGene> = records.iter().map(|(gene, _, _)| gene.clone()).collect();
 
         let mut contig_ranges = HashMap::new();
         if !genes.is_empty() {
@@ -167,7 +176,8 @@ impl GffIndex {
 
         let mut gene_id_index = HashMap::new();
         let mut gene_aliases = HashMap::new();
-        for (i, (g, aliases)) in records.iter().enumerate() {
+        let mut gene_labels = HashMap::new();
+        for (i, (g, aliases, labels)) in records.iter().enumerate() {
             if !g.gene_id.is_empty() {
                 gene_id_index.insert(g.gene_id.clone(), i);
                 let mut all_aliases = vec![g.gene_id.clone()];
@@ -177,7 +187,14 @@ impl GffIndex {
                         all_aliases.push(alias.clone());
                     }
                 }
+                let mut all_labels = all_aliases.clone();
+                for label in labels {
+                    if !label.is_empty() && !all_labels.iter().any(|x| x == label) {
+                        all_labels.push(label.clone());
+                    }
+                }
                 gene_aliases.insert(g.gene_id.clone(), all_aliases);
+                gene_labels.insert(g.gene_id.clone(), all_labels);
             }
         }
 
@@ -186,6 +203,7 @@ impl GffIndex {
             contig_ranges,
             gene_id_index,
             gene_aliases,
+            gene_labels,
         }
     }
 
@@ -193,11 +211,18 @@ impl GffIndex {
         self.gene_id_index.get(gene_id).map(|&i| &self.genes[i])
     }
 
-    pub fn labels_for_gene<'a>(&'a self, gene: &'a GffGene) -> Vec<&'a str> {
+    pub fn aliases_for_gene<'a>(&'a self, gene: &'a GffGene) -> Vec<&'a str> {
         self.gene_aliases
             .get(&gene.gene_id)
             .map(|aliases| aliases.iter().map(String::as_str).collect())
             .unwrap_or_else(|| vec![gene.gene_id.as_str()])
+    }
+
+    pub fn labels_for_gene<'a>(&'a self, gene: &'a GffGene) -> Vec<&'a str> {
+        self.gene_labels
+            .get(&gene.gene_id)
+            .map(|labels| labels.iter().map(String::as_str).collect())
+            .unwrap_or_else(|| self.aliases_for_gene(gene))
     }
 
     pub fn cluster_for_gene(
@@ -339,6 +364,63 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
             }
         }
     }
+    map
+}
+
+fn gene_id_variants(gene_id: &str) -> impl Iterator<Item = &str> {
+    std::iter::once(gene_id)
+        .chain(gene_id.strip_suffix("_pseudo"))
+        .chain(gene_id.rfind("_dup_").map(|pos| &gene_id[..pos]))
+}
+
+fn lookup_gene_cluster_alias(
+    map: &HashMap<String, ClusterIdx>,
+    gene_id: &str,
+) -> Option<ClusterIdx> {
+    gene_id_variants(gene_id).find_map(|id| map.get(id).copied())
+}
+
+fn insert_gene_cluster_alias(map: &mut HashMap<String, ClusterIdx>, gene_id: &str, ci: ClusterIdx) {
+    for id in gene_id_variants(gene_id) {
+        if !id.is_empty() {
+            map.entry(id.to_string()).or_insert(ci);
+        }
+    }
+}
+
+/// Build a gene_id → ClusterIdx lookup and conservatively add GFF aliases.
+///
+/// Panaroo cells can contain a gene name while the GFF uses a locus_tag (or the
+/// reverse). If exactly one alias of a GFF CDS already maps to a cluster, all
+/// aliases of that CDS are mapped to the same cluster. Ambiguous CDS aliases
+/// that point to multiple clusters are left untouched.
+pub fn build_gene_to_cluster_with_gff_aliases(
+    pa: &PresenceAbsence,
+    gi: GenomeIdx,
+    gff_index: Option<&GffIndex>,
+) -> HashMap<String, ClusterIdx> {
+    let mut map = build_gene_to_cluster(pa, gi);
+    let Some(gff) = gff_index else {
+        return map;
+    };
+
+    for gene in &gff.genes {
+        let labels = gff.aliases_for_gene(gene);
+        let mut candidates: Vec<ClusterIdx> = labels
+            .iter()
+            .filter_map(|label| lookup_gene_cluster_alias(&map, label))
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.len() != 1 {
+            continue;
+        }
+        let ci = candidates[0];
+        for label in labels {
+            insert_gene_cluster_alias(&mut map, label, ci);
+        }
+    }
+
     map
 }
 
@@ -2746,6 +2828,113 @@ mod tests {
         let g2c_1 = build_gene_to_cluster(&pa, GenomeIdx(1));
         assert_eq!(g2c_1.get("gene3"), Some(&ClusterIdx(0)));
         assert_eq!(g2c_1.get("gene4"), Some(&ClusterIdx(1)));
+    }
+
+    #[test]
+    fn test_build_gene_to_cluster_adds_unambiguous_gff_aliases() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["clusterA".into()],
+            vec!["g1".into()],
+            vec![vec!["commonName".into()]],
+        );
+        let gff = GffIndex::build_with_aliases(vec![(
+            GffGene {
+                contig: "ctg".into(),
+                start: 0,
+                end: 100,
+                strand: '+',
+                gene_id: "Rv0001".into(),
+            },
+            vec!["commonName".into(), "oldName".into()],
+        )]);
+
+        let g2c = build_gene_to_cluster_with_gff_aliases(&pa, GenomeIdx(0), Some(&gff));
+        assert_eq!(g2c.get("commonName"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("Rv0001"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("oldName"), Some(&ClusterIdx(0)));
+    }
+
+    #[test]
+    fn test_descriptive_gff_labels_do_not_create_cluster_aliases() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["clusterA".into()],
+            vec!["g1".into()],
+            vec![vec!["commonName".into()]],
+        );
+        let gff = GffIndex::build_with_aliases_and_labels(vec![
+            (
+                GffGene {
+                    contig: "ctg".into(),
+                    start: 0,
+                    end: 100,
+                    strand: '+',
+                    gene_id: "Rv0001".into(),
+                },
+                vec!["commonName".into()],
+                vec!["commonName".into(), "hypothetical%20protein".into()],
+            ),
+            (
+                GffGene {
+                    contig: "ctg".into(),
+                    start: 200,
+                    end: 300,
+                    strand: '+',
+                    gene_id: "Rv0002".into(),
+                },
+                vec!["Rv0002".into()],
+                vec!["Rv0002".into(), "hypothetical%20protein".into()],
+            ),
+        ]);
+
+        let g2c = build_gene_to_cluster_with_gff_aliases(&pa, GenomeIdx(0), Some(&gff));
+        assert_eq!(g2c.get("Rv0001"), Some(&ClusterIdx(0)));
+        assert_eq!(g2c.get("hypothetical%20protein"), None);
+        assert_eq!(g2c.get("Rv0002"), None);
+    }
+
+    #[test]
+    fn test_classify_hit_uses_gff_alias_for_split_cluster() {
+        let pa = PresenceAbsence::new_for_test(
+            vec!["queryCluster".into(), "annotatedCluster".into()],
+            vec!["g1".into()],
+            vec![vec!["".into()], vec!["commonName".into()]],
+        );
+        let gff = GffIndex::build_with_aliases(vec![(
+            GffGene {
+                contig: "ctg".into(),
+                start: 100,
+                end: 1100,
+                strand: '+',
+                gene_id: "Rv0001".into(),
+            },
+            vec!["commonName".into()],
+        )]);
+        let g2c = build_gene_to_cluster_with_gff_aliases(&pa, GenomeIdx(0), Some(&gff));
+        let hit = Hit {
+            query: "queryCluster".into(),
+            cluster: "queryCluster".into(),
+            query_length: 1000,
+            query_start: 0,
+            query_end: 1000,
+            strand: '+',
+            target: "ctg".into(),
+            target_start: 100,
+            target_end: 1100,
+            matches: 990,
+            alignment_length: 1000,
+            mapq: 60,
+        };
+
+        let result =
+            classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, Some(&gff), &g2c, 80.0)
+                .unwrap();
+        assert_eq!(result.annotation_match, Some("Rv0001".to_string()));
+        assert_eq!(
+            result.rescue_type,
+            RescueType::Split {
+                other_cluster: "annotatedCluster".into()
+            }
+        );
     }
 
     #[test]

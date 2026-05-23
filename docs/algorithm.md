@@ -126,6 +126,12 @@ Each (cluster, genome) gap with hits is classified into one of 9 rescue types. C
 
 The best hit (by query length, then score) covers ≥80% of the reference sequence (default `--min-coverage`). Classification depends on GFF annotation overlap:
 
+Before classification, Recore builds a conservative gene-to-cluster index from
+the matrix and the GFF. If one alias of a CDS maps unambiguously to a cluster,
+its other aliases (`locus_tag`, `gene`, `Name`, `protein_id`, old locus tags)
+are mapped to the same cluster. Ambiguous aliases that point to multiple
+clusters are left unresolved.
+
 | Condition | Type | Confidence |
 |-----------|------|------------|
 | No GFF provided | DROPPED | identity × coverage |

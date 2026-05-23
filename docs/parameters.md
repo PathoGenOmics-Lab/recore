@@ -21,6 +21,11 @@ embedded `ASxxxxx` identifier. For single-contig genomes, GFF seqids are
 normalized internally to the FASTA contig name so `--synteny` can work when a
 GFF uses `contig_1` or `L4_AS00146` but the FASTA contig is `AS00146`.
 
+Numeric parameters are validated before the pipeline starts: percentages must
+be finite values between 0 and 100, fractions between 0 and 1, thread count and
+NSC k-mer size must be at least 1, and `--nsc-engine` must be `minhash` or
+`mmseqs2`.
+
 ## Alignment
 
 | Flag | Default | Description |

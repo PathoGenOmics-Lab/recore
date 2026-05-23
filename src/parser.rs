@@ -489,7 +489,7 @@ pub fn load_genome_contig_names(path: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-pub type GffRecord = (String, u64, u64, char, String, Vec<String>);
+pub type GffRecord = (String, u64, u64, char, String, Vec<String>, Vec<String>);
 
 /// If a single-contig GFF and single-contig FASTA use different contig names,
 /// rewrite GFF seqids to the FASTA contig name used by minimap2 hits.
@@ -630,15 +630,23 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
             name.as_str(),
             protein_id.as_str(),
             old_locus_tag.as_str(),
-            product.as_str(),
-            note.as_str(),
         ] {
             if !value.is_empty() && !aliases.iter().any(|x: &String| x == value) {
                 aliases.push(value.to_string());
             }
         }
 
-        genes.push((contig, start, end, strand, gene_id, aliases));
+        let mut labels = aliases.clone();
+        for value in [
+            product.as_str(),
+            note.as_str(),
+        ] {
+            if !value.is_empty() && !labels.iter().any(|x: &String| x == value) {
+                labels.push(value.to_string());
+            }
+        }
+
+        genes.push((contig, start, end, strand, gene_id, aliases, labels));
     }
 
     Ok(genes)
@@ -862,6 +870,7 @@ mod tests {
                 '+',
                 "gene1".to_string(),
                 vec!["gene1".to_string()],
+                vec!["gene1".to_string()],
             ),
             (
                 "contig_1".to_string(),
@@ -869,6 +878,7 @@ mod tests {
                 30,
                 '+',
                 "gene2".to_string(),
+                vec!["gene2".to_string()],
                 vec!["gene2".to_string()],
             ),
         ];
@@ -884,13 +894,21 @@ mod tests {
     fn test_parse_gff_genes_prefers_locus_tag_and_keeps_aliases() {
         let gff = write_temp(
             "##gff-version 3\n\
-             chr\tRefSeq\tCDS\t10\t99\t.\t+\t0\tID=cds-Rv0001;locus_tag=Rv0001;gene=dnaA;Name=chromosomal_replication_initiator\n",
+             chr\tRefSeq\tCDS\t10\t99\t.\t+\t0\tID=cds-Rv0001;locus_tag=Rv0001;gene=dnaA;Name=chromosomal_replication_initiator;product=hypothetical%20protein\n",
         );
         let genes = parse_gff_genes(gff.path()).unwrap();
         assert_eq!(genes.len(), 1);
         assert_eq!(genes[0].4, "Rv0001");
         assert!(genes[0].5.iter().any(|alias| alias == "cds-Rv0001"));
         assert!(genes[0].5.iter().any(|alias| alias == "dnaA"));
+        assert!(!genes[0]
+            .5
+            .iter()
+            .any(|alias| alias == "hypothetical%20protein"));
+        assert!(genes[0]
+            .6
+            .iter()
+            .any(|label| label == "hypothetical%20protein"));
     }
 
     #[test]

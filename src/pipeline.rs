@@ -15,13 +15,16 @@ use crate::parser::{
 };
 use crate::relationships::write_cluster_relationships;
 use crate::rescue::{
-    build_gene_to_cluster, check_internal_stops_in_hit, classify_hits, resolve_conflicts,
-    validate_synteny, GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
+    build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_hit, classify_hits,
+    resolve_conflicts, validate_synteny, GffGene, GffIndex, PseudogeneReason, RescueEvent,
+    RescueType,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
 
 pub fn run(args: &Args) -> Result<()> {
+    validate_args(args)?;
+
     // ── 1. Parse inputs ──
     let pa = parse_presence_absence(&args.presence_absence)?;
     let pan_ref = parse_pan_reference(&args.pan_reference, args.multi_allele)?;
@@ -149,9 +152,9 @@ pub fn run(args: &Args) -> Result<()> {
                             }
                         }
                     }
-                    let genes: Vec<(GffGene, Vec<String>)> = raw_genes
+                    let genes: Vec<(GffGene, Vec<String>, Vec<String>)> = raw_genes
                         .into_iter()
-                        .map(|(contig, start, end, strand, gene_id, aliases)| {
+                        .map(|(contig, start, end, strand, gene_id, aliases, labels)| {
                             (
                                 GffGene {
                                     contig,
@@ -161,10 +164,11 @@ pub fn run(args: &Args) -> Result<()> {
                                     gene_id,
                                 },
                                 aliases,
+                                labels,
                             )
                         })
                         .collect();
-                    data.insert(gi, GffIndex::build_with_aliases(genes));
+                    data.insert(gi, GffIndex::build_with_aliases_and_labels(genes));
                     gff_paths.insert(gi, path.clone());
                 }
                 Err(e) => warn!("Cannot parse GFF for {}: {}", genome_name, e),
@@ -224,13 +228,15 @@ pub fn run(args: &Args) -> Result<()> {
     let gene_to_cluster_maps: HashMap<GenomeIdx, HashMap<String, ClusterIdx>> = {
         let mut maps = HashMap::new();
         for (gi, _) in &searchable_genomes {
-            maps.entry(*gi)
-                .or_insert_with(|| build_gene_to_cluster(&pa, *gi));
+            maps.entry(*gi).or_insert_with(|| {
+                build_gene_to_cluster_with_gff_aliases(&pa, *gi, gff_indices.get(gi))
+            });
         }
         if args.synteny || !gff_indices.is_empty() {
             for &gi in gff_indices.keys() {
-                maps.entry(gi)
-                    .or_insert_with(|| build_gene_to_cluster(&pa, gi));
+                maps.entry(gi).or_insert_with(|| {
+                    build_gene_to_cluster_with_gff_aliases(&pa, gi, gff_indices.get(&gi))
+                });
             }
         }
         maps
@@ -877,6 +883,47 @@ pub fn run(args: &Args) -> Result<()> {
     );
     info!("Output: {}", args.output.display());
 
+    Ok(())
+}
+
+fn validate_percent_arg(name: &str, value: f64) -> Result<()> {
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        anyhow::bail!("{} must be a finite percentage in the range 0..=100", name);
+    }
+    Ok(())
+}
+
+fn validate_fraction_arg(name: &str, value: f64) -> Result<()> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        anyhow::bail!("{} must be a finite fraction in the range 0..=1", name);
+    }
+    Ok(())
+}
+
+fn validate_args(args: &Args) -> Result<()> {
+    if args.threads == 0 {
+        anyhow::bail!("--threads must be at least 1");
+    }
+    validate_percent_arg("--min-identity", args.min_identity)?;
+    validate_percent_arg("--min-coverage", args.min_coverage)?;
+    validate_percent_arg(
+        "--mobile-element-min-identity",
+        args.mobile_element_min_identity,
+    )?;
+    validate_percent_arg(
+        "--mobile-element-min-coverage",
+        args.mobile_element_min_coverage,
+    )?;
+    validate_fraction_arg("--min-prevalence", args.min_prevalence)?;
+    validate_fraction_arg("--nsc-threshold", args.nsc_threshold)?;
+    validate_fraction_arg("--nsc-min-seq-id", args.nsc_min_seq_id)?;
+    validate_fraction_arg("--nsc-coverage", args.nsc_coverage)?;
+    if args.nsc_kmer_size == 0 {
+        anyhow::bail!("--nsc-kmer-size must be at least 1");
+    }
+    if !matches!(args.nsc_engine.as_str(), "minhash" | "mmseqs2") {
+        anyhow::bail!("--nsc-engine must be either 'minhash' or 'mmseqs2'");
+    }
     Ok(())
 }
 
@@ -4607,6 +4654,38 @@ fn write_run_manifest(
 mod tests {
     use super::*;
 
+    fn default_args_for_validation() -> Args {
+        Args {
+            presence_absence: "pa.csv".into(),
+            pan_reference: "pan_ref.fa".into(),
+            genomes: "genomes".into(),
+            annotations: None,
+            output: "recore_output".into(),
+            min_identity: 90.0,
+            min_coverage: 80.0,
+            threads: 4,
+            preset: "asm5".into(),
+            min_prevalence: 0.1,
+            multi_allele: false,
+            synteny: false,
+            write_corrected_gff: false,
+            matrix_policy: MatrixPolicy::Balanced,
+            reference_genome: None,
+            tree: None,
+            mobile_element_reference: None,
+            mobile_element_min_identity: 85.0,
+            mobile_element_min_coverage: 50.0,
+            mobile_element_window: 1000,
+            nscluster: false,
+            nsc_kmer_size: 21,
+            nsc_threshold: 0.8,
+            nsc_engine: "minhash".into(),
+            verbose: false,
+            nsc_min_seq_id: 0.9,
+            nsc_coverage: 0.8,
+        }
+    }
+
     fn rescue_with_type(rescue_type: RescueType, synteny_ok: Option<bool>) -> RescueEvent {
         RescueEvent {
             cluster_idx: ClusterIdx(0),
@@ -4623,6 +4702,35 @@ mod tests {
             synteny_ok,
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
         }
+    }
+
+    #[test]
+    fn invalid_args_are_rejected_before_running_pipeline() {
+        let mut args = default_args_for_validation();
+        args.threads = 0;
+        assert!(validate_args(&args).is_err());
+
+        let mut args = default_args_for_validation();
+        args.min_identity = 101.0;
+        assert!(validate_args(&args).is_err());
+
+        let mut args = default_args_for_validation();
+        args.min_prevalence = -0.1;
+        assert!(validate_args(&args).is_err());
+
+        let mut args = default_args_for_validation();
+        args.nsc_kmer_size = 0;
+        assert!(validate_args(&args).is_err());
+
+        let mut args = default_args_for_validation();
+        args.nsc_engine = "minhsah".into();
+        assert!(validate_args(&args).is_err());
+    }
+
+    #[test]
+    fn default_args_pass_validation() {
+        let args = default_args_for_validation();
+        validate_args(&args).unwrap();
     }
 
     #[test]
