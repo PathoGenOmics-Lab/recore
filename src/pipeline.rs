@@ -22,6 +22,62 @@ use crate::rescue::{
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
 
+fn rescue_type_priority(rescue_type: &RescueType) -> u8 {
+    match rescue_type {
+        RescueType::Split { .. } => 7,
+        RescueType::MissingCds => 6,
+        RescueType::StartVariant { .. } => 5,
+        RescueType::Dropped => 4,
+        RescueType::AlignmentSplit { .. } => 3,
+        RescueType::Fragmented { .. } => 2,
+        RescueType::Pseudogene { .. } => 1,
+        RescueType::Paralog { .. } => 0,
+    }
+}
+
+fn rescue_selection_score(rescue: &RescueEvent) -> f64 {
+    let synteny_bonus = match rescue.synteny_ok {
+        Some(true) => 2.0,
+        Some(false) => -2.0,
+        None => 0.0,
+    };
+    rescue.confidence + rescue.identity / 100.0 + rescue.coverage / 100.0 + synteny_bonus
+}
+
+fn rescue_preferred_over(candidate: &RescueEvent, current: &RescueEvent) -> bool {
+    let score_order = rescue_selection_score(candidate).total_cmp(&rescue_selection_score(current));
+    if score_order != std::cmp::Ordering::Equal {
+        return score_order == std::cmp::Ordering::Greater;
+    }
+
+    rescue_type_priority(&candidate.rescue_type)
+        .cmp(&rescue_type_priority(&current.rescue_type))
+        .then_with(|| candidate.contig.cmp(&current.contig).reverse())
+        .then_with(|| candidate.start.cmp(&current.start).reverse())
+        .then_with(|| candidate.end.cmp(&current.end).reverse())
+        == std::cmp::Ordering::Greater
+}
+
+fn build_best_rescue_map<'a, I>(rescues: I) -> HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>
+where
+    I: IntoIterator<Item = &'a RescueEvent>,
+{
+    let mut map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = HashMap::new();
+    for rescue in rescues {
+        let key = (rescue.cluster_idx, rescue.genome_idx);
+        match map.get(&key).copied() {
+            Some(current) if rescue_preferred_over(rescue, current) => {
+                map.insert(key, rescue);
+            }
+            None => {
+                map.insert(key, rescue);
+            }
+            _ => {}
+        }
+    }
+    map
+}
+
 pub fn run(args: &Args) -> Result<()> {
     validate_args(args)?;
 
@@ -721,18 +777,11 @@ pub fn run(args: &Args) -> Result<()> {
         Vec::new()
     };
 
-    let all_rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
-        .iter()
-        .map(|r| ((r.cluster_idx, r.genome_idx), r))
-        .collect();
-    let matrix_rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
-        .iter()
-        .filter(|r| {
-            let state = accepted_rescue_evidence_state(r, &pa, &gene_to_cluster_maps);
-            matrix_policy_corrects(args.matrix_policy, state)
-        })
-        .map(|r| ((r.cluster_idx, r.genome_idx), r))
-        .collect();
+    let all_rescue_map = build_best_rescue_map(rescues.iter());
+    let matrix_rescue_map = build_best_rescue_map(rescues.iter().filter(|r| {
+        let state = accepted_rescue_evidence_state(r, &pa, &gene_to_cluster_maps);
+        matrix_policy_corrects(args.matrix_policy, state)
+    }));
 
     write_report(&rescues, &pa, &args.output)?;
     if !synteny_rejected.is_empty() {
@@ -4971,6 +5020,43 @@ mod tests {
 
         let dropped = rescue_with_type(RescueType::Dropped, None);
         assert!(!is_paralog_without_synteny_support(&dropped));
+    }
+
+    #[test]
+    fn best_rescue_map_keeps_strongest_duplicate_event() {
+        let weak = rescue_with_type(RescueType::Dropped, None);
+        let mut strong = rescue_with_type(RescueType::MissingCds, Some(true));
+        strong.identity = 99.0;
+        strong.coverage = 100.0;
+        strong.confidence = 0.99;
+        strong.start = 200;
+        strong.end = 500;
+
+        let rescues = [strong.clone(), weak.clone()];
+        let selected = build_best_rescue_map(rescues.iter());
+        let rescue = selected.get(&(ClusterIdx(0), GenomeIdx(0))).unwrap();
+
+        assert!(matches!(rescue.rescue_type, RescueType::MissingCds));
+        assert_eq!(rescue.start, 200);
+    }
+
+    #[test]
+    fn best_rescue_map_uses_coordinate_tie_breaker() {
+        let mut later = rescue_with_type(RescueType::Dropped, None);
+        later.contig = "chr2".into();
+        later.start = 200;
+        later.end = 300;
+        let mut earlier = rescue_with_type(RescueType::Dropped, None);
+        earlier.contig = "chr1".into();
+        earlier.start = 10;
+        earlier.end = 110;
+
+        let rescues = [later, earlier];
+        let selected = build_best_rescue_map(rescues.iter());
+        let rescue = selected.get(&(ClusterIdx(0), GenomeIdx(0))).unwrap();
+
+        assert_eq!(rescue.contig, "chr1");
+        assert_eq!(rescue.start, 10);
     }
 
     #[test]

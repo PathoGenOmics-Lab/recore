@@ -117,6 +117,10 @@ No changes yet.
 - Recurrent synteny support in large reference sets now requires compatible
   contexts in at least two genomes, so multiple copies from one genome cannot
   validate a rescue by themselves.
+- NSC representative selection is now deterministic on prevalence ties, and
+  NSC component reporting is stable for both MinHash and mmseqs2 engines.
+- Duplicate rescue events for the same cluster/genome are now collapsed by an
+  explicit evidence ranking instead of relying on hash-map overwrite order.
 
 ## [0.1.0] - 2026-04-04
 

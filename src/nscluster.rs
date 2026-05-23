@@ -316,6 +316,29 @@ pub struct NsClusterResult {
     pub merge_map: HashMap<ClusterIdx, ClusterIdx>,
 }
 
+fn sorted_components(mut components: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+    for members in &mut components {
+        members.sort_unstable();
+    }
+    components.sort_unstable_by_key(|members| members.first().copied().unwrap_or(usize::MAX));
+    components
+}
+
+fn pick_representative_by_prevalence(
+    member_cis: &[ClusterIdx],
+    cluster_prevalences: &[f64],
+) -> ClusterIdx {
+    *member_cis
+        .iter()
+        .max_by(|a, b| {
+            cluster_prevalences[a.val()]
+                .total_cmp(&cluster_prevalences[b.val()])
+                // Stable tie-breaker: keep the earliest original matrix row.
+                .then_with(|| b.val().cmp(&a.val()))
+        })
+        .expect("member_cis guaranteed non-empty")
+}
+
 /// Run nucleotide similarity clustering on the pan-genome reference.
 ///
 /// # Arguments
@@ -408,7 +431,7 @@ pub fn run_nscluster(
     );
 
     // ── 5. Extract components with ≥2 members ──
-    let components = uf.components();
+    let components = sorted_components(uf.components().into_values().collect());
     let mut merged_clusters = Vec::new();
     let mut merge_map: HashMap<ClusterIdx, ClusterIdx> = HashMap::new();
     let mut total_merged_genes = 0usize;
@@ -420,7 +443,7 @@ pub fn run_nscluster(
         .map(|(i, n)| (n.as_str(), i))
         .collect();
 
-    for members in components.values() {
+    for members in &components {
         if members.len() < 2 {
             continue;
         }
@@ -438,15 +461,7 @@ pub fn run_nscluster(
             continue;
         }
 
-        // Pick representative: highest prevalence
-        let rep_ci = *member_cis
-            .iter()
-            .max_by(|a, b| {
-                cluster_prevalences[a.val()]
-                    .partial_cmp(&cluster_prevalences[b.val()])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .expect("member_cis guaranteed non-empty");
+        let rep_ci = pick_representative_by_prevalence(&member_cis, cluster_prevalences);
 
         let rep_name = cluster_names[rep_ci.val()].clone();
 
@@ -665,27 +680,19 @@ pub fn run_nscluster_mmseqs2(
     }
 
     // ── 6. Extract components ≥ 2 members ──
-    let components = uf.components();
+    let components = sorted_components(uf.components().into_values().collect());
     let mut merged_clusters = Vec::new();
     let mut merge_map: HashMap<ClusterIdx, ClusterIdx> = HashMap::new();
     let mut total_merged_genes = 0usize;
 
-    for members in components.values() {
+    for members in &components {
         if members.len() < 2 {
             continue;
         }
 
         let member_cis: Vec<ClusterIdx> = members.iter().map(|&i| ClusterIdx(i)).collect();
 
-        // Pick representative: highest prevalence
-        let rep_ci = *member_cis
-            .iter()
-            .max_by(|a, b| {
-                cluster_prevalences[a.val()]
-                    .partial_cmp(&cluster_prevalences[b.val()])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .expect("member_cis guaranteed non-empty");
+        let rep_ci = pick_representative_by_prevalence(&member_cis, cluster_prevalences);
 
         let rep_name = cluster_names[rep_ci.val()].clone();
 
@@ -838,6 +845,17 @@ mod tests {
         assert_eq!(result.merged_clusters[0].representative, "clA");
         // clC should NOT be merged
         assert!(!result.merge_map.contains_key(&ClusterIdx(2)));
+    }
+
+    #[test]
+    fn test_representative_tie_breaks_to_earliest_cluster() {
+        let members = vec![ClusterIdx(2), ClusterIdx(0), ClusterIdx(1)];
+        let prevs = vec![0.5, 0.5, 0.5];
+
+        assert_eq!(
+            pick_representative_by_prevalence(&members, &prevs),
+            ClusterIdx(0)
+        );
     }
 
     #[test]
