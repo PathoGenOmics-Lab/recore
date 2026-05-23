@@ -1380,6 +1380,11 @@ struct ReferenceSyntenyContext {
     context: SyntenyContext,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct SyntenyReferenceCache {
+    contexts: HashMap<(ClusterIdx, usize), Vec<ReferenceSyntenyContext>>,
+}
+
 fn weighted_side_score(target: &[ClusterIdx], reference: &[ClusterIdx]) -> (f64, usize) {
     if target.is_empty() || reference.is_empty() {
         return (0.0, 0);
@@ -1567,11 +1572,104 @@ fn better_synteny_assessment(
     Some(current)
 }
 
-pub fn validate_synteny(
+fn reference_contexts_for_cluster<'a>(
+    cache: &'a mut SyntenyReferenceCache,
+    ci: ClusterIdx,
+    n_neighbors: usize,
+    pa: &PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    verbose: bool,
+) -> &'a [ReferenceSyntenyContext] {
+    cache
+        .contexts
+        .entry((ci, n_neighbors))
+        .or_insert_with(|| {
+            let mut reference_contexts = Vec::new();
+            let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
+            ref_genomes.sort_by_key(|gi| gi.val());
+            for ref_gi in ref_genomes {
+                let Some(ref_gff) = gff_indices.get(&ref_gi) else {
+                    continue;
+                };
+                let Some(ref_g2c) = gene_to_cluster_maps.get(&ref_gi) else {
+                    continue;
+                };
+
+                let ref_cell = pa.cell(ci, ref_gi);
+                if ref_cell.is_empty() {
+                    continue;
+                }
+                for ref_gene_id in ref_cell
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                {
+                    let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
+                        let stripped = ref_gene_id
+                            .strip_suffix("_pseudo")
+                            .or_else(|| ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i]));
+                        stripped.and_then(|s| ref_gff.get_by_id(s))
+                    });
+                    let Some(ref_gene) = ref_gene else {
+                        if verbose && n_neighbors == 1 {
+                            log::debug!(
+                                "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
+                                ref_gene_id,
+                                ref_gi.val()
+                            );
+                        }
+                        continue;
+                    };
+
+                    let ref_context = synteny_context(
+                        ref_gff,
+                        ref_g2c,
+                        &ref_gene.contig,
+                        ref_gene.start,
+                        ref_gene.end,
+                        Some(ref_gene.gene_id.as_str()),
+                        n_neighbors,
+                    );
+
+                    if ref_context.has_any_cluster() {
+                        reference_contexts.push(ReferenceSyntenyContext {
+                            genome_idx: ref_gi,
+                            context: ref_context,
+                        });
+                    }
+                }
+            }
+            reference_contexts
+        })
+        .as_slice()
+}
+
+#[cfg(test)]
+fn validate_synteny(
     rescue: &mut RescueEvent,
     pa: &PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
     gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    verbose: bool,
+) {
+    let mut cache = SyntenyReferenceCache::default();
+    validate_synteny_with_cache(
+        rescue,
+        pa,
+        gff_indices,
+        gene_to_cluster_maps,
+        &mut cache,
+        verbose,
+    );
+}
+
+pub(crate) fn validate_synteny_with_cache(
+    rescue: &mut RescueEvent,
+    pa: &PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    cache: &mut SyntenyReferenceCache,
     verbose: bool,
 ) {
     let ci = rescue.cluster_idx;
@@ -1607,67 +1705,20 @@ pub fn validate_synteny(
         }
         saw_target_context = true;
 
-        let mut reference_contexts = Vec::new();
-        let mut ref_genomes: Vec<GenomeIdx> = pa.present_genomes(ci).iter().copied().collect();
-        ref_genomes.sort_by_key(|gi| gi.val());
-        for ref_gi in ref_genomes {
-            let Some(ref_gff) = gff_indices.get(&ref_gi) else {
-                continue;
-            };
-            let Some(ref_g2c) = gene_to_cluster_maps.get(&ref_gi) else {
-                continue;
-            };
-
-            let ref_cell = pa.cell(ci, ref_gi);
-            if ref_cell.is_empty() {
-                continue;
-            }
-            for ref_gene_id in ref_cell
-                .split(';')
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-            {
-                let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
-                    let stripped = ref_gene_id
-                        .strip_suffix("_pseudo")
-                        .or_else(|| ref_gene_id.rfind("_dup_").map(|i| &ref_gene_id[..i]));
-                    stripped.and_then(|s| ref_gff.get_by_id(s))
-                });
-                let Some(ref_gene) = ref_gene else {
-                    if verbose && n_neighbors == 1 {
-                        log::debug!(
-                            "Synteny: ref gene '{}' from CSV not found in GFF of genome idx={}",
-                            ref_gene_id,
-                            ref_gi.val()
-                        );
-                    }
-                    continue;
-                };
-
-                let ref_context = synteny_context(
-                    ref_gff,
-                    ref_g2c,
-                    &ref_gene.contig,
-                    ref_gene.start,
-                    ref_gene.end,
-                    Some(ref_gene.gene_id.as_str()),
-                    n_neighbors,
-                );
-
-                if ref_context.has_any_cluster() {
-                    reference_contexts.push(ReferenceSyntenyContext {
-                        genome_idx: ref_gi,
-                        context: ref_context,
-                    });
-                }
-            }
-        }
-
+        let reference_contexts = reference_contexts_for_cluster(
+            cache,
+            ci,
+            n_neighbors,
+            pa,
+            gff_indices,
+            gene_to_cluster_maps,
+            verbose,
+        );
         if reference_contexts.is_empty() {
             continue;
         }
         saw_reference_context = true;
-        let assessment = assess_context_support(&target_context, &reference_contexts, n_neighbors);
+        let assessment = assess_context_support(&target_context, reference_contexts, n_neighbors);
         best_assessment = better_synteny_assessment(best_assessment, assessment);
     }
 

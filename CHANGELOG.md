@@ -82,6 +82,10 @@ No changes yet.
   gene names from different annotation layers are treated consistently.
 - Multi-copy reference cells now contribute all resolved gene IDs to synteny
   validation instead of only the first semicolon-separated ID.
+- Synteny validation now caches reference locus contexts per cluster/window
+  during a run, avoiding repeated GFF context reconstruction for every rescue.
+- Internal stop-codon scanning now groups rescues by genome, avoiding repeated
+  full rescue-list scans after each FASTA load.
 - Output reports are sorted deterministically for reproducible downstream review.
 - TSV report fields are normalized to single-line values so annotation-derived
   tabs or line breaks cannot corrupt tabular outputs.

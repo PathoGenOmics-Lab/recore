@@ -16,8 +16,8 @@ use crate::parser::{
 use crate::relationships::write_cluster_relationships;
 use crate::rescue::{
     build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_hit, classify_hits,
-    resolve_conflicts, validate_synteny, GffGene, GffIndex, PseudogeneReason, RescueEvent,
-    RescueType, SyntenyEvidence,
+    resolve_conflicts, validate_synteny_with_cache, GffGene, GffIndex, PseudogeneReason,
+    RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -426,21 +426,28 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 7b. Internal stop codon scanning for sequence-only rescues ──
     // Load genome sequences on-demand for rescued genomes only
     {
-        let rescued_genomes: ahash::HashSet<GenomeIdx> = rescues
-            .iter()
-            .filter(|r| matches!(r.rescue_type, RescueType::Dropped | RescueType::MissingCds))
-            .map(|r| r.genome_idx)
-            .collect();
+        let mut rescues_by_genome: HashMap<GenomeIdx, Vec<usize>> = HashMap::default();
+        for (idx, rescue) in rescues.iter().enumerate() {
+            if matches!(
+                rescue.rescue_type,
+                RescueType::Dropped | RescueType::MissingCds
+            ) {
+                rescues_by_genome
+                    .entry(rescue.genome_idx)
+                    .or_default()
+                    .push(idx);
+            }
+        }
 
-        if !rescued_genomes.is_empty() {
+        if !rescues_by_genome.is_empty() {
             info!(
                 "Scanning {} genomes for internal stop codons in sequence-only rescues...",
-                rescued_genomes.len()
+                rescues_by_genome.len()
             );
             let mut upgraded = 0usize;
 
-            for gi in &rescued_genomes {
-                let genome_name = pa.genome_name(*gi);
+            for (gi, rescue_indices) in rescues_by_genome {
+                let genome_name = pa.genome_name(gi);
                 let Some(fasta_path) = genome_files.get(genome_name) else {
                     continue;
                 };
@@ -448,15 +455,8 @@ pub fn run(args: &Args) -> Result<()> {
                     continue;
                 };
 
-                for rescue in rescues.iter_mut() {
-                    if rescue.genome_idx != *gi
-                        || !matches!(
-                            rescue.rescue_type,
-                            RescueType::Dropped | RescueType::MissingCds
-                        )
-                    {
-                        continue;
-                    }
+                for rescue_idx in rescue_indices {
+                    let rescue = &mut rescues[rescue_idx];
                     if let Some(n_stops) = check_internal_stops_in_hit(
                         // Build a minimal hit from rescue coords for the check
                         &crate::search::Hit {
@@ -496,12 +496,14 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 8. Synteny validation ──
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
+        let mut synteny_cache = SyntenyReferenceCache::default();
         for rescue in &mut rescues {
-            validate_synteny(
+            validate_synteny_with_cache(
                 rescue,
                 &pa,
                 &gff_indices,
                 &gene_to_cluster_maps,
+                &mut synteny_cache,
                 args.verbose,
             );
         }
