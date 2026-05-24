@@ -6,12 +6,17 @@
 .vscode/
 *.swp
 
+# Python
+__pycache__/
+*.py[cod]
+
 # OS
 .DS_Store
 Thumbs.db
 
 # Recore output
 recore_output/
+benchmarks/amap_performance_metrics.tsv
 
 
 # Added by cargo

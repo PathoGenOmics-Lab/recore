@@ -29,12 +29,14 @@ Scans the genomes directory for files with extensions `.fasta`, `.fa`, `.fna` (a
 
 ### GFF annotations (optional)
 
-Parses GFF3 files matching genome names. Extracts CDS features only: contig, start, end, strand, gene ID. Coordinates are converted from GFF3's 1-based closed to 0-based half-open (matching minimap2 PAF output). Supports `.gff`, `.gff3`, and gzipped variants.
+Parses GFF3 files matching genome names. Extracts CDS features only: contig, start, end, strand, gene ID. Coordinates are converted from GFF3's 1-based closed to 0-based half-open (matching minimap2 PAF output). Supports `.gff`, `.gff3`, and gzipped variants. GFF3 percent-encoded attributes are decoded before identifier, alias, product, and note matching.
 
 ### Cross-validation
 
 Before proceeding, validates:
 - Genome and cluster names are safe for path construction (no `../`, `/`, `\0`)
+- The matrix and pan-reference FASTA are not empty
+- Genome names and cluster names are unique
 - Warns about clusters in CSV but not in reference (and vice versa)
 - Warns about genomes without matching FASTA files
 
@@ -79,7 +81,7 @@ The map indexes both the original ID and stripped versions to maximize GFF match
 
 ## Phase 5: Batch Search (minimap2)
 
-This is the computational core. Instead of running minimap2 once per genome (which would be O(n) process spawns), Recore uses a **single invocation** strategy:
+This is the computational core. Instead of running minimap2 once per genome (which would be O(n) process spawns), Recore uses batched minimap2 searches over concatenated targets.
 
 ### 5a. Query preparation
 
@@ -95,7 +97,7 @@ minimap2 builds an index (`.mmi`) of the concatenated target. This amortizes the
 
 ### 5d. Alignment
 
-minimap2 runs with:
+The primary minimap2 pass runs with:
 - `--secondary=yes -N 50 -p 0.5`: report secondary alignments (needed for split/paralog detection)
 - Preset `asm5` (default) or `asm20`: controls alignment sensitivity
 - Streamed PAF output (stdout piped, no intermediate file)
@@ -110,33 +112,53 @@ PAF lines are parsed in streaming fashion (no full output in RAM). Each hit is:
 
 Result: a HashMap from `(genome_idx, cluster_name)` → `Vec<Hit>`.
 
+### 5f. Exact missing-CDS pass
+
+When `--synteny` and `--annotations` are enabled, Recore runs an additional exact-base alignment pass with minimap2 `-c` in small genome chunks. This pass addresses a specific failure mode in repetitive gene families: a true unannotated CDS-locus hit can be hidden when annotated paralogs consume minimap2's secondary-hit budget in a large concatenated target.
+
+Only candidates classified as `MISSING_CDS` are imported from this second pass. All other extra hits are ignored, and a `MISSING_CDS` candidate is corrected in the binary matrix only if later synteny validation confirms the locus.
+
 ---
 
 ## Phase 6: Hit Classification
 
-Each (cluster, genome) gap with hits is classified into one of 7 rescue types. Classification follows three paths:
+Each (cluster, genome) gap with hits is classified into one of 9 rescue types. Classification follows three paths:
 
 ### Path 1: Single full-coverage hit (≥ min_coverage)
 
 The best hit (by query length, then score) covers ≥80% of the reference sequence (default `--min-coverage`). Classification depends on GFF annotation overlap:
 
+Before classification, Recore builds a conservative gene-to-cluster index from
+the matrix and the GFF. If one alias of a CDS maps unambiguously to a cluster,
+its other aliases (`locus_tag`, `gene`, `Name`, `protein_id`, old locus tags)
+are mapped to the same cluster. Ambiguous aliases that point to multiple
+clusters are left unresolved.
+
 | Condition | Type | Confidence |
 |-----------|------|------------|
 | No GFF provided | DROPPED | identity × coverage |
+| GFF loaded, no substantial CDS overlaps hit, identity ≥95% | MISSING_CDS | identity × coverage |
 | No GFF gene overlaps hit | DROPPED | identity × coverage |
 | Overlapping gene belongs to a different cluster, identity ≥ 95% | SPLIT | base × 1.1 |
 | Overlapping gene belongs to a different cluster, identity < 95% | PARALOG | base × 0.7 |
 | Overlapping gene not in any cluster | DROPPED | identity × coverage |
 
+`MISSING_CDS` is used only when the alignment is full-length and no CDS overlaps more than half of both the hit span and the annotated CDS. Short boundary overlaps with adjacent genes are ignored so a real missing annotation is not swallowed by a neighboring feature.
+
 After initial classification, DROPPED hits undergo **start variant detection**: if the hit has ≥98% identity and a GFF gene within 300bp length difference overlaps ≥80% of the hit, it's reclassified as START_VARIANT.
 
-### Path 2: Fragment assembly (same contig, ≥2 fragments)
+### Path 2: Conservative fragment-chain assembly (same allele, contig, and strand)
 
-If no single hit has sufficient coverage, hits on the same contig are merged. Query intervals are sorted, overlaps are merged, and total coverage is computed per allele (the best allele is used).
+If no single hit has sufficient coverage, hits are first grouped by query allele, query length, target contig, and strand. Recore builds the best co-linear chain within each group and uses only the best chain. This prevents independent alleles or paralogous hits from being merged into a false fragmented gene.
 
-If merged coverage ≥ min_coverage with ≥2 fragments:
-- **Frameshift detection**: if average identity ≥ 95% and gaps between fragments are ≤50bp and NOT divisible by 3 → PSEUDOGENE:Frameshift
-- Otherwise → FRAGMENTED
+If the best chain reaches `--min-coverage` with ≥2 fragments:
+- Non-co-linear chains are not rescued as fragments.
+- If the whole chain lies inside one compatible CDS, Recore classifies it through the single-CDS annotation logic (DROPPED, START_VARIANT, SPLIT, or PARALOG) instead of calling FRAGMENTED.
+- If average identity is ≥95% and a small gap is not divisible by 3, the event is classified as PSEUDOGENE:Frameshift.
+- If the chain has a large query or target gap (≥50 bp), the event is classified as FRAGMENTED.
+- Otherwise, the event is classified as ALIGNMENT_SPLIT: the gene is reconstructed by multiple alignments, but the evidence does not support a biological break.
+
+Fragment-chain evidence is written to `rescue_report.tsv` for auditability.
 
 ### Path 3: Partial deletion pseudogene
 
@@ -148,7 +170,7 @@ If the best hit has ≥90% identity but only 60–80% coverage (below min_covera
 
 ## Phase 7: Internal Stop Codon Scanning
 
-DROPPED rescues are post-processed for pseudogene detection. For each genome with at least one DROPPED rescue:
+DROPPED and MISSING_CDS rescues are post-processed for pseudogene detection. For each genome with at least one sequence-only rescue:
 
 1. Load genome FASTA contigs on-demand (not preloaded for all genomes)
 2. Extract the hit region from the contig
@@ -166,19 +188,27 @@ When `--synteny` is enabled and GFF files are loaded, each rescue is validated a
 ### Algorithm
 
 For the rescued gene at position (contig, start, end) in the target genome:
-1. Find the **upstream** and **downstream** genes using the GFF index
-2. Map those genes to their Panaroo cluster assignments via gene_to_cluster maps
-3. For up to 5 reference genomes where this cluster IS present:
-   a. Find the reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes)
-   b. Find its flanking genes
-   c. Compare flanking cluster assignments
-4. If **either** upstream OR downstream cluster matches in any reference → PASS
-5. Otherwise → FAIL
+1. Build side-specific context windows around the rescued locus using 1, 2, 3, 4, and 5 upstream/downstream CDS neighbours. If the rescue substantially overlaps an annotated CDS, that CDS is used as the centre so short start-site differences and overlapping CDS boundaries do not shift the context. Otherwise the locus midpoint is used, which is important for missing-CDS calls with only tiny overlaps into adjacent genes.
+2. For every reference genome where this cluster IS present, in deterministic genome order:
+   a. Read every gene ID in the matrix cell, not only the first one. This keeps multi-copy/paralogous clusters from being represented by an arbitrary copy.
+   b. Find each reference gene in the GFF (try exact ID, then strip `_pseudo`/`_dup_N` suffixes).
+   c. Build the same side-specific context window around each resolved reference gene.
+3. Score each target/reference context comparison. Nearest neighbours contribute most, distal neighbours contribute less, upstream/downstream sides are scored separately, and each reference neighbour can be matched only once.
+4. A reference context is compatible when its score is at least 0.50 and it satisfies the side rule: if both sides are comparable, at least one upstream and one downstream cluster must match; if only one side is comparable, that side must match.
+5. If three or fewer reference genomes have context, one compatible context can validate the rescue. If more than three reference genomes have context, compatibility must be observed in at least two genomes. This prevents a single noisy/paralogous context or several duplicated copies in one genome from validating a rescue in a large dataset.
+6. Recore keeps the best assessment across neighbour windows, preferring passing assessments, then higher score, then the smallest informative window.
+7. Otherwise -> FAIL.
+
+Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty.
+
+PARALOG candidates are more conservative: if they do not have explicit `synteny=PASS`, they are written to `paralog_rejected_report.tsv` and are not inserted into the corrected matrix.
+
+MISSING_CDS candidates follow the same conservative matrix rule: `synteny=PASS` upgrades them to `STRICT_PRESENT`; without synteny support they are kept as `MISSING_CDS_UNVALIDATED` audit evidence and are not corrected by any matrix policy.
 
 ### Confidence adjustment
 
 - Synteny PASS: confidence × 1.2 (boost)
-- Synteny FAIL: confidence × 0.6 (penalize)
+- Synteny FAIL: confidence × 0.6, then reject from the corrected matrix
 - No flanking genes found: no adjustment (synteny_ok = None)
 
 ---
@@ -188,7 +218,7 @@ For the rescued gene at position (contig, start, end) in the target genome:
 Multiple rescues can overlap on the genome (e.g., a DROPPED and a PARALOG rescue at the same locus). Conflicts are resolved by:
 
 1. Sort rescues by (genome, contig, start position)
-2. For overlapping rescues on the same contig: keep the one with higher confidence
+2. For substantial overlaps on the same contig (≥50% of the shorter interval): keep the one with higher confidence
 3. Single-pass O(n) sweep with a removal bitmap
 
 ---
@@ -223,19 +253,173 @@ Uses MMseqs2 `linclust` for linear-time clustering with alignment-based identity
 
 ### rescue_report.tsv
 
-One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, annotation_match.
+One row per rescue event. Columns: gene_cluster, genome, rescue_type, identity, coverage, contig, start (1-based), end, strand, confidence, synteny, quantitative synteny evidence (`synteny_score`, support count, reference context count, selected neighbour window, upstream/downstream matches), ORF integrity signal, annotation_match, plus fragment-chain evidence columns for multi-hit rescues.
+
+### synteny_rejected_report.tsv
+
+Written only when `--synteny` rejects at least one candidate. It uses the same schema as `rescue_report.tsv`, but these rows are audit records only and are not inserted into `gene_presence_absence_recore.csv`.
+
+### paralog_rejected_report.tsv
+
+Written only when PARALOG candidates lack explicit synteny support. It uses the same schema as `rescue_report.tsv`, but these rows are audit records only and are not inserted into `gene_presence_absence_recore.csv`.
+
+### orthology_evidence.tsv
+
+One row per accepted rescue plus rejected synteny or paralog candidate. This table makes the decision layer explicit: accepted/rejected status, orthology status, evidence state (`STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, `REJECTED_CONTEXT`), matrix action, publication status, annotation-matched cluster, synteny state, quantitative synteny evidence, ORF integrity signal, confidence, coordinates, and rejection reason.
+
+Before an accepted rescue enters the binary matrix, Recore also applies an
+adaptive orthology-quality guard. The guard raises the required sequence
+identity/coverage for rare or very short clusters, while allowing strong
+same-locus evidence such as passing synteny to support strict/alias calls. The
+guard writes `adaptive_identity_floor`, `adaptive_coverage_floor`,
+`adaptive_sequence_pass`, `orthology_confidence_score`,
+`orthology_confidence_tier`, and `risk_flags`. Accepted evidence that passes
+the selected `--matrix-policy` but fails this guard is kept as
+`audit_only_quality`.
+
+### reference_genome_audit.tsv
+
+Written when `--reference-genome` is provided. The reference can be an exact matrix column or an embedded `ASxxxxx` identifier. For every cluster, Recore reports whether the reference matrix already contains it, whether Recore rescued reference evidence, whether only rejected/paralog/partial evidence exists, or whether no evidence was found. The `reference_absence_class` column is deliberately simple:
+- `new_to_reference`: no reference evidence under the current thresholds.
+- `reference_like_or_present`: already present or rescued in the audited reference.
+- `reference_like_ambiguous`: partial, pseudogene, paralog, or rejected-context evidence; review before calling novel to the reference.
+
+The reference audit also runs an exact reference-only shadow search and keeps a
+shadow copy of candidates before conflict resolution. This prevents
+partial/paralogous evidence from disappearing simply because it was correctly
+excluded from the binary matrix. Such rows are reported as
+`flag_reference_partial_paralog_evidence` with
+`publication_confidence=complex_paralog`: the exact cluster can remain absent,
+but the absence should not be described as a clean absence of the broader
+sequence family.
+
+Accepted reference-like rescue evidence is still passed through the adaptive
+orthology-quality guard used by the corrected matrix. Weak sequence-only hits
+below the dataset-aware identity/coverage floors remain
+`reference_like_ambiguous` rather than being promoted to
+`reference_like_or_present`.
+
+The reference audit also compares reference-absent cluster representatives
+against reference-present cluster representatives. Recore seeds candidate pairs
+with canonical 15-mers, globally aligns the best candidates, and classifies
+high-confidence matches as full-length same-gene sequence, short/long in-frame
+alleles, frameshift-like length changes, or partial reference homology. These
+events are written to `reference_cluster_events.tsv` and mirrored in
+`reference_genome_audit.tsv` as `EVENT_DERIVED_REFERENCE_CLUSTER` with
+`publication_confidence=event_derived`. They are deliberately audit-only:
+Recore keeps the cluster as a separate matrix column but prevents downstream
+tables from calling it a clean novel gene relative to the reference.
+
+### evolutionary_events.tsv
+
+Written for every run. Recore combines the corrected matrix state, reference
+event audit, rescue classifications, synteny rejections, paralog rejections,
+cluster locus context, optional GFF mobile-element labels, and optional Newick
+tree evidence into one interpretation table.
+
+When `--tree` is provided, Recore performs binary Fitch parsimony per cluster:
+tips are matched to matrix columns by exact name or embedded `ASxxxxx` ID, and
+gains/losses are counted by a top-down assignment consistent with the Fitch
+state sets. If the root state is ambiguous under Fitch, Recore now reports
+`ancestral_state=ambiguous` and avoids turning that arbitrary tie-break into an
+ancestral-loss claim. This yields phylogenetic patterns such as ancestral
+retention, ancestral loss, lineage-specific gain, recurrent gain/loss,
+homoplastic gain/loss, ambiguous gain/loss, and singleton/noise-like signals.
+
+The molecular mechanism call is separate from the tree pattern. Recore gives
+priority to direct sequence/locus evidence: reference-derived alleles from
+`reference_cluster_events.tsv`, IS-supported interruptions from GFF labels,
+pseudogene and fragmentation evidence, paralog/duplication signals, context
+shifts, acquisition/insertion candidates, deletion/loss candidates, and
+unresolved accessory variation. These calls are audit-only and are intended for
+manual review and manuscript wording, not automatic binary correction.
+
+The table also reports a `phylogenetic_blink_flag`, an
+`evolutionary_signal_score`, and a `highlight_priority`. These combine tree
+coherence, mechanism support, synteny, locus-context stability, ORF integrity,
+and cluster-component risk so highly dispersed or singleton-like clusters are
+easy to filter before manuscript highlighting.
+
+Recore also reports a Dollo-like penalized model. It finds the smallest carrier
+MRCA, reports its size and carrier purity, and counts the minimum loss events
+inside that MRCA. A compact, high-purity carrier clade is treated as more
+plausible than a root-spanning pattern that would require many independent
+losses. Root ambiguity and repeated independent gains add
+`dollo_violation_count` and reduce `penalized_phylo_score`. This is deliberately
+an interpretation aid rather than a binary correction rule.
+
+Mobile-element support has two tiers. If `--mobile-element-reference` is
+provided, Recore aligns that nucleotide FASTA of mobile elements, IS, or
+transposase loci against genomes with rescue/disruption evidence and reports
+nearby hits as `mobile_element_source=sequence`. This path is agnostic to GFF
+feature names. If no sequence database hit is available, Recore falls back to
+annotation labels (`ID`, aliases, `product`, `Note`) containing terms such as
+IS names, insertion sequence, transposase, phage, integrase, or recombinase.
+`IS_interruption_supported` is deliberately conservative: it requires a
+fragmented or disrupted rescue plus close mobile-element evidence within
+250 bp.
+
+### cluster_locus_context.tsv / cluster_locus_summary.tsv
+
+Written when GFF annotations are loaded. Recore builds a two-gene upstream and two-gene downstream context window for each present gene ID that can be resolved in the GFF. The context table lists every observed cluster-side context; the summary table flags clusters as stable single-locus, mostly stable with minor context noise, possible multi-locus/paralog, or insufficient context. Synteny validation uses an adaptive 1-to-5-neighbour model, but this summary remains fixed-width so locus stability can be compared across clusters.
+
+### cluster_synteny_blocks.tsv
+
+Written when GFF annotations are loaded. This audit-only table summarizes
+wider five-neighbour upstream/downstream blocks for every resolvable present
+cluster. Unique blocks are collapsed by ordered displayed gene/locus identity:
+internal cluster gaps, representative coordinates, and gene lengths do not
+create additional blocks. One representative locus and the full carrier-genome
+set are kept for each unique architecture. It is
+intended for reviewing translocations, tandem duplications, or alternative local
+contexts without changing the correction matrix. If a reference genome is
+known, Recore indexes every boundary between reference genes and chooses the
+boundary sharing the largest number of flanking clusters with each observed
+block. This provides a reference/H37Rv context row even for clusters absent
+from the reference, so users can inspect the neighbouring genes that define the
+likely insertion, deletion, disruption, or context-shift slot.
+
+### genome_qc.tsv
+
+Written for every run. Recore summarizes each genome's FASTA/GFF availability,
+GFF contig remapping, searchable gaps, accepted rescues, matrix corrections,
+NSC-added presence, synteny rejections, and paralog rejections. The `qc_flags`
+column highlights genomes that may need assembly or annotation review before
+interpreting noisy presence/absence patterns. Successful GFF contig remapping is
+kept as an informational flag and does not by itself move a genome from `pass`
+to `review`.
+
+### cluster_components.tsv / cluster_component_members.tsv
+
+Written for every run. Recore converts pairwise cluster relationships into
+connected components. Edges come from split-cluster evidence, annotation-match
+evidence, NSC merges, and paralog evidence. The component tables make it clear
+whether a cluster should be reviewed as a possible alias/redundant component or
+as part of a paralog family that should remain distinct by default. Component
+membership is mirrored in `evolutionary_events.tsv`.
 
 ### gene_presence_absence_recore.csv
 
 Drop-in replacement for Panaroo's CSV. Changes:
 - Rescued genes: cell value `RESCUED:contig:start-end` (1-based coordinates)
+- Binary correction is controlled by `--matrix-policy` (`strict`, `balanced`, `sensitive`) plus the adaptive orthology-quality guard
 - NSC-merged genes: cell value `NSC_MERGED`
 - Clusters absorbed by NSC are removed (rows dropped)
 - Metadata columns (No. isolates, No. sequences) updated to reflect rescues
 
+### gene_presence_absence_recore_states.csv
+
+Same shape as the corrected matrix, but genome cells are states rather than
+binary calls: `PRESENT_INPUT`, `ABSENT`, `STRICT_PRESENT`, `ALIAS_CLUSTER`,
+`SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or
+`REJECTED_CONTEXT`. This is the preferred output for plotting or reviewing
+ambiguous biology without forcing it into a clean 0/1 matrix.
+
 ### summary.txt
 
-Human-readable summary with gap counts, rescue type breakdown, core/soft-core genome changes, synteny stats, and NSC stats.
+Human-readable summary with gap counts, accepted rescues, matrix-corrected
+rescues under the selected policy, rescue type breakdown, core/soft-core genome
+changes, synteny stats, and NSC stats.
 
 ### nscluster_report.tsv (if NSC enabled)
 
@@ -259,8 +443,10 @@ NSC-merged clusters are excluded from the count (their presences are absorbed in
 | Type | When | Confidence modifier |
 |------|------|-------------------|
 | DROPPED | Gene present in genome but cleaned by Panaroo graph cleaning | 1.0× (base) |
+| MISSING_CDS | Gene sequence present at a locus with no substantial overlapping CDS in the GFF | 1.0× (base) |
 | SPLIT | Gene assigned to wrong Panaroo cluster (≥95% identity to another cluster's gene) | 1.1× |
-| FRAGMENTED | Gene broken into ≥2 fragments with combined coverage ≥80% | 0.8× |
+| FRAGMENTED | Gene broken into ≥2 fragments with combined coverage ≥80% and a large biological gap | 0.8× |
+| ALIGNMENT_SPLIT | Gene reconstructed by ≥2 small co-linear alignments without biological break evidence | 0.9× |
 | START_VARIANT | Same gene with different start codon (≤300bp length difference) | 0.95× |
 | PARALOG | Cross-match to a related gene family (<95% identity) | 0.7× |
 | PSEUDOGENE:InternalStop | Internal stop codon(s) in the best reading frame | 0.5× |
@@ -279,7 +465,7 @@ NSC-merged clusters are excluded from the count (their presences are absorbed in
 | minimap2 | O(queries × target_size) | O(streaming) — PAF not buffered |
 | Classification | O(hits) with rayon parallelism | O(rescues) |
 | Internal stops | O(DROPPED_rescues × hit_length) | O(genome) per genome |
-| Synteny | O(rescues × 5_references) | O(1) per rescue |
+| Synteny | O(rescues × neighbour_windows × present_cluster_copies) | O(contexts per cluster) per rescue |
 | Conflict resolution | O(rescues × log(rescues)) | O(rescues) |
 | NSC MinHash | O(clusters × seq_length) + O(candidates) | O(clusters × sketch_size) |
 | NSC MMseqs2 | O(clusters) linear time | O(mmseqs2 internal) |

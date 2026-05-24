@@ -1,5 +1,15 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum MatrixPolicy {
+    /// Paper-grade: correct only strict same-locus or cluster-alias evidence.
+    Strict,
+    /// Default: correct strict/alias/full-sequence evidence; keep partial/disrupted evidence multistate-only.
+    Balanced,
+    /// Exploratory: correct all accepted rescues, including partial/disrupted evidence.
+    Sensitive,
+}
 
 /// Post-hoc rescue of falsely absent genes in pangenome matrices.
 #[derive(Parser, Debug)]
@@ -57,8 +67,45 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub synteny: bool,
 
-    // ── Nucleotide Similarity Clustering ──
+    /// Write per-genome GFF3 files with Recore rescue features appended.
+    /// Original GFF records are preserved when --annotations is provided.
+    #[arg(long, default_value_t = false)]
+    pub write_corrected_gff: bool,
 
+    /// Write a self-contained HTML run report.
+    #[arg(long, default_value_t = false)]
+    pub write_html_report: bool,
+
+    /// Policy for inserting accepted rescues into the binary corrected matrix.
+    #[arg(long, value_enum, default_value_t = MatrixPolicy::Balanced)]
+    pub matrix_policy: MatrixPolicy,
+
+    /// Genome column to audit as the reference/background genome.
+    /// Accepts exact matrix names or embedded AS identifiers such as AS00146.
+    #[arg(long)]
+    pub reference_genome: Option<String>,
+
+    /// Optional rooted Newick tree for parsimony-based evolutionary event interpretation.
+    #[arg(long)]
+    pub tree: Option<PathBuf>,
+
+    /// Optional FASTA of mobile elements, IS, or transposase loci for name-agnostic sequence support.
+    #[arg(long)]
+    pub mobile_element_reference: Option<PathBuf>,
+
+    /// Minimum nucleotide identity for mobile-element reference hits.
+    #[arg(long, default_value_t = 85.0)]
+    pub mobile_element_min_identity: f64,
+
+    /// Minimum query coverage for mobile-element reference hits.
+    #[arg(long, default_value_t = 50.0)]
+    pub mobile_element_min_coverage: f64,
+
+    /// Maximum distance from a rescue/disruption interval to report mobile-element support.
+    #[arg(long, default_value_t = 1000)]
+    pub mobile_element_window: u64,
+
+    // ── Nucleotide Similarity Clustering ──
     /// Enable nucleotide similarity clustering to merge redundant Panaroo clusters.
     /// Detects clusters split at the AA level but identical at the DNA level.
     #[arg(long, default_value_t = false)]

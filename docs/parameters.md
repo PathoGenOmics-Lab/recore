@@ -16,6 +16,16 @@
 | `-o, --output` | `recore_output/` | Output directory |
 | `-t, --threads` | `4` | Number of parallel threads (for rayon classification and minimap2) |
 
+Recore matches FASTA and GFF files by exact matrix column name first, then by an
+embedded `ASxxxxx` identifier. For single-contig genomes, GFF seqids are
+normalized internally to the FASTA contig name so `--synteny` can work when a
+GFF uses `contig_1` or `L4_AS00146` but the FASTA contig is `AS00146`.
+
+Numeric parameters are validated before the pipeline starts: percentages must
+be finite values between 0 and 100, fractions between 0 and 1, thread count and
+NSC k-mer size must be at least 1, and `--nsc-engine` must be `minhash` or
+`mmseqs2`.
+
 ## Alignment
 
 | Flag | Default | Description |
@@ -35,7 +45,16 @@
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--synteny` | `false` | Validate each rescue by comparing flanking gene context to reference genomes. Requires `--annotations`. Boosts confidence of synteny-consistent rescues (×1.2) and penalizes inconsistent ones (×0.6). |
+| `--synteny` | `false` | Validate each rescue by adaptive 1-to-5-neighbour flanking context against reference genomes. Requires `--annotations`. Boosts synteny-consistent rescues (×1.2), reports quantitative synteny metrics, and rejects explicit synteny failures from the corrected matrix while writing them to `synteny_rejected_report.tsv`. Also enables the exact missing-CDS pass for unannotated loci. Independently, PARALOG candidates without explicit synteny support are rejected to `paralog_rejected_report.tsv`. |
+| `--write-corrected-gff` | `false` | Write per-genome `corrected_gff/*.recore.gff3` files with rescued CDS features appended. Original GFF records are preserved when `--annotations` is provided. |
+| `--write-html-report` | `false` | Write a self-contained `recore_report.html` with headline QC, correction counts, evolutionary mechanisms, top candidate clusters, and links to the underlying audit files. |
+| `--matrix-policy` | `balanced` | Controls which accepted rescues can enter the binary corrected matrix. `strict` corrects only `STRICT_PRESENT` and `ALIAS_CLUSTER`; `balanced` also corrects full-length `SEQUENCE_ONLY`; `sensitive` also corrects partial/disrupted accepted evidence for exploratory analyses. In all modes, the adaptive orthology-quality guard can keep weak accepted evidence as `audit_only_quality`. |
+| `--reference-genome` | — | Audit one genome column/reference background by exact matrix name or embedded `ASxxxxx` identifier. Runs a reference-only shadow search and writes `reference_genome_audit.tsv` with `new_to_reference`, `reference_like_or_present`, and `reference_like_ambiguous` classifications, plus `publication_confidence` labels for clean, complex/paralogous, event-derived, fragmented, pseudogene, and unresolved reference evidence. Also writes `reference_cluster_events.tsv` for reference-absent clusters whose representative sequence is best explained as an allele, fragment, or partial homologue of a reference gene. These rows are audit-only and do not change the binary matrix. |
+| `--tree` | — | Optional rooted Newick tree. When provided, Recore uses Fitch parsimony on the corrected presence/absence state to add ancestral state, root-state confidence, gain/loss counts, carrier-MRCA purity, Dollo-like fit, monophyly, and phylogenetic pattern calls to `evolutionary_events.tsv`. Tip names can match matrix columns exactly or by embedded `ASxxxxx` identifiers. |
+| `--mobile-element-reference` | — | Optional nucleotide FASTA of mobile elements, insertion sequences, or transposase loci. Recore aligns these sequences to genomes with rescue/disruption evidence and reports nearby hits in `evolutionary_events.tsv` as `mobile_element_source=sequence`, so IS support can be sequence-based rather than dependent on GFF product names. |
+| `--mobile-element-min-identity` | `85.0` | Minimum identity for sequence-based mobile-element hits. |
+| `--mobile-element-min-coverage` | `50.0` | Minimum query coverage for sequence-based mobile-element hits. |
+| `--mobile-element-window` | `1000` | Maximum distance in bp from a rescue/disruption interval to report mobile-element support. IS interruption calls still require close evidence within 250 bp. |
 
 ## Nucleotide Similarity Clustering
 

@@ -1,6 +1,8 @@
 # Rescue Types
 
-Recore classifies each rescued gene into one of 7 types based on the alignment evidence and GFF annotation context.
+Recore classifies each rescued gene into one of 9 types based on the alignment evidence and GFF annotation context.
+
+Examples below show the core `rescue_report.tsv` columns; see [output_files.md](output_files.md) for the full schema, including fragment evidence columns.
 
 ---
 
@@ -15,6 +17,23 @@ Recore classifies each rescued gene into one of 7 types based on the alignment e
 **Example in rescue_report.tsv:**
 ```
 geneX   genome1   DROPPED   99.8   100.0   contig_1   230401   231234   +   0.998   PASS   Rv0210c
+```
+
+---
+
+## MISSING_CDS
+
+**What it means:** The gene sequence is present in the assembly, but the supplied GFF has no substantial CDS feature at that locus. This catches annotation omissions rather than Panaroo-only matrix cleaning errors.
+
+**Evidence:** Full-coverage hit (≥80%) with ≥95% identity, GFF annotations loaded, and no CDS overlapping more than half of both the hit span and the annotated CDS. Tiny boundary overlaps with adjacent genes are allowed.
+
+**Confidence:** `identity × coverage` (base confidence, unmodified)
+
+**Matrix behavior:** A MISSING_CDS candidate is corrected only when `--synteny` gives `PASS`, which upgrades it to `STRICT_PRESENT`. Without synteny support it remains `MISSING_CDS_UNVALIDATED` audit evidence and is not inserted into the binary corrected matrix.
+
+**Example:**
+```
+geneM   genome2   MISSING_CDS   99.2   89.5   contig_1   2195924   2197220   +   1.066   PASS
 ```
 
 ---
@@ -38,18 +57,35 @@ The value after `SPLIT:` is the cluster that actually contains the annotation.
 
 ## FRAGMENTED
 
-**What it means:** The gene is broken into multiple pieces in this genome. Common causes are assembly breaks (contig boundaries), IS element insertions, or large indels that split the reading frame.
+**What it means:** The gene is broken into multiple biological pieces in this genome. Common causes are assembly breaks (contig boundaries), IS element insertions, or large indels that split the reading frame.
 
-**Evidence:** ≥2 hits on the same contig whose merged coverage reaches ≥80% of the reference, but no single hit crosses the coverage threshold.
+**Evidence:** A co-linear chain of ≥2 hits from the same query allele, target contig, and strand whose merged coverage reaches ≥80% of the reference, with a large query or target gap (≥50 bp). Non-co-linear chains are not rescued as FRAGMENTED, and chains contained inside one compatible CDS are classified through the single-CDS annotation logic instead.
 
 **Confidence:** `avg_identity × total_coverage × 0.8`
 
 **Example:**
 ```
-geneZ   genome3   FRAGMENTED:2frags:87%cov   97.2   87.4   contig_3   112000   113400   +   0.672   FAIL   
+geneZ   genome3   FRAGMENTED:2frags:87%cov   97.2   87.4   contig_3   112000   113400   +   0.806   PASS
 ```
 
 The `start` and `end` coordinates span from the first to the last fragment.
+
+---
+
+## ALIGNMENT_SPLIT
+
+**What it means:** The gene is reconstructed by multiple minimap2 alignments, but the evidence does not support a biological gene break. This is usually an alignment or representation split rather than a functional disruption.
+
+**Evidence:** A co-linear multi-hit chain reaches the coverage threshold, but the query and target gaps are small (<50 bp), no frameshift-like gap is detected, and the chain is not better explained as a single-CDS annotation match.
+
+**Confidence:** `avg_identity × total_coverage × 0.9`
+
+**Example:**
+```
+geneZ   genome3   ALIGNMENT_SPLIT:2frags:98%cov   99.6   98.4   contig_3   112000   113400   +   0.882   PASS
+```
+
+These events are reported separately so downstream analyses can avoid treating technical split alignments as biological fragmentation.
 
 ---
 
@@ -78,9 +114,11 @@ geneA   genome4   START_VARIANT:+57bp   99.6   100.0   contig_1   34100   34956 
 
 **Confidence:** `identity × coverage × 0.7` (reduced — this is a cross-match, not a true rescue)
 
+**Matrix behavior:** PARALOG candidates are audit-only unless synteny explicitly passes. Without `synteny=PASS`, they are written to `paralog_rejected_report.tsv` and are not inserted into `gene_presence_absence_recore.csv`.
+
 **Example:**
 ```
-geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   1921800   +   0.501   FAIL   PE_PGRS47
+geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   1921800   +   0.628      PE_PGRS47
 ```
 
 > **Note for MTBC analyses:** A large fraction of PARALOGs in tuberculosis data come from the PE/PPE superfamily, which comprises ~170 genes with high nucleotide similarity. These are not rescued genes — they are correctly absent.
@@ -127,7 +165,7 @@ geneD   genome7   PSEUDOGENE:frameshift   97.8   91.0   contig_2   654000   6551
 
 **Example:**
 ```
-geneE   genome8   PSEUDOGENE:partial:72%cov   94.8   72.1   contig_1   890000   890900   +   0.273   FAIL   
+geneE   genome8   PSEUDOGENE:partial:72%cov   94.8   72.1   contig_1   890000   890900   +   0.273
 ```
 
 ---
@@ -144,7 +182,7 @@ Where:
 - `identity_fraction` = identity / 100
 - `coverage_fraction` = coverage / 100
 - `type_modifier` = see table above (1.0 for DROPPED, down to 0.4 for PartialDeletion)
-- `synteny_modifier` = 1.2 if PASS, 0.6 if FAIL, 1.0 if not assessed
+- `synteny_modifier` = 1.2 if PASS, 1.0 if not assessed. Explicit FAIL candidates are penalized for audit and rejected from the corrected matrix when `--synteny` is enabled.
 
 A value close to 1.0 indicates a high-confidence rescue. Values below ~0.5 should be interpreted with caution.
 
@@ -155,7 +193,7 @@ A value close to 1.0 indicates a high-confidence rescue. Values below ~0.5 shoul
 When two rescues overlap on the genome, the one with higher confidence wins. Because of the type modifiers, the natural priority order is:
 
 ```
-SPLIT > DROPPED ≈ START_VARIANT > FRAGMENTED > PARALOG > PSEUDOGENE:InternalStop ≈ PSEUDOGENE:Frameshift > PSEUDOGENE:PartialDeletion
+SPLIT > DROPPED ≈ MISSING_CDS ≈ START_VARIANT > ALIGNMENT_SPLIT > FRAGMENTED > PARALOG > PSEUDOGENE:InternalStop ≈ PSEUDOGENE:Frameshift > PSEUDOGENE:PartialDeletion
 ```
 
 This prevents a PARALOG cross-match from overwriting a genuine DROPPED rescue at the same locus.
