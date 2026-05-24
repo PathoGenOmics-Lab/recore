@@ -911,8 +911,7 @@ td strong {
 .sw.n { background: var(--nsc); border-color: var(--nsc); }
 .sw.a { background: var(--absent); border-color: var(--absent-stroke); }
 
-.explorer-controls,
-.viewer-controls {
+.explorer-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: var(--space-3);
@@ -924,16 +923,43 @@ td strong {
 }
 
 .viewer-controls {
-  position: sticky;
-  top: calc(var(--space-3) + 60px);
-  z-index: 6;
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
   margin-top: var(--space-4);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--soft-line);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-elev) 96%, transparent);
-  box-shadow: var(--shadow-2);
-  backdrop-filter: saturate(140%) blur(8px);
+  background: var(--bg-subtle);
+}
+
+.ctrl-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-left: 1px solid var(--soft-line);
+  flex-wrap: wrap;
+}
+
+.ctrl-group:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.ctrl-group-right {
+  margin-left: auto;
+  border-left: 1px solid var(--soft-line);
+  padding-right: 0;
+}
+
+.ctrl-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
 }
 
 .explorer input,
@@ -1243,83 +1269,137 @@ td strong {
   color: var(--muted);
 }
 
-.viewer-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px minmax(390px, 1fr);
-  gap: var(--space-2);
-  align-items: start;
+/* ===== Viewer layout (tree | matrix | synteny with drag handles) ===== */
+.viewer-layout {
+  display: flex;
+  flex-direction: column;
   margin-top: var(--space-4);
-}
-
-.viewer-split > * {
-  min-width: 0;
-}
-
-.viewer-split.synteny-hidden {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.viewer-split.synteny-hidden .synteny-panel,
-.viewer-split.synteny-hidden .viewer-split-handle {
-  display: none;
-}
-
-.viewer {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
   overflow: hidden;
+  box-shadow: var(--shadow-1);
 }
 
-.viewer-split-handle {
-  align-self: stretch;
-  min-height: 260px;
-  border: 1px solid var(--soft-line);
-  border-radius: var(--radius-pill);
-  background: var(--bg-subtle);
+.viewer-top-bar {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: col-resize;
-}
-
-.viewer-split-handle input {
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 16px;
-  height: 220px;
-  padding: 0;
-  accent-color: var(--accent);
-}
-
-.viewer-top {
-  display: grid;
-  grid-template-columns: 410px minmax(0, 1fr);
-  border-bottom: 1px solid var(--soft-line);
+  align-items: stretch;
   background: var(--bg-subtle);
+  border-bottom: 1px solid var(--soft-line);
 }
 
-.tree-title,
-.matrix-title {
-  padding: 8px 12px;
+.top-label {
+  padding: 9px 12px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--muted);
-}
-
-.matrix-title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   border-left: 1px solid var(--soft-line);
-  position: sticky;
-  left: 0;
-  background: var(--bg-subtle);
-  z-index: 2;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.matrix-scroller {
+.top-label:first-child {
+  border-left: 0;
+}
+
+.top-label span {
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-label small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-tree {
+  flex: 0 0 auto;
+  width: var(--tree-w, 320px);
+}
+
+.top-matrix {
+  flex: 1 1 auto;
+}
+
+.top-synteny {
+  flex: 0 0 auto;
+  width: var(--synteny-w, 38%);
+}
+
+.viewer-body {
+  display: flex;
+  height: var(--viewer-h, clamp(540px, 76vh, 920px));
+  background: var(--bg-elev);
+  position: relative;
+}
+
+.tree-pane {
+  flex: 0 0 auto;
+  width: var(--tree-w, 320px);
+  min-width: 160px;
+  background: var(--bg-elev);
+  overflow: hidden;
+  position: relative;
+}
+
+.tree-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  align-items: flex-start;
+}
+
+.tree-scroll svg {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lineage-strip {
+  display: block;
+  flex: 0 0 auto;
+  width: 6px;
+  image-rendering: pixelated;
+}
+
+.matrix-region {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+
+.matrix-header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.matrix-pane {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: auto;
+  background: var(--bg-elev);
+  min-height: 0;
 }
 
 .column-head {
@@ -1329,39 +1409,103 @@ td strong {
   cursor: crosshair;
 }
 
-.viewer-body {
-  display: grid;
-  grid-template-columns: 410px minmax(0, 1fr);
-  max-height: 720px;
-  overflow-y: auto;
-  background: var(--bg-elev);
-}
-
-.tree-pane {
-  border-right: 1px solid var(--soft-line);
-  overflow: hidden;
-  background: var(--bg-elev);
-}
-
-.matrix-pane {
-  position: relative;
-  overflow-x: auto;
-  overflow-y: hidden;
-  background: var(--bg-elev);
-}
-
-.tree-pane svg,
 .matrix-pane canvas {
   display: block;
-}
-
-.tree-pane svg,
-.matrix-pane canvas {
   cursor: crosshair;
+  image-rendering: pixelated;
 }
 
-.matrix-pane canvas {
-  image-rendering: pixelated;
+.synteny-pane {
+  flex: 0 0 auto;
+  width: var(--synteny-w, 38%);
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.synteny-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: var(--bg-elev);
+}
+
+/* ===== Drag handles between panes ===== */
+.split-handle {
+  flex: 0 0 6px;
+  background: var(--soft-line);
+  cursor: col-resize;
+  position: relative;
+  z-index: 4;
+  transition: background var(--transition);
+}
+
+.split-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+  /* enlarged hit area without changing layout */
+}
+
+.split-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 36px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+  pointer-events: none;
+  transition: background var(--transition), height var(--transition);
+}
+
+.split-handle:hover,
+.split-handle:focus-visible,
+.split-handle.dragging {
+  background: color-mix(in srgb, var(--accent) 40%, var(--soft-line));
+  outline: none;
+}
+
+.split-handle:hover::after,
+.split-handle:focus-visible::after,
+.split-handle.dragging::after {
+  background: var(--accent);
+  height: 60px;
+}
+
+.split-handle:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.viewer-body.synteny-hidden .synteny-pane,
+.viewer-body.synteny-hidden .synteny-handle {
+  display: none !important;
+}
+
+/* When the explorer is full-screen, viewer-body should fill the window. */
+.explorer:fullscreen .viewer-body {
+  height: calc(100vh - 280px);
+}
+
+body.recore-dragging {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+body.recore-dragging * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.recore-dragging .matrix-pane canvas,
+body.recore-dragging .tree-pane svg {
+  pointer-events: none;
 }
 
 .tree-edge {
@@ -1412,43 +1556,22 @@ td strong {
   color: color-mix(in srgb, var(--bg-elev) 70%, transparent);
 }
 
-.synteny-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  min-height: 260px;
-  max-height: 760px;
-  overflow: auto;
-}
-
 .synteny-head {
-  position: sticky;
-  top: 0;
-  z-index: 3;
+  flex: 0 0 auto;
   background: var(--bg-subtle);
   border-bottom: 1px solid var(--soft-line);
-  padding: 10px 12px;
-}
-
-.synteny-head span {
-  display: block;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
+  padding: 8px 12px;
 }
 
 .synteny-head small {
   display: block;
-  margin-top: 4px;
   color: var(--ink-soft);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .synteny-svg {
   display: block;
-  min-width: 620px;
 }
 
 .synteny-row,

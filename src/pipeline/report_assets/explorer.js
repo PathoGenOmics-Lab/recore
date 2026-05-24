@@ -113,7 +113,6 @@ const matrixColorMode = document.getElementById("matrixColorMode");
 const labelToggle = document.getElementById("tipLabels");
 const referenceButton = document.getElementById("referenceOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
-const splitControl = document.getElementById("viewerSplitSize");
 const syntenyZoomControl = document.getElementById("syntenyZoom");
 const fullscreenButton = document.getElementById("explorerFullscreen");
 const phylogramButton = document.getElementById("phylogramMode");
@@ -133,13 +132,28 @@ const baseCanvas = document.createElement("canvas");
 const baseCtx = baseCanvas.getContext("2d");
 const matrixPane = document.getElementById("matrixPane");
 const treePane = document.getElementById("treePane");
+const treeScroll = document.getElementById("treeScroll");
+const lineageStripCanvas = document.getElementById("lineageStrip");
+const lineageStripCtx = lineageStripCanvas ? lineageStripCanvas.getContext("2d") : null;
 const headerScroller = document.getElementById("headerScroller");
 const viewerBody = document.getElementById("viewerBody");
 const viewerSplit = document.getElementById("viewerSplit");
+const treeHandle = document.getElementById("treeHandle");
+const syntenyHandle = document.getElementById("syntenyHandle");
+const topTreeMeta = document.getElementById("topTreeMeta");
+const topMatrixMeta = document.getElementById("topMatrixMeta");
+const topSyntenyMeta = document.getElementById("topSyntenyMeta");
 const tooltip = document.getElementById("matrixTooltip");
 const syntenyPanel = document.getElementById("syntenyPanel");
 const syntenySummary = document.getElementById("syntenySummary");
 const syntenySvg = document.getElementById("syntenySvg");
+const LAYOUT_KEY = "recore.explorer.layout.v1";
+const DEFAULT_TREE_W = 320;
+const DEFAULT_SYNTENY_W_PCT = 38;
+const MIN_TREE_W = 180;
+const MIN_MATRIX_W = 220;
+const MIN_SYNTENY_W = 260;
+const LINEAGE_STRIP_W = 6;
 const defaultStatus = "Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.";
 let selected = 0;
 let hoverRow = -1;
@@ -151,7 +165,7 @@ let maxGenomeStats = {R:1, N:1, A:1, correction:1};
 let maxDepth = 0;
 let maxDistance = 0;
 let treeHeight = 0;
-const treeWidth = 410;
+let treeWidth = DEFAULT_TREE_W;
 const headerH = 24;
 const maxCanvasDim = 32000;
 const maxCanvasPixels = 90000000;
@@ -997,35 +1011,188 @@ function renderSyntenyPanel() {
   }
   syntenyPanel.scrollTop = 0;
 }
-function applyViewerSplit() {
-  if (!viewerSplit) return;
-  if (syntenyHidden) {
-    viewerSplit.style.gridTemplateColumns = "minmax(0,1fr)";
-  } else {
-    const matrixShare = Math.max(35, Math.min(80, Number(splitControl?.value || 56)));
-    const syntenyShare = 100 - matrixShare;
-    viewerSplit.style.gridTemplateColumns = `minmax(360px,${matrixShare}fr) 18px minmax(320px,${syntenyShare}fr)`;
+function loadLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_e) {
+    return null;
+  }
+}
+function persistLayout() {
+  try {
+    const payload = {
+      treeW: Math.round(layoutState.treeW),
+      syntenyPct: Math.round(layoutState.syntenyPct * 10) / 10,
+      syntenyHidden,
+    };
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(payload));
+  } catch (_e) {
+    /* localStorage unavailable */
+  }
+}
+const layoutState = (() => {
+  const stored = loadLayout() || {};
+  return {
+    treeW: Number.isFinite(stored.treeW) ? Math.max(MIN_TREE_W, stored.treeW) : DEFAULT_TREE_W,
+    syntenyPct: Number.isFinite(stored.syntenyPct)
+      ? Math.min(70, Math.max(20, stored.syntenyPct))
+      : DEFAULT_SYNTENY_W_PCT,
+    syntenyHiddenStored: stored.syntenyHidden,
+  };
+})();
+function applyLayout() {
+  if (!viewerSplit || !viewerBody) return;
+  const bodyW = viewerBody.clientWidth || 0;
+  let treeW = layoutState.treeW;
+  let syntenyPct = layoutState.syntenyPct;
+  if (bodyW > 0) {
+    const availableForMatrix = bodyW - treeW - (syntenyHidden ? 0 : (bodyW * syntenyPct) / 100) - 12;
+    if (availableForMatrix < MIN_MATRIX_W) {
+      const overshoot = MIN_MATRIX_W - availableForMatrix;
+      const shrinkTree = Math.min(treeW - MIN_TREE_W, overshoot * 0.5);
+      treeW = Math.max(MIN_TREE_W, treeW - shrinkTree);
+      const remaining = overshoot - shrinkTree;
+      if (!syntenyHidden && remaining > 0) {
+        const syntenyW = (bodyW * syntenyPct) / 100 - remaining;
+        const minPct = (MIN_SYNTENY_W / bodyW) * 100;
+        syntenyPct = Math.max(minPct, (syntenyW / bodyW) * 100);
+      }
+    }
+    layoutState.treeW = treeW;
+    layoutState.syntenyPct = syntenyPct;
+  }
+  viewerBody.style.setProperty("--tree-w", `${treeW}px`);
+  viewerBody.style.setProperty("--synteny-w", `${syntenyPct.toFixed(2)}%`);
+  if (viewerSplit) {
+    viewerSplit.style.setProperty("--tree-w", `${treeW}px`);
+    viewerSplit.style.setProperty("--synteny-w", `${syntenyPct.toFixed(2)}%`);
   }
   document.querySelectorAll(".synteny-control").forEach(control => {
-    control.style.display = syntenyHidden ? "none" : "flex";
+    control.style.display = syntenyHidden ? "none" : "";
   });
+  treeWidth = Math.max(180, Math.round(treeW) - LINEAGE_STRIP_W - 4);
+}
+function applyViewerSplit() {
+  applyLayout();
 }
 function applySyntenyVisibility() {
-  if (!viewerSplit || !syntenyToggle) return;
-  viewerSplit.classList.toggle("synteny-hidden", syntenyHidden);
+  if (!viewerBody || !syntenyToggle) return;
+  viewerBody.classList.toggle("synteny-hidden", syntenyHidden);
+  if (viewerSplit) viewerSplit.classList.toggle("synteny-hidden", syntenyHidden);
   syntenyToggle.classList.toggle("active", !syntenyHidden);
   syntenyToggle.textContent = syntenyHidden ? "Show syntenies" : "Hide syntenies";
-  syntenyToggle.setAttribute(
-    "aria-pressed",
-    syntenyHidden ? "false" : "true",
-  );
-  applyViewerSplit();
+  syntenyToggle.setAttribute("aria-pressed", syntenyHidden ? "false" : "true");
+  applyLayout();
+  persistLayout();
   if (!syntenyHidden) {
     syntenyKey = "";
     renderSyntenyPanel();
   } else {
     selectedSyntenyCarriers = new Set();
     treeDirty = true;
+  }
+}
+function setupDragHandle(handle, side) {
+  if (!handle) return;
+  let startX = 0;
+  let startTreeW = 0;
+  let startSyntenyW = 0;
+  let bodyW = 0;
+  let active = false;
+  const onMove = event => {
+    if (!active) return;
+    const dx = event.clientX - startX;
+    if (side === "tree") {
+      const maxTree = Math.max(MIN_TREE_W, bodyW - MIN_MATRIX_W - (syntenyHidden ? 0 : startSyntenyW) - 12);
+      layoutState.treeW = Math.max(MIN_TREE_W, Math.min(maxTree, startTreeW + dx));
+    } else {
+      const newSynW = Math.max(MIN_SYNTENY_W, startSyntenyW - dx);
+      const minPct = (MIN_SYNTENY_W / bodyW) * 100;
+      const maxPct = Math.max(minPct, ((bodyW - layoutState.treeW - MIN_MATRIX_W - 12) / bodyW) * 100);
+      layoutState.syntenyPct = Math.min(maxPct, Math.max(minPct, (newSynW / bodyW) * 100));
+    }
+    applyLayout();
+    scheduleRender(false);
+  };
+  const onUp = event => {
+    if (!active) return;
+    active = false;
+    handle.classList.remove("dragging");
+    document.body.classList.remove("recore-dragging");
+    persistLayout();
+    if (handle.hasPointerCapture && handle.hasPointerCapture(event.pointerId)) {
+      handle.releasePointerCapture(event.pointerId);
+    }
+    treeDirty = true;
+    resetMatrixCache();
+    render(false);
+  };
+  handle.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    bodyW = viewerBody.clientWidth || 0;
+    if (bodyW <= 0) return;
+    active = true;
+    startX = event.clientX;
+    startTreeW = layoutState.treeW;
+    startSyntenyW = (bodyW * layoutState.syntenyPct) / 100;
+    handle.classList.add("dragging");
+    document.body.classList.add("recore-dragging");
+    try { handle.setPointerCapture(event.pointerId); } catch (_e) {}
+    event.preventDefault();
+  });
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", onUp);
+  handle.addEventListener("pointercancel", onUp);
+  handle.addEventListener("keydown", event => {
+    const step = event.shiftKey ? 32 : 12;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      bodyW = viewerBody.clientWidth || 0;
+      const dx = (event.key === "ArrowRight" ? 1 : -1) * step;
+      if (side === "tree") {
+        const maxTree = Math.max(MIN_TREE_W, bodyW - MIN_MATRIX_W - (syntenyHidden ? 0 : (bodyW * layoutState.syntenyPct) / 100) - 12);
+        layoutState.treeW = Math.max(MIN_TREE_W, Math.min(maxTree, layoutState.treeW + dx));
+      } else {
+        const newSynW = ((bodyW * layoutState.syntenyPct) / 100) - dx;
+        const minPct = (MIN_SYNTENY_W / bodyW) * 100;
+        const maxPct = Math.max(minPct, ((bodyW - layoutState.treeW - MIN_MATRIX_W - 12) / bodyW) * 100);
+        layoutState.syntenyPct = Math.min(maxPct, Math.max(minPct, (newSynW / bodyW) * 100));
+      }
+      applyLayout();
+      persistLayout();
+      treeDirty = true;
+      resetMatrixCache();
+      render(false);
+      event.preventDefault();
+    }
+  });
+}
+function renderLineageStrip() {
+  if (!lineageStripCanvas || !lineageStripCtx) return;
+  const rows = leafOrder.length;
+  const height = Math.max(1, Math.ceil(rows * cellH));
+  lineageStripCanvas.width = LINEAGE_STRIP_W;
+  lineageStripCanvas.height = height;
+  lineageStripCanvas.style.width = `${LINEAGE_STRIP_W}px`;
+  lineageStripCanvas.style.height = `${height}px`;
+  lineageStripCtx.clearRect(0, 0, LINEAGE_STRIP_W, height);
+  for (let r = 0; r < rows; r += 1) {
+    const genomeIdx = leafOrder[r];
+    const lineage = lineageOfGenomeName(data.genomes[genomeIdx] || "");
+    lineageStripCtx.fillStyle = lineageColor(lineage);
+    lineageStripCtx.fillRect(0, r * cellH, LINEAGE_STRIP_W, Math.max(1, cellH));
+  }
+}
+function updateTopBarMeta() {
+  if (topTreeMeta) topTreeMeta.textContent = `${leafOrder.length} matched tips`;
+  if (topMatrixMeta) topMatrixMeta.textContent = `${visibleClusters.length} / ${data.clusters.length} clusters`;
+  if (topSyntenyMeta) {
+    const cluster = data.clusters[selected];
+    const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+    topSyntenyMeta.textContent = cluster
+      ? (blocks.length ? `${cluster.name} – ${blocks.length} unique block${blocks.length === 1 ? "" : "s"}` : `${cluster.name} – no synteny data`)
+      : "select a cluster";
   }
 }
 function renderTree() {
@@ -1185,7 +1352,9 @@ function render(scrollToSelected = false) {
   renderColumnHeader();
   renderSyntenyPanel();
   renderTree();
+  renderLineageStrip();
   renderLineageLegend();
+  updateTopBarMeta();
 }
 function scheduleRender(scrollToSelected = false) {
   if (scrollToSelected) {
@@ -1240,7 +1409,21 @@ if (leafOrder.length > 1500) {
   rowHeightControl.value = "4";
 }
 populateOptions();
+if (layoutState.syntenyHiddenStored === false) {
+  syntenyHidden = false;
+}
+applyLayout();
 applySyntenyVisibility();
+setupDragHandle(treeHandle, "tree");
+setupDragHandle(syntenyHandle, "synteny");
+if (typeof ResizeObserver !== "undefined") {
+  const ro = new ResizeObserver(() => {
+    applyLayout();
+    resetMatrixCache();
+    render(false);
+  });
+  ro.observe(viewerBody);
+}
 render(true);
 window.addEventListener("recore:theme-change", () => {
   refreshThemeColors();
@@ -1321,11 +1504,10 @@ fullscreenButton.addEventListener("click", async () => {
 document.addEventListener("fullscreenchange", () => {
   fullscreenButton.textContent = document.fullscreenElement === explorerSection
     ? "Exit fullscreen"
-    : "Fullscreen explorer";
+    : "Fullscreen";
 });
 sizeControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
 rowHeightControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
-splitControl.addEventListener("input", () => { applyViewerSplit(); });
 syntenyZoomControl.addEventListener("input", () => { syntenyKey = ""; render(false); });
 matrixColorMode.addEventListener("change", () => { resetMatrixCache(); render(false); });
 matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });

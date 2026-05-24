@@ -292,9 +292,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("Show syntenies"));
     assert!(text.contains("synteny-hidden"));
     assert!(text.contains("applySyntenyVisibility"));
-    assert!(text.contains("applyViewerSplit"));
-    assert!(text.contains("viewerSplitSize"));
-    assert!(text.contains("viewerSplitHandle"));
+    assert!(text.contains("applyLayout"));
+    assert!(text.contains("setupDragHandle"));
+    assert!(text.contains("treeHandle"));
+    assert!(text.contains("syntenyHandle"));
     assert!(text.contains("syntenyZoom"));
     assert!(text.contains("let syntenyHidden = true"));
     assert!(text.contains("selectedSyntenyReference"));
@@ -312,8 +313,8 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
-    assert!(text.contains("Column zoom <input id='cellSize' type='range' min='0.25'"));
-    assert!(text.contains("Row zoom <input id='rowHeight' type='range' min='1'"));
+    assert!(text.contains("Column <input id='cellSize' type='range' min='0.25'"));
+    assert!(text.contains("Row <input id='rowHeight' type='range' min='1'"));
     assert!(text.contains("step='0.25'"));
     assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));
