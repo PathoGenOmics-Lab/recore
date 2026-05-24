@@ -1408,20 +1408,83 @@ function renderMatrix(scrollToSelected) {
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
     const mechanism = processKind(cluster);
-    const support = cluster.support ? `<span>support ${escapeHtml(cluster.support)}</span>` : "";
-    const phylo = cluster.phylo ? `<span>phylogeny ${escapeHtml(cluster.phylo)}</span>` : "";
-    const detail = cluster.mechanismDetail ? `<span>${escapeHtml(cluster.mechanismDetail)}</span>` : "";
-    const wording = cluster.wording ? `<div class="process-wording">${escapeHtml(cluster.wording)}</div>` : "";
+    const mechanismLabel = processLabel(mechanism);
+    const mechanismDescription = processDescription(mechanism);
+    const mechanismColor = processColor(mechanism);
     info.textContent = `${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)`;
-    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div><div class="process-note"><span class="process-chip" style="--process-color:${processColor(mechanism)}"><i></i>${escapeHtml(processLabel(mechanism))}</span><span>${escapeHtml(processDescription(mechanism))}</span></div>${referenceInterpretation(cluster)}<div class="process-meta">${support}${phylo}${detail}</div>${wording}`;
+    const prevalencePct = `${Math.round(cluster.prevalence * 1000) / 10}%`;
+    const refRow = referenceMechanismRow(cluster);
+    const supportRow = cluster.support
+      ? `<dt>Support tier</dt><dd>${escapeHtml(cluster.support)}</dd>`
+      : "";
+    const phyloRow = cluster.phylo
+      ? `<dt>Phylogenetic pattern</dt><dd>${escapeHtml(cluster.phylo)}</dd>`
+      : "";
+    const detailRow = cluster.mechanismDetail
+      ? `<dt>Mechanism detail</dt><dd>${escapeHtml(cluster.mechanismDetail)}</dd>`
+      : "";
+    const wordingRow = cluster.wording
+      ? `<dt>Recommended wording</dt><dd><span class="process-wording">${escapeHtml(cluster.wording)}</span></dd>`
+      : "";
+    details.innerHTML = `
+      <div class="cluster-head">
+        <h3>${escapeHtml(cluster.name)}</h3>
+        <p class="annotation">${escapeHtml(cluster.annotation || "No annotation provided")}</p>
+        <span class="prevalence num">${cluster.present} / ${data.genomes.length} genomes &middot; ${prevalencePct}</span>
+      </div>
+      <dl class="cluster-dl">
+        <dt>Evidence states</dt>
+        <dd><div class="state-counts">
+          <span class="state-chip input"><strong>${counts.P}</strong> input</span>
+          <span class="state-chip rescued"><strong>${counts.R}</strong> rescued</span>
+          <span class="state-chip nsc"><strong>${counts.N}</strong> NSC</span>
+          <span class="state-chip absent"><strong>${counts.A}</strong> absent</span>
+        </div></dd>
+        <dt>Mechanism</dt>
+        <dd>
+          <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
+          <div class="process-wording" style="margin-top:4px">${escapeHtml(mechanismDescription)}</div>
+        </dd>
+        ${refRow}
+        ${supportRow}
+        ${phyloRow}
+        ${detailRow}
+        ${wordingRow}
+      </dl>
+    `;
     renderProcessLegend();
     detailsKey = nextDetailsKey;
   } else if (nextDetailsKey !== detailsKey) {
     info.textContent = "";
-    details.textContent = "No cluster selected.";
+    details.innerHTML = "";
     processLegend.innerHTML = "";
     detailsKey = nextDetailsKey;
   }
+}
+function referenceMechanismRow(cluster) {
+  const referenceCell = (cluster.referenceCell || "").trim();
+  const targetGene = (cluster.targetReferenceGene || "").trim();
+  const targetCluster = (cluster.targetReferenceCluster || "").trim();
+  const eventClass = (cluster.referenceEventClass || "").trim();
+  const refState = (cluster.referenceState || "").trim();
+  const bits = [];
+  if (referenceCell) bits.push(`Reference gene(s): <strong>${escapeHtml(referenceCell)}</strong>`);
+  if (targetGene || targetCluster || eventClass) {
+    const source = [];
+    if (targetGene) source.push(`source gene <strong>${escapeHtml(targetGene)}</strong>`);
+    if (targetCluster) source.push(`source cluster <strong>${escapeHtml(targetCluster)}</strong>`);
+    if (eventClass) source.push(escapeHtml(eventClass));
+    bits.push(`Event source: ${source.join("; ")}`);
+  }
+  if (refState) bits.push(`State: <strong>${escapeHtml(refState)}</strong>`);
+  if (!bits.length) {
+    const mechanism = processKind(cluster);
+    const text = mechanism === "clean_insertion_or_acquisition_candidate"
+      ? "No reference equivalent detected; candidate de novo/reference-absent locus."
+      : "No reference equivalent detected by Recore.";
+    bits.push(text);
+  }
+  return `<dt>Reference (audit)</dt><dd>${bits.join("<br>")}</dd>`;
 }
 function render(scrollToSelected = false) {
   renderMatrix(scrollToSelected);

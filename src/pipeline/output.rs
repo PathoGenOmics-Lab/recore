@@ -2053,9 +2053,7 @@ pub(super) fn write_html_report(
     html.push_str("</button>");
     html.push_str("</div></div></div></div>");
 
-    html.push_str("<main>");
-
-    html.push_str("<nav class='nav' aria-label='Section navigation'>");
+    html.push_str("<nav class='nav-bar' aria-label='Section navigation'><div class='nav-inner'>");
     let mut nav_items = vec![
         ("summary", "Summary"),
         ("stats", "Stats"),
@@ -2075,7 +2073,9 @@ pub(super) fn write_html_report(
         )
         .expect("write to String is infallible");
     }
-    html.push_str("</nav>");
+    html.push_str("</div></nav>");
+
+    html.push_str("<main>");
 
     html.push_str("<section id='summary' class='panel'>");
     html.push_str("<div class='executive'>");

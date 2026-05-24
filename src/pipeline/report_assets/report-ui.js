@@ -32,7 +32,7 @@
   });
 
   function setupNavObserver() {
-    const links = Array.from(document.querySelectorAll(".nav a[data-target]"));
+    const links = Array.from(document.querySelectorAll(".nav-bar a[data-target]"));
     if (!links.length) return;
     const targets = new Map();
     links.forEach(link => {
