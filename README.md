@@ -636,8 +636,9 @@ selected-cluster panel reports the reference gene/cell or reference-derived
 event source when Recore can identify one. When `cluster_synteny_blocks.tsv` is
 available, the viewer can open an optional split panel showing the top unique
 five-neighbour synteny blocks for the selected gene cluster. Synteny uniqueness
-is defined by the ordered gene-cluster architecture only, ignoring coordinate
-and length differences, and each row shows one representative locus. It is
+is defined by the ordered displayed gene/locus architecture, ignoring internal
+cluster gaps, coordinate differences, and length differences, and each row
+shows one representative locus. It is
 hidden by default so dense tree/matrix review starts full-width, then can be
 shown with a viewer control. The selected synteny marks its carrier tips on the
 tree, row 2 shows the clickable inferred H37Rv/reference context from shared

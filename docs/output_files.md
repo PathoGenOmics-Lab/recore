@@ -564,8 +564,9 @@ mouse wheel over the tree or column header, and fullscreen mode.
 When `cluster_synteny_blocks.tsv` is present, the explorer uses a split view:
 the left side keeps the tree plus matrix, and the right side draws up to ten
 ranked unique five-neighbour synteny blocks for the selected gene cluster. The
-synteny rows are unique by ordered gene-cluster architecture only, ignoring
-length and coordinate differences, and each row stores one representative locus.
+synteny rows are unique by ordered displayed gene/locus architecture, ignoring
+internal cluster gaps, length differences, and coordinate differences; each row
+stores one representative locus and all carrier genomes for that architecture.
 The synteny side is hidden by default and can be shown from the viewer controls.
 Once visible, a vertical split slider between panes changes how much width
 belongs to the matrix versus the synteny panel, and a synteny x-axis zoom slider

@@ -1177,9 +1177,17 @@ fn explorer_synteny_signature(
 ) -> String {
     let signature: Vec<&str> = genes
         .iter()
-        .filter_map(|gene| match gene.cluster.as_str() {
-            "" | "NA" | "__GAP__" => None,
-            cluster => Some(cluster),
+        .filter_map(|gene| {
+            let gene_id = gene.gene_id.trim();
+            let identity = if !gene_id.is_empty() && gene_id != "H37Rv_context_slot" {
+                gene_id
+            } else {
+                gene.cluster.trim()
+            };
+            match identity {
+                "" | "NA" => None,
+                value => Some(value),
+            }
         })
         .collect();
     if !signature.is_empty() {
@@ -1195,12 +1203,42 @@ fn explorer_synteny_signature(
         .join("|")
 }
 
+fn merge_explorer_synteny_block(
+    existing: &mut ExplorerSyntenyBlock,
+    incoming: ExplorerSyntenyBlock,
+) {
+    let incoming_n_genomes = incoming.n_genomes;
+    for genome in incoming.carrier_genomes {
+        if !existing.carrier_genomes.contains(&genome) {
+            existing.carrier_genomes.push(genome);
+        }
+    }
+    existing.n_genomes = if existing.carrier_genomes.is_empty() {
+        existing.n_genomes + incoming_n_genomes
+    } else {
+        existing.carrier_genomes.len()
+    };
+    let merged_fraction = existing.fraction.parse::<f64>().ok().unwrap_or(0.0)
+        + incoming.fraction.parse::<f64>().ok().unwrap_or(0.0);
+    if merged_fraction > 0.0 {
+        existing.fraction = format!("{:.3}", merged_fraction.min(1.0));
+    }
+    if !incoming.examples.is_empty() {
+        if existing.examples.is_empty() {
+            existing.examples = incoming.examples;
+        } else {
+            existing.examples.push(';');
+            existing.examples.push_str(&incoming.examples);
+        }
+    }
+}
+
 fn explorer_synteny_blocks(
     path: &std::path::Path,
     limit_per_cluster: usize,
 ) -> Result<HashMap<String, Vec<ExplorerSyntenyBlock>>> {
     let mut rows: HashMap<String, Vec<ExplorerSyntenyBlock>> = HashMap::new();
-    let mut seen_signatures: HashMap<String, ahash::HashSet<String>> = HashMap::new();
+    let mut signature_indices: HashMap<String, HashMap<String, usize>> = HashMap::new();
     if !path.exists() || limit_per_cluster == 0 {
         return Ok(rows);
     }
@@ -1254,22 +1292,11 @@ fn explorer_synteny_blocks(
             .map(parse_synteny_gene_records)
             .unwrap_or_default();
         let signature = explorer_synteny_signature(&genes, &upstream, &downstream, cluster);
-        if !seen_signatures
-            .entry(cluster.to_string())
-            .or_default()
-            .insert(signature)
-        {
-            continue;
-        }
-        let entry = rows.entry(cluster.to_string()).or_default();
-        if entry.len() >= limit_per_cluster {
-            continue;
-        }
-        entry.push(ExplorerSyntenyBlock {
+        let block = ExplorerSyntenyBlock {
             rank: rank_idx
                 .and_then(|i| record.get(i))
                 .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(entry.len() + 1),
+                .unwrap_or(1),
             n_genomes: n_genomes_idx
                 .and_then(|i| record.get(i))
                 .and_then(|value| value.parse::<usize>().ok())
@@ -1322,7 +1349,20 @@ fn explorer_synteny_blocks(
                 .to_string(),
             genes,
             reference_genes,
-        });
+        };
+        let entry = rows.entry(cluster.to_string()).or_default();
+        let cluster_signatures = signature_indices.entry(cluster.to_string()).or_default();
+        if let Some(existing_idx) = cluster_signatures.get(&signature).copied() {
+            if let Some(existing) = entry.get_mut(existing_idx) {
+                merge_explorer_synteny_block(existing, block);
+            }
+            continue;
+        }
+        if entry.len() >= limit_per_cluster {
+            continue;
+        }
+        cluster_signatures.insert(signature, entry.len());
+        entry.push(block);
     }
     for blocks in rows.values_mut() {
         blocks.sort_by_key(|block| block.rank);
@@ -2577,6 +2617,12 @@ function syntenyDisplayLabel(gene) {
   if (gene.reference && direct) return direct;
   return referenceLocusForCluster(gene.cluster) || direct || gene.cluster || "NA";
 }
+function syntenyIdentitySignature(genes) {
+  return (genes || [])
+    .map(gene => gene.gap ? "__GAP__" : syntenyDisplayLabel(gene))
+    .filter(label => label && label !== "NA")
+    .join("|");
+}
 function syntenySecondaryLabel(gene) {
   if (gene.gap) return gene.length ? `${gene.length} bp gap` : "context gap";
   const cluster = gene.cluster || "";
@@ -2664,6 +2710,7 @@ function renderSyntenyPanel() {
   const nextKey = cluster ? `${cluster.name}|${blocks.length}|${selectedSyntenyBlock}|${selectedSyntenyReference}|${syntenyZoom()}` : "none";
   if (nextKey === syntenyKey) return;
   syntenyKey = nextKey;
+  treeDirty = true;
   if (!cluster) {
     selectedSyntenyCarriers = new Set();
     syntenySummary.textContent = "No cluster selected.";
@@ -2682,11 +2729,20 @@ function renderSyntenyPanel() {
   }
   const rows = [];
   blocks.forEach((block, idx) => {
-    rows.push({kind:"block", block, blockIndex:idx, genes:blockGenes(block, cluster.name)});
+    const representativeGenes = blockGenes(block, cluster.name);
+    rows.push({kind:"block", block, blockIndex:idx, genes:representativeGenes});
     if (idx === 0) {
-      rows.push({kind:"reference", block, blockIndex:idx, genes:referenceGenesForBlock(block, cluster.name)});
+      const referenceGenes = referenceGenesForBlock(block, cluster.name);
+      if (syntenyIdentitySignature(referenceGenes) !== syntenyIdentitySignature(representativeGenes)) {
+        rows.push({kind:"reference", block, blockIndex:idx, genes:referenceGenes});
+      }
     }
   });
+  const hasReferenceRow = rows.some(row => row.kind === "reference");
+  if (selectedSyntenyReference && !hasReferenceRow) {
+    selectedSyntenyReference = false;
+    updateSelectedSyntenyCarriers(blocks);
+  }
   const rowH = 94;
   const geneH = 20;
   const gap = 12 * syntenyZoom();
@@ -2711,7 +2767,10 @@ function renderSyntenyPanel() {
   const selectedLabel = selectedSyntenyReference
     ? `${data.referenceGenome ? data.referenceGenome.name : "reference"} context`
     : `#${selectedSyntenyBlock + 1}`;
-  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tree tips. Row 2 is the H37Rv/reference context inferred from shared neighbours.`;
+  const referenceSummary = hasReferenceRow
+    ? " Row 2 is the H37Rv/reference context inferred from shared neighbours."
+    : " H37Rv/reference has the same displayed gene architecture as the representative block and is merged visually.";
+  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tree tips.${referenceSummary}`;
   rows.forEach((row, rowIdx) => {
     const genes = row.genes;
     const layout = rowLayouts[rowIdx];

@@ -1892,12 +1892,21 @@ fn encode_synteny_gene_records(records: &[SyntenyGeneRecord]) -> String {
         .join(";")
 }
 
-fn synteny_gene_cluster_signature(records: &[SyntenyGeneRecord]) -> String {
+fn synteny_gene_identity(record: &SyntenyGeneRecord) -> &str {
+    let gene_id = record.gene_id.trim();
+    if !gene_id.is_empty() && gene_id != "H37Rv_context_slot" {
+        gene_id
+    } else {
+        record.cluster.trim()
+    }
+}
+
+fn synteny_gene_identity_signature(records: &[SyntenyGeneRecord]) -> String {
     let names: Vec<&str> = records
         .iter()
-        .filter_map(|record| match record.cluster.as_str() {
-            "" | "NA" | "__GAP__" => None,
-            cluster => Some(cluster),
+        .filter_map(|record| match synteny_gene_identity(record) {
+            "" | "NA" => None,
+            identity => Some(identity),
         })
         .collect();
     if names.is_empty() {
@@ -2222,7 +2231,7 @@ pub(super) fn write_cluster_synteny_blocks(
             let downstream_sig = context_signature(gff, &downstream, g2c, pa);
             let representative_genes =
                 ordered_synteny_gene_records(gff, &upstream, Some(gene), &downstream, g2c, pa);
-            let block_signature = synteny_gene_cluster_signature(&representative_genes);
+            let block_signature = synteny_gene_identity_signature(&representative_genes);
             let row = block_rows.entry((ci.val(), block_signature)).or_default();
             row.count += 1;
             if row.upstream_signature.is_empty() {

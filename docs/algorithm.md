@@ -367,9 +367,10 @@ Written when GFF annotations are loaded. Recore builds a two-gene upstream and t
 
 Written when GFF annotations are loaded. This audit-only table summarizes
 wider five-neighbour upstream/downstream blocks for every resolvable present
-cluster. Unique blocks are collapsed by ordered gene-cluster architecture only:
-representative coordinates, gene IDs, and gene lengths do not create additional
-blocks. One representative locus is kept for each unique architecture. It is
+cluster. Unique blocks are collapsed by ordered displayed gene/locus identity:
+internal cluster gaps, representative coordinates, and gene lengths do not
+create additional blocks. One representative locus and the full carrier-genome
+set are kept for each unique architecture. It is
 intended for reviewing translocations, tandem duplications, or alternative local
 contexts without changing the correction matrix. If a reference genome is
 known, Recore indexes every boundary between reference genes and chooses the
