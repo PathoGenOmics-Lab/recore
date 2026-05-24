@@ -1708,7 +1708,15 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
 pub(super) struct ContextAccumulator {
     pub(super) count: usize,
     pub(super) examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SyntenyBlockAccumulator {
+    count: usize,
+    examples: Vec<String>,
     carrier_genomes: Vec<String>,
+    upstream_signature: String,
+    downstream_signature: String,
     representative: Option<SyntenyBlockRepresentative>,
 }
 
@@ -1882,6 +1890,21 @@ fn encode_synteny_gene_records(records: &[SyntenyGeneRecord]) -> String {
         })
         .collect::<Vec<_>>()
         .join(";")
+}
+
+fn synteny_gene_cluster_signature(records: &[SyntenyGeneRecord]) -> String {
+    let names: Vec<&str> = records
+        .iter()
+        .filter_map(|record| match record.cluster.as_str() {
+            "" | "NA" | "__GAP__" => None,
+            cluster => Some(cluster),
+        })
+        .collect();
+    if names.is_empty() {
+        "NA".to_string()
+    } else {
+        names.join("|")
+    }
 }
 
 fn build_reference_boundary_index(
@@ -2165,7 +2188,7 @@ pub(super) fn write_cluster_synteny_blocks(
     reference_gi: Option<GenomeIdx>,
     output_dir: &std::path::Path,
 ) -> Result<usize> {
-    let mut block_rows: BTreeMap<(usize, String, String), ContextAccumulator> = BTreeMap::new();
+    let mut block_rows: BTreeMap<(usize, String), SyntenyBlockAccumulator> = BTreeMap::new();
     let reference_boundary_index = reference_gi
         .and_then(|gi| gff_indices.get(&gi).zip(gene_to_cluster_maps.get(&gi)))
         .map(|(gff, g2c)| build_reference_boundary_index(gff, g2c, pa, 5))
@@ -2197,10 +2220,15 @@ pub(super) fn write_cluster_synteny_blocks(
             );
             let upstream_sig = context_signature(gff, &upstream, g2c, pa);
             let downstream_sig = context_signature(gff, &downstream, g2c, pa);
-            let row = block_rows
-                .entry((ci.val(), upstream_sig, downstream_sig))
-                .or_default();
+            let representative_genes =
+                ordered_synteny_gene_records(gff, &upstream, Some(gene), &downstream, g2c, pa);
+            let block_signature = synteny_gene_cluster_signature(&representative_genes);
+            let row = block_rows.entry((ci.val(), block_signature)).or_default();
             row.count += 1;
+            if row.upstream_signature.is_empty() {
+                row.upstream_signature = upstream_sig;
+                row.downstream_signature = downstream_sig;
+            }
             row.carrier_genomes.push(pa.genome_name(gi).to_string());
             if row.examples.len() < 5 {
                 row.examples
@@ -2215,14 +2243,7 @@ pub(super) fn write_cluster_synteny_blocks(
                     end: gene.end,
                     strand: gene.strand,
                     length: gene.end.saturating_sub(gene.start),
-                    genes: ordered_synteny_gene_records(
-                        gff,
-                        &upstream,
-                        Some(gene),
-                        &downstream,
-                        g2c,
-                        pa,
-                    ),
+                    genes: representative_genes,
                 });
             }
         }
@@ -2236,26 +2257,21 @@ pub(super) fn write_cluster_synteny_blocks(
         "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes\tcarrier_genomes\trepresentative_genome\trepresentative_gene\trepresentative_contig\trepresentative_start\trepresentative_end\trepresentative_strand\trepresentative_length_bp\trepresentative_block_genes\treference_block_genes"
     )?;
 
-    let mut rows_by_cluster: BTreeMap<usize, Vec<(String, String, ContextAccumulator)>> =
+    let mut rows_by_cluster: BTreeMap<usize, Vec<(String, SyntenyBlockAccumulator)>> =
         BTreeMap::new();
-    for ((ci, upstream, downstream), acc) in block_rows {
+    for ((ci, signature), acc) in block_rows {
         rows_by_cluster
             .entry(ci)
             .or_default()
-            .push((upstream, downstream, acc));
+            .push((signature, acc));
     }
 
     let mut written = 0usize;
     for (ci_val, mut rows) in rows_by_cluster {
-        rows.sort_by(|a, b| {
-            b.2.count
-                .cmp(&a.2.count)
-                .then(a.0.cmp(&b.0))
-                .then(a.1.cmp(&b.1))
-        });
+        rows.sort_by(|a, b| b.1.count.cmp(&a.1.count).then(a.0.cmp(&b.0)));
         let present = pa.present_count(ClusterIdx(ci_val)).max(1);
         let n_blocks = rows.len();
-        for (rank, (upstream, downstream, acc)) in rows.into_iter().enumerate() {
+        for (rank, (_signature, acc)) in rows.into_iter().enumerate() {
             let fraction = acc.count as f64 / present as f64;
             let interpretation = if n_blocks <= 1 {
                 "single_synteny_block"
@@ -2265,8 +2281,11 @@ pub(super) fn write_cluster_synteny_blocks(
                 "alternative_synteny_block"
             };
             let representative = acc.representative.as_ref();
-            let target_clusters =
-                parse_context_cluster_indices(&upstream, &downstream, &cluster_index);
+            let target_clusters = parse_context_cluster_indices(
+                &acc.upstream_signature,
+                &acc.downstream_signature,
+                &cluster_index,
+            );
             let reference_genes = best_reference_context(
                 &reference_boundary_index,
                 ClusterIdx(ci_val),
@@ -2279,8 +2298,8 @@ pub(super) fn write_cluster_synteny_blocks(
                     (rank + 1).to_string(),
                     acc.count.to_string(),
                     format!("{:.3}", fraction),
-                    upstream,
-                    downstream,
+                    acc.upstream_signature,
+                    acc.downstream_signature,
                     interpretation.to_string(),
                     acc.examples.join(";"),
                     acc.carrier_genomes.join(";"),

@@ -1169,11 +1169,38 @@ fn parse_synteny_carriers(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn explorer_synteny_signature(
+    genes: &[ExplorerSyntenyGene],
+    upstream: &[String],
+    downstream: &[String],
+    cluster: &str,
+) -> String {
+    let signature: Vec<&str> = genes
+        .iter()
+        .filter_map(|gene| match gene.cluster.as_str() {
+            "" | "NA" | "__GAP__" => None,
+            cluster => Some(cluster),
+        })
+        .collect();
+    if !signature.is_empty() {
+        return signature.join("|");
+    }
+    upstream
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(cluster))
+        .chain(downstream.iter().map(String::as_str))
+        .filter(|item| !item.is_empty() && *item != "NA")
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 fn explorer_synteny_blocks(
     path: &std::path::Path,
     limit_per_cluster: usize,
 ) -> Result<HashMap<String, Vec<ExplorerSyntenyBlock>>> {
     let mut rows: HashMap<String, Vec<ExplorerSyntenyBlock>> = HashMap::new();
+    let mut seen_signatures: HashMap<String, ahash::HashSet<String>> = HashMap::new();
     if !path.exists() || limit_per_cluster == 0 {
         return Ok(rows);
     }
@@ -1210,6 +1237,30 @@ fn explorer_synteny_blocks(
         if cluster.is_empty() {
             continue;
         }
+        let upstream = upstream_idx
+            .and_then(|i| record.get(i))
+            .map(parse_synteny_side)
+            .unwrap_or_default();
+        let downstream = downstream_idx
+            .and_then(|i| record.get(i))
+            .map(parse_synteny_side)
+            .unwrap_or_default();
+        let genes = representative_genes_idx
+            .and_then(|i| record.get(i))
+            .map(parse_synteny_gene_records)
+            .unwrap_or_default();
+        let reference_genes = reference_genes_idx
+            .and_then(|i| record.get(i))
+            .map(parse_synteny_gene_records)
+            .unwrap_or_default();
+        let signature = explorer_synteny_signature(&genes, &upstream, &downstream, cluster);
+        if !seen_signatures
+            .entry(cluster.to_string())
+            .or_default()
+            .insert(signature)
+        {
+            continue;
+        }
         let entry = rows.entry(cluster.to_string()).or_default();
         if entry.len() >= limit_per_cluster {
             continue;
@@ -1227,14 +1278,8 @@ fn explorer_synteny_blocks(
                 .and_then(|i| record.get(i))
                 .unwrap_or("")
                 .to_string(),
-            upstream: upstream_idx
-                .and_then(|i| record.get(i))
-                .map(parse_synteny_side)
-                .unwrap_or_default(),
-            downstream: downstream_idx
-                .and_then(|i| record.get(i))
-                .map(parse_synteny_side)
-                .unwrap_or_default(),
+            upstream,
+            downstream,
             interpretation: interpretation_idx
                 .and_then(|i| record.get(i))
                 .unwrap_or("")
@@ -1275,14 +1320,8 @@ fn explorer_synteny_blocks(
                 .and_then(|i| record.get(i))
                 .unwrap_or("")
                 .to_string(),
-            genes: representative_genes_idx
-                .and_then(|i| record.get(i))
-                .map(parse_synteny_gene_records)
-                .unwrap_or_default(),
-            reference_genes: reference_genes_idx
-                .and_then(|i| record.get(i))
-                .map(parse_synteny_gene_records)
-                .unwrap_or_default(),
+            genes,
+            reference_genes,
         });
     }
     for blocks in rows.values_mut() {
@@ -1810,7 +1849,7 @@ fn phylo_matrix_explorer_html(
     );
     html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
     html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Matrix/synteny split <input id='viewerSplitSize' type='range' min='35' max='80' step='1' value='56'></label><label class='scale-control synteny-control'>Synteny X zoom <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-split synteny-hidden'><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><aside id='syntenyPanel' class='synteny-panel'><div class='synteny-head'><span>Unique syntenies</span><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></aside></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Synteny X zoom <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-split synteny-hidden'><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='viewerSplitHandle' class='viewer-split-handle synteny-control' role='separator' aria-label='Resize matrix and synteny panels' title='Resize matrix and synteny panels'><input id='viewerSplitSize' type='range' min='35' max='80' step='1' value='56' aria-label='Matrix/synteny split'></div><aside id='syntenyPanel' class='synteny-panel'><div class='synteny-head'><span>Unique syntenies</span><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></aside></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
     html.push_str("<script>window.recoreExplorerData=");
     html.push_str(&data_json);
     html.push_str(
@@ -2165,6 +2204,23 @@ function tipStyle(genomeIdx) {
   const correction = stats.R + stats.N;
   return {fill: gradientColor(correction, maxGenomeStats.correction, "#ecfdf3", "#067647"), stroke: "#067647", title: `corrected/NSC cells ${correction}`};
 }
+function subtreeLineage(node) {
+  if (node._subtreeLineage !== undefined) return node._subtreeLineage;
+  if (!node.children || !node.children.length) {
+    node._subtreeLineage = lineageOfGenomeName(tipName(node));
+    return node._subtreeLineage;
+  }
+  const childLineages = (node.children || []).map(subtreeLineage);
+  const first = childLineages[0] || "unknown";
+  node._subtreeLineage = childLineages.every(lineage => lineage === first) ? first : "mixed";
+  return node._subtreeLineage;
+}
+function treeEdgeStyle(child) {
+  if (colorMode.value !== "lineage") return "";
+  const lineage = subtreeLineage(child);
+  if (!lineage || lineage === "mixed") return "";
+  return ` style="stroke:${lineageColor(lineage)};stroke-width:1.35;stroke-opacity:.82"`;
+}
 function selectedSyntenyBlockData() {
   const cluster = data.clusters[selected];
   const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
@@ -2404,8 +2460,9 @@ function drawNode(node, parts, xScale) {
       const cx = xForNode(child);
       const cy = child.row * cellH + cellH / 2;
       const branchTitle = treeMode === "phylogram" ? `<title>branch length ${formatBranchLength(child.length)}</title>` : "";
-      parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge">${branchTitle}</line>`);
-      parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"/>`);
+      const edgeStyle = treeEdgeStyle(child);
+      parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge"${edgeStyle}>${branchTitle}</line>`);
+      parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"${edgeStyle}/>`);
       drawNode(child, parts, xScale);
     });
   } else {
@@ -2757,7 +2814,7 @@ function applyViewerSplit() {
   } else {
     const matrixShare = Math.max(35, Math.min(80, Number(splitControl?.value || 56)));
     const syntenyShare = 100 - matrixShare;
-    viewerSplit.style.gridTemplateColumns = `minmax(360px,${matrixShare}fr) minmax(320px,${syntenyShare}fr)`;
+    viewerSplit.style.gridTemplateColumns = `minmax(360px,${matrixShare}fr) 18px minmax(320px,${syntenyShare}fr)`;
   }
   document.querySelectorAll(".synteny-control").forEach(control => {
     control.style.display = syntenyHidden ? "none" : "flex";
@@ -3258,7 +3315,7 @@ pub(super) fn write_html_report(
         .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
         .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
         .explorer-controls,.viewer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.cluster-controls{grid-template-columns:minmax(240px,1fr) minmax(280px,1.2fr) auto}.viewer-controls{position:sticky;top:8px;z-index:6;margin-top:12px;padding:10px;border:1px solid var(--soft-line);border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 8px 20px rgba(16,24,40,.08)}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}.process-note{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;color:#344054;font-size:12px}.process-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px;font-size:11px;font-weight:750;color:#344054}.process-chip i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--process-color)}.reference-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px;color:#344054;font-size:11px}.reference-meta strong{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.reference-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:11px}.process-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-wording{margin-top:7px;color:#344054;font-size:12px}.process-legend{display:grid;gap:8px;margin-top:10px}.process-selected{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:#344054;font-size:12px}.process-clear{border-radius:999px!important;padding:4px 9px!important;background:#eef4ff!important;border-color:#84adff!important;color:#1849a9!important;font-size:11px!important}.process-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.process-item{display:grid!important;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:start;text-align:left;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px}.process-item:hover{border-color:#84adff;background:#f8fbff}.process-item.active{border-color:#84adff;background:#eef4ff}.process-item.filtered{outline:2px solid #1849a9;outline-offset:0}.process-swatch{width:11px;height:11px;border-radius:3px;margin-top:3px}.process-item strong{display:block;font-size:12px}.process-item small{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.35;font-weight:400}.lineage-legend{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px 10px}.lineage-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.lineage-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--soft-line);border-radius:999px;padding:3px 7px;background:#f8fafc}.lineage-chip i{width:9px;height:9px;border-radius:2px;display:inline-block}.lineage-chip strong{font-size:11px}.lineage-chip small{font-size:11px;color:var(--muted)}
-        .viewer-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(390px,1fr);gap:12px;align-items:start;margin-top:14px}.viewer-split>*{min-width:0}.viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.viewer-split.synteny-hidden .synteny-panel{display:none}.viewer{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:24px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.synteny-tip-ring{fill:none;stroke:#f97316;stroke-width:1.4;stroke-opacity:.95}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.synteny-panel{border:1px solid var(--line);border-radius:10px;background:#fff;min-height:260px;max-height:760px;overflow:auto}.synteny-head{position:sticky;top:0;z-index:3;background:#f8fafc;border-bottom:1px solid var(--soft-line);padding:9px 10px}.synteny-head span{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.synteny-head small{display:block;margin-top:3px;color:#344054;font-size:12px}.synteny-svg{display:block;min-width:620px}.synteny-row,.synteny-reference-row{cursor:pointer}.synteny-row-hit{fill:transparent;stroke:none}.synteny-row-bg{fill:#fff;stroke:#eaecf0;stroke-width:1}.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-reference-bg{fill:#ecfdf3;stroke:#abefc6}.synteny-reference-bg.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-link{stroke:#84adff;stroke-width:8;stroke-linecap:round;stroke-opacity:.20;fill:none;pointer-events:none}.synteny-gene{stroke:#98a2b3;stroke-width:1}.synteny-gene[data-gene-cluster]{cursor:pointer}.synteny-target{stroke:#1849a9;stroke-width:1.3}.synteny-gap{stroke:#d0d5dd;stroke-dasharray:3 2}.synteny-label{font-size:9px;fill:#344054}.synteny-target-label{font-size:9px;fill:#fff;font-weight:700}.synteny-row-label{font-size:10px;fill:#475467;font-weight:700}.synteny-locus{font-size:10px;fill:#111827;font-weight:750}.synteny-locus-line{stroke:#475467;stroke-width:.8;stroke-dasharray:2 2}.synteny-empty{padding:14px;color:var(--muted);font-size:12px}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-split{grid-template-columns:minmax(0,1fr) minmax(430px,1fr)}.explorer:fullscreen .viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
+        .viewer-split{display:grid;grid-template-columns:minmax(0,1fr) 18px minmax(390px,1fr);gap:8px;align-items:start;margin-top:14px}.viewer-split>*{min-width:0}.viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.viewer-split.synteny-hidden .synteny-panel,.viewer-split.synteny-hidden .viewer-split-handle{display:none}.viewer{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-split-handle{align-self:stretch;min-height:260px;border:1px solid var(--soft-line);border-radius:999px;background:#f8fafc;display:flex;align-items:center;justify-content:center;cursor:col-resize}.viewer-split-handle input{writing-mode:vertical-lr;direction:rtl;width:16px;height:220px;padding:0;accent-color:#155eef}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:24px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.synteny-tip-ring{fill:none;stroke:#f97316;stroke-width:1.4;stroke-opacity:.95}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.synteny-panel{border:1px solid var(--line);border-radius:10px;background:#fff;min-height:260px;max-height:760px;overflow:auto}.synteny-head{position:sticky;top:0;z-index:3;background:#f8fafc;border-bottom:1px solid var(--soft-line);padding:9px 10px}.synteny-head span{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.synteny-head small{display:block;margin-top:3px;color:#344054;font-size:12px}.synteny-svg{display:block;min-width:620px}.synteny-row,.synteny-reference-row{cursor:pointer}.synteny-row-hit{fill:transparent;stroke:none}.synteny-row-bg{fill:#fff;stroke:#eaecf0;stroke-width:1}.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-reference-bg{fill:#ecfdf3;stroke:#abefc6}.synteny-reference-bg.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-link{stroke:#84adff;stroke-width:8;stroke-linecap:round;stroke-opacity:.20;fill:none;pointer-events:none}.synteny-gene{stroke:#98a2b3;stroke-width:1}.synteny-gene[data-gene-cluster]{cursor:pointer}.synteny-target{stroke:#1849a9;stroke-width:1.3}.synteny-gap{stroke:#d0d5dd;stroke-dasharray:3 2}.synteny-label{font-size:9px;fill:#344054}.synteny-target-label{font-size:9px;fill:#fff;font-weight:700}.synteny-row-label{font-size:10px;fill:#475467;font-weight:700}.synteny-locus{font-size:10px;fill:#111827;font-weight:750}.synteny-locus-line{stroke:#475467;stroke-width:.8;stroke-dasharray:2 2}.synteny-empty{padding:14px;color:var(--muted);font-size:12px}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-split{grid-template-columns:minmax(0,1fr) 18px minmax(430px,1fr)}.explorer:fullscreen .viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
         footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
         @media(max-width:1100px){.explorer-controls,.viewer-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
         @media(max-width:820px){.viewer-split{grid-template-columns:1fr}}

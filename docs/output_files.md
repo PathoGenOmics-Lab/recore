@@ -555,24 +555,27 @@ tips dynamically by the selected cluster state or evolutionary mechanism, and
 lets users click matrix columns to change the selected cluster. The matrix can
 also be recolored by evolutionary mechanism, with a legend explaining each
 observed process from `evolutionary_events.tsv`. MTBC-style genome names can be
-colored by lineage with the mycolorsTB Nature palette. Clicking mechanism cards
-adds or removes mechanisms from the matrix-column filter, and selected-cluster
-details show the reference cell/gene or the reference-derived event source when
-available. Dense views can be collapsed or zoomed with the Y-axis slider, column
-zoom slider, mouse wheel over the tree or column header, and fullscreen mode.
+colored by lineage with the mycolorsTB Nature palette; in lineage mode,
+monophyletic branches are colored too. Clicking mechanism cards adds or removes
+mechanisms from the matrix-column filter, and selected-cluster details show the
+reference cell/gene or the reference-derived event source when available. Dense
+views can be collapsed or zoomed with the Y-axis slider, column zoom slider,
+mouse wheel over the tree or column header, and fullscreen mode.
 When `cluster_synteny_blocks.tsv` is present, the explorer uses a split view:
 the left side keeps the tree plus matrix, and the right side draws up to ten
 ranked unique five-neighbour synteny blocks for the selected gene cluster. The
-synteny side is hidden by default and can be shown from the viewer controls.
-Once visible, a split slider changes how much width belongs to the matrix versus
-the synteny panel, and a synteny x-axis zoom slider expands or compresses the
-gene-arrow layout. The selected block marks its carrier genomes on the tree,
-the clickable H37Rv/reference row marks the reference tip, the focal cluster is
-highlighted, and clicking any gene arrow jumps to that cluster in the matrix.
-Gene arrows carry strand orientation and proportional length. Labels prefer
-reference locus IDs where available, and each gene tooltip includes cluster,
-locus, coordinates, strand, and length. Shared neighbouring clusters are
-connected only between adjacent synteny rows.
+synteny rows are unique by ordered gene-cluster architecture only, ignoring
+length and coordinate differences, and each row stores one representative locus.
+The synteny side is hidden by default and can be shown from the viewer controls.
+Once visible, a vertical split slider between panes changes how much width
+belongs to the matrix versus the synteny panel, and a synteny x-axis zoom slider
+expands or compresses the gene-arrow layout. The selected block marks its
+carrier genomes on the tree, the clickable H37Rv/reference row marks the
+reference tip, the focal cluster is highlighted, and clicking any gene arrow
+jumps to that cluster in the matrix. Gene arrows carry strand orientation and
+proportional length. Labels prefer reference locus IDs where available, and
+each gene tooltip includes cluster, locus, coordinates, strand, and length.
+Shared neighbouring clusters are connected only between adjacent synteny rows.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than

@@ -82,6 +82,12 @@ and Recore uses semantic versioning.
   split and synteny x-axis zoom sliders, draws proportional gene arrows, lets
   the H37Rv/reference context row mark the reference tip, and lets gene-arrow
   clicks jump back to the corresponding matrix column.
+- `cluster_synteny_blocks.tsv` now collapses synteny blocks by ordered
+  gene-cluster architecture only, ignoring representative length/coordinate
+  differences, while keeping one representative locus per unique architecture.
+- The embedded viewer now colors monophyletic tree branches by lineage when
+  lineage coloring is selected, and places the matrix/synteny split slider as
+  a vertical control between the two panes.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

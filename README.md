@@ -629,19 +629,23 @@ Recore rescue, NSC support, absence, or the evolutionary mechanism reported in
 palette. The explorer supports phylogram/cladogram switching, fullscreen review,
 reference-absent filtering, mouse-wheel zoom on the tree and column header, a
 Y-axis collapse slider for dense trees, and in-report legends explaining each
-observed evolutionary process. Clicking evolutionary-mechanism cards adds or
-removes those mechanisms from the matrix-column filter, and the selected-cluster
-panel reports the reference gene/cell or reference-derived event source when
-Recore can identify one. When `cluster_synteny_blocks.tsv` is available, the
-viewer can open an optional split panel showing the top unique five-neighbour
-synteny blocks for the selected gene cluster. It is hidden by default so dense
-tree/matrix review starts full-width, then can be shown with a viewer control.
-The selected synteny marks its carrier tips on the tree, row 2 shows the
-clickable inferred H37Rv/reference context from shared neighbours, gene arrows
-keep strand orientation and proportional length, labels prefer reference locus
-IDs, and tooltips expose representative coordinates and gene length. Shared
-neighbouring clusters are connected only between adjacent block rows. Extra
-viewer controls resize the matrix/synteny split and zoom the synteny x-axis;
+observed evolutionary process. In lineage mode, both tips and monophyletic
+branches are colored with the lineage palette. Clicking evolutionary-mechanism
+cards adds or removes those mechanisms from the matrix-column filter, and the
+selected-cluster panel reports the reference gene/cell or reference-derived
+event source when Recore can identify one. When `cluster_synteny_blocks.tsv` is
+available, the viewer can open an optional split panel showing the top unique
+five-neighbour synteny blocks for the selected gene cluster. Synteny uniqueness
+is defined by the ordered gene-cluster architecture only, ignoring coordinate
+and length differences, and each row shows one representative locus. It is
+hidden by default so dense tree/matrix review starts full-width, then can be
+shown with a viewer control. The selected synteny marks its carrier tips on the
+tree, row 2 shows the clickable inferred H37Rv/reference context from shared
+neighbours, gene arrows keep strand orientation and proportional length, labels
+prefer reference locus IDs, and tooltips expose representative coordinates and
+gene length. Shared neighbouring clusters are connected only between adjacent
+block rows. A vertical split slider between the matrix and synteny panels
+resizes the two panes, a synteny x-axis slider zooms the gene-arrow layout, and
 clicking any gene arrow jumps to and highlights that cluster in the matrix.
 
 Recore also includes lightweight Python utilities for reproducible review:

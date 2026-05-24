@@ -367,13 +367,16 @@ Written when GFF annotations are loaded. Recore builds a two-gene upstream and t
 
 Written when GFF annotations are loaded. This audit-only table summarizes
 wider five-neighbour upstream/downstream blocks for every resolvable present
-cluster. It is intended for reviewing translocations, tandem duplications, or
-alternative local contexts without changing the correction matrix. If a
-reference genome is known, Recore indexes every boundary between reference
-genes and chooses the boundary sharing the largest number of flanking clusters
-with each observed block. This provides a reference/H37Rv context row even for
-clusters absent from the reference, so users can inspect the neighbouring genes
-that define the likely insertion, deletion, disruption, or context-shift slot.
+cluster. Unique blocks are collapsed by ordered gene-cluster architecture only:
+representative coordinates, gene IDs, and gene lengths do not create additional
+blocks. One representative locus is kept for each unique architecture. It is
+intended for reviewing translocations, tandem duplications, or alternative local
+contexts without changing the correction matrix. If a reference genome is
+known, Recore indexes every boundary between reference genes and chooses the
+boundary sharing the largest number of flanking clusters with each observed
+block. This provides a reference/H37Rv context row even for clusters absent
+from the reference, so users can inspect the neighbouring genes that define the
+likely insertion, deletion, disruption, or context-shift slot.
 
 ### genome_qc.tsv
 
