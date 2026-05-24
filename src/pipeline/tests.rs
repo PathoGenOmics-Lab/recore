@@ -622,21 +622,38 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
     let synteny_header = "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes\tcarrier_genomes\trepresentative_genome\trepresentative_gene\trepresentative_contig\trepresentative_start\trepresentative_end\trepresentative_strand\trepresentative_length_bp\trepresentative_block_genes\treference_block_genes\n";
     let mut syn = String::from(synteny_header);
     // helper to build a representative gene block string of 5 upstream + target + 5 downstream
-    let block_genes = |target: &str, target_genome: &str, start: u64, len: u64| -> String {
-        let upstream_names = ["group_101","group_102","group_103","group_104","group_105"];
-        let downstream_names = ["group_106","group_107","group_108","group_109","group_110"];
+    let block_genes = |target: &str, target_genome: &str, start: u64, len: u64, variant: usize| -> String {
+        // Each neighbour cluster carries its own Rv number so block signatures
+        // differ between variants (signatures are computed from gene_id, so the
+        // dedup would collapse rows otherwise). Variants share several neighbours
+        // for inter-row connection lines, but swap a few at the edges/middle to
+        // show divergence.
+        let upstream: Vec<(&str, u32)> = match variant {
+            0 => vec![("group_101", 1200), ("group_102", 1201), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
+            1 => vec![("group_201", 2200), ("group_102", 1201), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
+            2 => vec![("group_101", 1200), ("group_102", 1201), ("group_211", 2110), ("group_104", 1203), ("group_105", 1204)],
+            3 => vec![("group_201", 2200), ("group_212", 2120), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
+            _ => vec![("group_101", 1200), ("group_102", 1201), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
+        };
+        let downstream: Vec<(&str, u32)> = match variant {
+            0 => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_109", 1308), ("group_110", 1309)],
+            1 => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_109", 1308), ("group_220", 2200)],
+            2 => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_220", 2200), ("group_110", 1309)],
+            3 => vec![("group_106", 1305), ("group_221", 2210), ("group_222", 2220), ("group_109", 1308), ("group_110", 1309)],
+            _ => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_109", 1308), ("group_110", 1309)],
+        };
         let mut parts: Vec<String> = Vec::new();
         let pos = start.saturating_sub(6 * 900);
-        for (i, name) in upstream_names.iter().enumerate() {
+        for (i, (name, rv)) in upstream.iter().enumerate() {
             let g_start = pos + (i as u64) * 900;
             let g_end = g_start + 720;
-            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, 1200 + i, target_genome, g_start, g_end, 720));
+            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, rv, target_genome, g_start, g_end, 720));
         }
         parts.push(format!("{},Rv{:04},+,{},{},{},{}", target, 1300, target_genome, start, start + len, len));
-        for (i, name) in downstream_names.iter().enumerate() {
+        for (i, (name, rv)) in downstream.iter().enumerate() {
             let g_start = start + len + 200 + (i as u64) * 900;
             let g_end = g_start + 720;
-            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, 1310 + i, target_genome, g_start, g_end, 720));
+            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, rv, target_genome, g_start, g_end, 720));
         }
         parts.join(";")
     };
@@ -658,23 +675,42 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         }
         parts.join(";")
     };
-    let syn_blocks: Vec<(&str, &str, &str, u64, u64, u64, f64, &str)> = vec![
-        ("group_001", "L4_AS00146", "AS00146", 1_504_500, 1_500, 16, 1.000, "dominant_block"),
-        ("group_002", "L4_AS00146", "AS00146",   801_200,   980,  5, 1.000, "dominant_block"),
-        ("group_003", "L4_AS00146", "AS00146", 1_734_734, 1_200, 14, 1.000, "dominant_block_minor_alternatives"),
-        ("group_003", "A4_AS00245", "AS00245", 1_812_990, 1_180,  2, 0.143, "alternative_synteny_block"),
-        ("group_004", "L4_AS00146", "AS00146", 2_440_010,   870, 14, 1.000, "dominant_block"),
-        ("group_005", "L4_AS00146", "AS00146", 3_120_400, 1_410,  7, 1.000, "dominant_block"),
-        ("group_006", "L2_AS00021", "AS00021", 4_200_990,   980, 13, 1.000, "dominant_block_reference_absent"),
-        ("group_007", "L4_AS00146", "AS00146",   980_100,   375, 16, 1.000, "dominant_block"),
-        ("group_008", "L4_AS00146", "AS00146", 1_120_000, 2_410,  9, 1.000, "dominant_block"),
-        ("group_009", "A4_AS00245", "AS00245",   544_900,   237,  4, 1.000, "dominant_block_partial_only"),
-        ("group_010", "L4_AS00146", "AS00146",   220_010,   612,  4, 1.000, "dominant_block_minor_alternatives"),
-        ("group_011", "L4_AS00146", "AS00146",   745_500, 2_220, 16, 1.000, "dominant_block"),
-        ("group_012", "L7_AS00044", "AS00044", 1_990_100,   615,  5, 1.000, "dominant_block"),
+    // Extended block table: several clusters get 3-4 alternative synteny blocks
+    // so the connection lines between rows are clearly visible and the panel is
+    // worth interacting with. Tuple = (cluster, rep_genome, rep_contig, start, len, n_genomes, fraction, interp, variant).
+    let syn_blocks: Vec<(&str, &str, &str, u64, u64, u64, f64, &str, usize)> = vec![
+        ("group_001", "L4_AS00146", "AS00146", 1_504_500, 1_500, 16, 1.000, "dominant_block",                          0),
+        ("group_002", "L4_AS00146", "AS00146",   801_200,   980,  3, 0.600, "dominant_block_minor_alternatives",       0),
+        ("group_002", "L2_AS00021", "AS00021",   812_440,   980,  2, 0.400, "alternative_synteny_block",               1),
+        ("group_003", "L4_AS00146", "AS00146", 1_734_734, 1_200,  8, 0.571, "dominant_block_minor_alternatives",       0),
+        ("group_003", "A2_AS00357", "AS00357", 1_690_330, 1_200,  3, 0.214, "alternative_synteny_block",               1),
+        ("group_003", "L1_AS00033", "AS00033", 1_812_990, 1_180,  2, 0.143, "alternative_synteny_block",               2),
+        ("group_003", "A1_AS00349", "AS00349", 1_940_120, 1_180,  1, 0.071, "alternative_synteny_block",               3),
+        ("group_004", "L4_AS00146", "AS00146", 2_440_010,   870, 11, 0.786, "dominant_block_minor_alternatives",       0),
+        ("group_004", "L2_AS00021", "AS00021", 2_502_440,   870,  2, 0.143, "alternative_synteny_block",               1),
+        ("group_004", "A4_AS00245", "AS00245", 2_690_320,   870,  1, 0.071, "alternative_synteny_block",               2),
+        ("group_005", "L4_AS00146", "AS00146", 3_120_400, 1_410,  5, 0.714, "dominant_block_minor_alternatives",       0),
+        ("group_005", "L1_AS00033", "AS00033", 3_240_120, 1_410,  2, 0.286, "alternative_synteny_block",               2),
+        ("group_006", "L2_AS00021", "AS00021", 4_200_990,   980,  9, 0.692, "dominant_block_reference_absent",         0),
+        ("group_006", "A4_AS00245", "AS00245", 4_310_140,   980,  3, 0.231, "alternative_synteny_block",               1),
+        ("group_006", "L1_AS00033", "AS00033", 4_420_080,   980,  1, 0.077, "alternative_synteny_block",               3),
+        ("group_007", "L4_AS00146", "AS00146",   980_100,   375, 10, 0.625, "dominant_block_minor_alternatives",       0),
+        ("group_007", "L1_AS00033", "AS00033", 1_120_330,   375,  4, 0.250, "alternative_synteny_block_paralog_locus", 2),
+        ("group_007", "A4_AS00245", "AS00245", 1_240_500,   375,  2, 0.125, "alternative_synteny_block",               1),
+        ("group_008", "L4_AS00146", "AS00146", 1_120_000, 2_410,  6, 0.667, "dominant_block_minor_alternatives",       0),
+        ("group_008", "L1_AS00033", "AS00033", 1_180_440, 2_410,  3, 0.333, "alternative_synteny_block",               1),
+        ("group_009", "A4_AS00245", "AS00245",   544_900,   237,  3, 0.750, "dominant_block_partial_only",             0),
+        ("group_009", "A1_AS00349", "AS00349",   612_080,   237,  1, 0.250, "alternative_synteny_block",               1),
+        ("group_010", "L4_AS00146", "AS00146",   220_010,   612,  2, 0.500, "dominant_block_minor_alternatives",       0),
+        ("group_010", "L3_AS00094", "AS00094",   320_140,   612,  1, 0.250, "alternative_synteny_block",               2),
+        ("group_010", "L1_AS00033", "AS00033",   430_220,   612,  1, 0.250, "alternative_synteny_block",               3),
+        ("group_011", "L4_AS00146", "AS00146",   745_500, 2_220, 16, 1.000, "dominant_block",                          0),
+        ("group_012", "L7_AS00044", "AS00044", 1_990_100,   615,  3, 0.600, "dominant_block_minor_alternatives",       0),
+        ("group_012", "L4_AS00146", "AS00146", 2_120_220,   615,  1, 0.200, "alternative_synteny_block",               1),
+        ("group_012", "A4_AS00248", "AS00248", 2_240_440,   615,  1, 0.200, "alternative_synteny_block",               3),
     ];
     let mut rank_counter: HashMap<&str, usize> = HashMap::new();
-    for (cluster, rep_genome, rep_contig, start, len, n, frac, interp) in &syn_blocks {
+    for (cluster, rep_genome, rep_contig, start, len, n, frac, interp, variant) in &syn_blocks {
         let rank_entry = rank_counter.entry(cluster).or_insert(0);
         *rank_entry += 1;
         let rank = *rank_entry;
@@ -691,7 +727,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         syn.push_str(&format!(
             "{cluster}\t{rank}\t{n}\t{frac:.3}\tgroup_105|group_104|group_103|group_102|group_101\tgroup_106|group_107|group_108|group_109|group_110\t{interp}\t{example}\t{carriers_list}\t{rep_genome}\t{cluster}_{rep_genome}\t{rep_contig}\t{start}\t{end}\t+\t{len}\t{rep_block}\t{ref_block}\n",
             end = start + len,
-            rep_block = block_genes(cluster, rep_contig, *start, *len),
+            rep_block = block_genes(cluster, rep_contig, *start, *len, *variant),
             ref_block = reference_block_genes(cluster),
         ));
     }

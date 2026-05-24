@@ -117,7 +117,7 @@ const syntenyZoomControl = document.getElementById("syntenyZoom");
 const fullscreenButton = document.getElementById("explorerFullscreen");
 const phylogramButton = document.getElementById("phylogramMode");
 const cladogramButton = document.getElementById("cladogramMode");
-const explorerSection = document.getElementById("matrixExplorer");
+const explorerSection = document.getElementById("explorer");
 const info = document.getElementById("clusterInfo");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
@@ -852,26 +852,32 @@ function renderSyntenyPanel() {
   const cluster = data.clusters[selected];
   const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
   updateSelectedSyntenyCarriers(blocks);
-  const nextKey = cluster ? `${cluster.name}|${blocks.length}|${selectedSyntenyBlock}|${selectedSyntenyReference}|${syntenyZoom()}` : "none";
+  const scrollContainer = syntenyPanel.querySelector(".synteny-scroll") || syntenyPanel;
+  const paneWidth = Math.max(360, scrollContainer.clientWidth || syntenyPanel.clientWidth || 600);
+  const nextKey = cluster
+    ? `${cluster.name}|${blocks.length}|${selectedSyntenyBlock}|${selectedSyntenyReference}|${syntenyZoom().toFixed(2)}|${paneWidth}`
+    : "none";
   if (nextKey === syntenyKey) return;
   syntenyKey = nextKey;
   treeDirty = true;
+
   if (!cluster) {
     selectedSyntenyCarriers = new Set();
     syntenySummary.textContent = "No cluster selected.";
-    syntenySvg.setAttribute("width", "620");
+    syntenySvg.setAttribute("width", String(paneWidth));
     syntenySvg.setAttribute("height", "80");
-    syntenySvg.innerHTML = `<text x="14" y="36" class="synteny-label">No cluster selected.</text>`;
+    syntenySvg.innerHTML = `<text x="14" y="44" class="synteny-empty-text">Select a cluster to inspect flanking loci.</text>`;
     return;
   }
   if (!blocks.length) {
     selectedSyntenyCarriers = new Set();
     syntenySummary.textContent = `${cluster.name}: no 5-neighbour synteny blocks in this run.`;
-    syntenySvg.setAttribute("width", "620");
-    syntenySvg.setAttribute("height", "88");
-    syntenySvg.innerHTML = `<text x="14" y="38" class="synteny-label">No unique synteny block data for ${escapeHtml(cluster.name)}.</text>`;
+    syntenySvg.setAttribute("width", String(paneWidth));
+    syntenySvg.setAttribute("height", "80");
+    syntenySvg.innerHTML = `<text x="14" y="44" class="synteny-empty-text">No unique synteny block data for ${escapeHtml(cluster.name)}.</text>`;
     return;
   }
+
   const rows = [];
   blocks.forEach((block, idx) => {
     const representativeGenes = blockGenes(block, cluster.name);
@@ -888,23 +894,28 @@ function renderSyntenyPanel() {
     selectedSyntenyReference = false;
     updateSelectedSyntenyCarriers(blocks);
   }
-  const rowH = 94;
-  const geneH = 20;
-  const gap = 12 * syntenyZoom();
-  const left = 176;
-  const top = 58;
+
+  // Layout constants
+  const META_W = 168;
+  const ROW_H = 78;
+  const GENE_H = 22;
+  const GAP = 12 * syntenyZoom();
+  const TOP = 18;
+  const PADDING_X = 12;
+  const innerLeft = PADDING_X + META_W + 8;
   const lengthScale = syntenyLengthScale(rows);
-  const rowLayouts = rows.map(row => syntenyRowLayout(row.genes, left, gap, lengthScale));
-  const width = Math.max(
-    740,
+  const rowLayouts = rows.map(row => syntenyRowLayout(row.genes, innerLeft, GAP, lengthScale));
+  const measuredWidth = Math.max(
+    paneWidth,
     ...rowLayouts.map(layout => {
       const last = layout[layout.length - 1];
-      return last ? last.x + last.width + 30 : left + 120;
+      return last ? last.x + last.width + 16 : innerLeft + 80;
     }),
   );
-  const height = top + rows.length * rowH + 24;
+  const width = measuredWidth;
+  const height = TOP + rows.length * ROW_H + 12;
+
   const parts = [];
-  let previousPositions = null;
   const selectedBlock = selectedSyntenyBlockData();
   const selectedCount = selectedSyntenyReference
     ? selectedSyntenyCarriers.size
@@ -913,103 +924,168 @@ function renderSyntenyPanel() {
     ? `${data.referenceGenome ? data.referenceGenome.name : "reference"} context`
     : `#${selectedSyntenyBlock + 1}`;
   const referenceSummary = hasReferenceRow
-    ? " Row 2 is the H37Rv/reference context inferred from shared neighbours."
-    : " H37Rv/reference has the same displayed gene architecture as the representative block and is merged visually.";
-  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tree tips.${referenceSummary}`;
+    ? " Reference row inferred from shared neighbours."
+    : "";
+  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tip${selectedCount === 1 ? "" : "s"}.${referenceSummary}`;
+
+  // Collect per-row positions BEFORE drawing so we can draw connection lines on
+  // a single layer that sits above row backgrounds but below the arrows.
+  const rowPositions = [];
   rows.forEach((row, rowIdx) => {
-    const genes = row.genes;
     const layout = rowLayouts[rowIdx];
-    const y = top + rowIdx * rowH;
+    const y = TOP + rowIdx * ROW_H + 14;
     const positions = new Map();
     let targetCenter = null;
     layout.forEach(item => {
       const gene = item.gene;
-      const center = {x:item.x + item.width / 2, y:y + geneH / 2};
+      const center = {x: item.x + item.width / 2, y: y + GENE_H / 2};
       const key = syntenyLinkKey(gene);
       if (key && !positions.has(key)) positions.set(key, center);
       if (gene.target) targetCenter = center;
     });
-    positions.forEach((pos, name) => {
-      const previous = previousPositions && previousPositions.get(name);
+    rowPositions.push({positions, targetCenter, y});
+  });
+
+  // Layer 1: row backgrounds.
+  rows.forEach((row, rowIdx) => {
+    const rowY = TOP + rowIdx * ROW_H;
+    const isSelected = row.kind === "reference"
+      ? selectedSyntenyReference
+      : row.blockIndex === selectedSyntenyBlock && !selectedSyntenyReference;
+    const classes = ["synteny-row-bg"];
+    if (row.kind === "reference") classes.push("synteny-reference-bg");
+    if (isSelected) classes.push("synteny-row-selected");
+    parts.push(
+      `<rect x="${PADDING_X}" y="${rowY}" width="${width - PADDING_X * 2}" height="${ROW_H - 4}" rx="10" class="${classes.join(" ")}"/>`
+    );
+  });
+
+  // Layer 2: connection lines between adjacent rows for shared neighbour clusters.
+  rowPositions.forEach((rp, rowIdx) => {
+    if (rowIdx === 0) return;
+    const prev = rowPositions[rowIdx - 1];
+    rp.positions.forEach((pos, name) => {
+      const previous = prev.positions.get(name);
       if (!previous) return;
       const midY = (previous.y + pos.y) / 2;
-      parts.push(`<path d="M ${previous.x} ${previous.y} C ${previous.x} ${midY} ${pos.x} ${midY} ${pos.x} ${pos.y}" class="synteny-link"><title>${escapeHtml(syntenyGeneLabel(name))}</title></path>`);
+      const label = escapeHtml(syntenyGeneLabel(name));
+      parts.push(
+        `<path d="M ${previous.x} ${previous.y + GENE_H / 2 - 2} C ${previous.x} ${midY} ${pos.x} ${midY} ${pos.x} ${pos.y - GENE_H / 2 + 2}" class="synteny-link" data-link-cluster="${escapeHtml(name)}"><title>shared neighbour: ${label}</title></path>`
+      );
     });
+  });
+
+  // Layer 3: meta column dividers + content per row.
+  rows.forEach((row, rowIdx) => {
+    const rowY = TOP + rowIdx * ROW_H;
+    const baseY = rowY + 14;
     const block = row.block;
-    const rowClass = row.kind === "reference"
+    const isSelected = row.kind === "reference"
       ? selectedSyntenyReference
-        ? "synteny-row-bg synteny-reference-bg synteny-row-selected"
-        : "synteny-row-bg synteny-reference-bg"
-      : row.blockIndex === selectedSyntenyBlock
-        ? "synteny-row-bg synteny-row-selected"
-        : "synteny-row-bg";
+      : row.blockIndex === selectedSyntenyBlock && !selectedSyntenyReference;
     const rowAttrs = row.kind === "block"
       ? ` class="synteny-row" data-block-index="${row.blockIndex}"`
       : ` class="synteny-reference-row" data-reference-context="1"`;
-    parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="${rowClass}"/>`);
     parts.push(`<g${rowAttrs}>`);
-    parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="synteny-row-hit"/>`);
+    // Hit area (transparent rectangle the user can click to select the row)
+    parts.push(
+      `<rect x="${PADDING_X}" y="${rowY}" width="${META_W}" height="${ROW_H - 4}" class="synteny-meta-hit" rx="10"/>`
+    );
+
+    // Meta column
     if (row.kind === "reference") {
-      parts.push(`<text x="14" y="${y + 3}" class="synteny-row-label">H37Rv context</text>`);
-      const referenceText = selectedSyntenyReference ? "selected reference tip" : "click to mark reference tip";
-      parts.push(`<text x="14" y="${y + 20}" class="synteny-label">${escapeHtml(referenceText)}</text>`);
-      parts.push(`<text x="${left}" y="${y - 25}" class="synteny-locus">reference context inferred from flanking clusters</text>`);
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 18}" class="synteny-rank">REF</text>`);
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">H37Rv context</text>`);
+      parts.push(
+        `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub">inferred from shared neighbours</text>`
+      );
+      const refText = selectedSyntenyReference ? "tip marked" : "click row to mark";
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 68}" class="synteny-meta-sub">${escapeHtml(refText)}</text>`);
     } else {
-      const meta = `#${block.rank} | n=${block.nGenomes} | f=${block.fraction || "NA"}`;
-      const selectedText = row.blockIndex === selectedSyntenyBlock && !selectedSyntenyReference ? "selected" : "click to mark tips";
-      parts.push(`<text x="14" y="${y + 3}" class="synteny-row-label">${escapeHtml(meta)}</text>`);
-      parts.push(`<text x="14" y="${y + 20}" class="synteny-label">${escapeHtml(selectedText)}</text>`);
-      const repBits = [
-        block.representativeGenome || "",
-        block.representativeGene || firstExampleLocus(block),
-        block.representativeContig && block.representativeStart && block.representativeEnd ? `${block.representativeContig}:${block.representativeStart}-${block.representativeEnd}` : "",
-        block.representativeStrand || "",
-        block.representativeLength ? `${block.representativeLength} bp` : "",
-      ].filter(Boolean).join(" ");
-      parts.push(`<text x="${left}" y="${y - 25}" class="synteny-locus">${escapeHtml(clipText(repBits || firstExampleLocus(block), 82))}</text>`);
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 18}" class="synteny-rank">#${block.rank || row.blockIndex + 1}</text>`);
+      const fraction = block.fraction === null || block.fraction === undefined || block.fraction === "NA"
+        ? ""
+        : ` · ${Math.round(Number(block.fraction) * 100)}%`;
+      parts.push(
+        `<text x="${PADDING_X + 12 + 26}" y="${rowY + 18}" class="synteny-meta-rank-sub">n=${block.nGenomes ?? "?"}${fraction}</text>`
+      );
+      const titleText = block.representativeGenome
+        ? `${block.representativeGenome}`
+        : (firstExampleLocus(block) || cluster.name);
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">${escapeHtml(clipText(titleText, 22))}</text>`);
+      const coordText = block.representativeContig && block.representativeStart && block.representativeEnd
+        ? `${block.representativeContig}:${formatCoord(block.representativeStart)}-${formatCoord(block.representativeEnd)}`
+        : firstExampleLocus(block) || "";
+      const lenSuffix = block.representativeLength ? ` · ${block.representativeLength} bp` : "";
+      parts.push(
+        `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub">${escapeHtml(clipText(coordText + lenSuffix, 30))}</text>`
+      );
+      const interp = (block.interpretation || "").replace(/_/g, " ");
+      const selectedTag = isSelected ? "selected" : (interp || "click to mark tips");
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 68}" class="synteny-meta-sub">${escapeHtml(clipText(selectedTag, 26))}</text>`);
     }
-    const locusY = y - 25;
-    if (targetCenter) {
-      parts.push(`<line x1="${left}" y1="${locusY + 4}" x2="${targetCenter.x}" y2="${targetCenter.y - geneH / 2}" class="synteny-locus-line"/>`);
-    }
+    // Vertical divider after meta column
+    parts.push(
+      `<line x1="${PADDING_X + META_W + 1}" y1="${rowY + 6}" x2="${PADDING_X + META_W + 1}" y2="${rowY + ROW_H - 10}" class="synteny-divider"/>`
+    );
+
+    // Gene arrows
+    const layout = rowLayouts[rowIdx];
     layout.forEach(item => {
       const gene = item.gene;
       const x = item.x;
       const geneW = item.width;
-      const fill = gene.gap ? "transparent" : gene.target ? colors.P : row.kind === "reference" ? "transparent" : "transparent";
-      const cls = gene.gap ? "synteny-gene synteny-gap" : gene.target ? "synteny-gene synteny-target" : "synteny-gene";
-      const labelClass = gene.target ? "synteny-target-label" : "synteny-label";
+      const cls = ["synteny-gene"];
+      if (gene.gap) cls.push("synteny-gap");
+      else if (gene.target) cls.push("synteny-target");
+      else if (row.kind === "reference") cls.push("synteny-reference-gene");
+      else cls.push("synteny-neighbor");
       const label = syntenyDisplayLabel(gene);
       const coord = syntenyCoordLabel(gene);
       const title = [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
       const geneAttrs = gene.gap || !gene.cluster || gene.cluster === "NA"
         ? ""
         : ` data-gene-cluster="${escapeHtml(gene.cluster)}"`;
-      parts.push(`<path d="${arrowPath(x, y, geneW, geneH, gene.strand)}" fill="${fill}" class="${cls}"${geneAttrs}><title>${escapeHtml(title)}</title></path>`);
-      parts.push(`<text x="${x + geneW / 2}" y="${y + 13}" text-anchor="middle" class="${labelClass}">${escapeHtml(clipText(label, 10))}</text>`);
-      parts.push(`<text x="${x + geneW / 2}" y="${y + geneH + 13}" text-anchor="middle" class="synteny-label">${escapeHtml(clipText(syntenySecondaryLabel(gene), 12))}</text>`);
+      parts.push(
+        `<path d="${arrowPath(x, baseY, geneW, GENE_H, gene.strand)}" class="${cls.join(" ")}"${geneAttrs}><title>${escapeHtml(title)}</title></path>`
+      );
+      const labelClass = gene.target ? "synteny-target-label" : "synteny-arrow-label";
+      parts.push(
+        `<text x="${x + geneW / 2}" y="${baseY + 14}" text-anchor="middle" class="${labelClass}">${escapeHtml(clipText(label, 11))}</text>`
+      );
+      const subLabel = clipText(syntenySecondaryLabel(gene), 12);
+      if (subLabel) {
+        parts.push(
+          `<text x="${x + geneW / 2}" y="${baseY + GENE_H + 12}" text-anchor="middle" class="synteny-sub-label">${escapeHtml(subLabel)}</text>`
+        );
+      }
       if (gene.length) {
-        parts.push(`<text x="${x + geneW / 2}" y="${y + geneH + 28}" text-anchor="middle" class="synteny-label">${escapeHtml(gene.length)} bp</text>`);
+        parts.push(
+          `<text x="${x + geneW / 2}" y="${baseY + GENE_H + 24}" text-anchor="middle" class="synteny-len-label">${escapeHtml(gene.length)} bp</text>`
+        );
       }
     });
-    const note = row.kind === "reference" ? "reference row can share neighbours without containing the focal cluster" : (block.interpretation || "").replace(/_/g, " ");
-    if (note) {
-      parts.push(`<text x="14" y="${y + geneH + 47}" class="synteny-label">${escapeHtml(clipText(note, 45))}</text>`);
-    }
     parts.push("</g>");
-    previousPositions = positions;
   });
+
   syntenySvg.setAttribute("width", String(width));
   syntenySvg.setAttribute("height", String(height));
   syntenySvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   syntenySvg.innerHTML = parts.join("");
-  const firstTargetIndex = blockGenes(blocks[0], cluster.name).findIndex(gene => gene.target);
-  if (firstTargetIndex >= 0) {
-    const targetItem = rowLayouts[0] && rowLayouts[0][firstTargetIndex];
-    const targetX = targetItem ? targetItem.x + targetItem.width / 2 : left;
-    syntenyPanel.scrollLeft = Math.max(0, targetX - syntenyPanel.clientWidth / 2);
+
+  // Scroll the SVG so the target column of the first block is visible.
+  const firstLayout = rowLayouts[0] || [];
+  const firstTarget = firstLayout.find(item => item.gene.target);
+  if (firstTarget && scrollContainer) {
+    const targetX = firstTarget.x + firstTarget.width / 2;
+    scrollContainer.scrollLeft = Math.max(0, targetX - scrollContainer.clientWidth / 2);
   }
-  syntenyPanel.scrollTop = 0;
+  if (scrollContainer) scrollContainer.scrollTop = 0;
+}
+function formatCoord(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  return n.toLocaleString();
 }
 function loadLayout() {
   try {
@@ -1475,6 +1551,45 @@ syntenySvg.addEventListener("click", event => {
   treeDirty = true;
   render(false);
 });
+syntenySvg.addEventListener("mouseover", event => {
+  const gene = event.target.closest(".synteny-gene[data-gene-cluster]");
+  if (gene) {
+    highlightSyntenyCluster(gene.getAttribute("data-gene-cluster"));
+    return;
+  }
+  const link = event.target.closest(".synteny-link[data-link-cluster]");
+  if (link) {
+    highlightSyntenyCluster(link.getAttribute("data-link-cluster"));
+  }
+});
+syntenySvg.addEventListener("mouseout", event => {
+  const target = event.target;
+  if (!target) return;
+  if (target.closest(".synteny-gene[data-gene-cluster]") || target.closest(".synteny-link[data-link-cluster]")) {
+    clearSyntenyHighlight();
+  }
+});
+function highlightSyntenyCluster(clusterName) {
+  if (!clusterName) return;
+  syntenySvg.querySelectorAll(".synteny-gene[data-gene-cluster]").forEach(node => {
+    const match = node.getAttribute("data-gene-cluster") === clusterName;
+    node.classList.toggle("cluster-highlight", match);
+    node.classList.toggle("dimmed", !match && !node.classList.contains("synteny-target"));
+  });
+  syntenySvg.querySelectorAll(".synteny-link[data-link-cluster]").forEach(link => {
+    const match = link.getAttribute("data-link-cluster") === clusterName;
+    link.classList.toggle("highlight", match);
+    link.classList.toggle("dimmed", !match);
+  });
+}
+function clearSyntenyHighlight() {
+  syntenySvg.querySelectorAll(".synteny-gene").forEach(node => {
+    node.classList.remove("cluster-highlight", "dimmed");
+  });
+  syntenySvg.querySelectorAll(".synteny-link").forEach(link => {
+    link.classList.remove("highlight", "dimmed");
+  });
+}
 processLegend.addEventListener("click", event => {
   const clear = event.target.closest("[data-clear-mechanism]");
   const card = event.target.closest("[data-mechanism]");
