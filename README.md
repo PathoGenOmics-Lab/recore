@@ -1,6 +1,5 @@
 <div align="center">
-  <img src="assets/recore_logo.svg" alt="Recore logo" width="120">
-  <h1>Recore</h1>
+  <img src="assets/recore_logo.svg" alt="Recore logo" width="450">
   <p><strong>Post-hoc rescue, audit, and quality control of pangenome presence/absence matrices.</strong></p>
 
   <p>
