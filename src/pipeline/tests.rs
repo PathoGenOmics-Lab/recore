@@ -313,7 +313,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
     assert!(text.contains("Column zoom <input id='cellSize' type='range' min='0.25'"));
-    assert!(text.contains("Y collapse/zoom <input id='rowHeight' type='range' min='1'"));
+    assert!(text.contains("Row zoom <input id='rowHeight' type='range' min='1'"));
     assert!(text.contains("step='0.25'"));
     assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));
@@ -329,10 +329,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("referenceCell"));
     assert!(text.contains("targetReferenceGene"));
     assert!(text.contains("Reference equivalent"));
-    assert!(text.contains("Color tips by lineage"));
+    assert!(text.contains("Tips: by lineage"));
     assert!(text.contains("#C94434"));
-    assert!(text.contains("Color tips by selected process"));
-    assert!(text.contains("Matrix by evolutionary process"));
+    assert!(text.contains("Tips: by selected process"));
+    assert!(text.contains("Matrix: by evolutionary process"));
     assert!(text.contains("clade_associated_gain"));
     assert!(text.contains("tipLabels"));
     assert!(text.contains("rebuildBaseMatrix"));

@@ -1432,12 +1432,17 @@ fn top_candidate_rows(path: &std::path::Path, limit: usize) -> Result<Vec<Candid
     Ok(rows)
 }
 
-fn count_items_html(title: &str, counts: &BTreeMap<String, usize>, empty: &str) -> String {
+fn count_items_html(
+    title: &str,
+    counts: &BTreeMap<String, usize>,
+    empty: &str,
+    bar_kind: &str,
+) -> String {
     use std::fmt::Write as _;
     let mut html = String::new();
     write!(
         html,
-        "<section class='panel'><h2>{}</h2>",
+        "<section class='panel'><div class='panel-head'><h2>{}</h2></div>",
         html_escape(title)
     )
     .expect("write to String is infallible");
@@ -1450,17 +1455,18 @@ fn count_items_html(title: &str, counts: &BTreeMap<String, usize>, empty: &str) 
         .expect("write to String is infallible");
         return html;
     }
-    let max = counts.values().copied().max().unwrap_or(1).max(1);
+    let total: usize = counts.values().copied().sum::<usize>().max(1);
     html.push_str("<div class='bars'>");
     let mut rows: Vec<_> = counts.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
     for (label, value) in rows {
-        let pct = (*value as f64 / max as f64 * 100.0).clamp(2.0, 100.0);
+        let pct = (*value as f64 / total as f64 * 100.0).clamp(1.5, 100.0);
         write!(
             html,
-            "<div class='bar-row'><div class='bar-label'><span>{}</span><strong>{}</strong></div><div class='track'><div class='bar' style='width:{:.1}%'></div></div></div>",
+            "<div class='bar-row'><div class='bar-label'><span>{}</span><strong class='num'>{}</strong></div><div class='track'><div class='bar {}' style='width:{:.1}%'></div></div></div>",
             html_escape(label),
             format_count(*value),
+            bar_kind,
             pct
         )
         .expect("write to String is infallible");
@@ -1471,16 +1477,57 @@ fn count_items_html(title: &str, counts: &BTreeMap<String, usize>, empty: &str) 
 
 fn file_link_html(path: &str, description: &str) -> String {
     format!(
-        "<a class='file' href='{0}'><span>{0}</span><small>{1}</small></a>",
+        "<a class='file' href='{0}'><span class='file-name'>{0}</span><small>{1}</small></a>",
         html_escape(path),
         html_escape(description)
     )
 }
 
 const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
+const REPORT_CSS: &str = include_str!("report_assets/report.css");
+const REPORT_UI_JS: &str = include_str!("report_assets/report-ui.js");
+const EXPLORER_JS: &str = include_str!("report_assets/explorer.js");
 const EXPLORER_MAX_TIPS: usize = 5_000;
 const EXPLORER_MAX_CELLS: usize = 25_000_000;
 const EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER: usize = 10;
+
+fn mechanism_color(name: &str) -> &'static str {
+    match name {
+        "clade_associated_gain" | "clean_insertion_or_acquisition_candidate" => "#079455",
+        "ancestral_retained_no_disruption" => "#155eef",
+        "duplication_or_paralog_expansion" => "#7a5af8",
+        "deletion_loss_candidate" => "#b42318",
+        "reference_or_lineage_loss_candidate" => "#d92d20",
+        "IS_interruption_supported" => "#f79009",
+        "pseudogenization" => "#b54708",
+        "gene_fragmentation_or_structural_break" => "#dc6803",
+        "partial_reference_homology" => "#0e9384",
+        "reference_gene_allelic_derivative" => "#2970ff",
+        "reference_gene_disruption_or_truncation" => "#c11574",
+        "translocation_or_context_shift_candidate" => "#9e77ed",
+        "annotation_or_clustering_artifact" => "#667085",
+        "unstable_or_homoplastic_accessory_signal" => "#dd2590",
+        "unresolved_accessory_variation" => "#475467",
+        _ => "#475467",
+    }
+}
+
+fn priority_badge_class(priority: &str) -> &'static str {
+    let p = priority.to_ascii_lowercase();
+    if p.contains("filter") || p.contains("low") {
+        "filter"
+    } else if p.contains("review") || p.contains("candidate") || p.contains("medium") {
+        "review"
+    } else if p.contains("high") || p.contains("priority") || p.contains("pass") {
+        "pass"
+    } else {
+        "muted"
+    }
+}
+
+fn pretty_label(value: &str) -> String {
+    value.replace('_', " ")
+}
 
 fn json_script_escape(value: &str) -> String {
     json_escape(value).replace("</", "<\\/")
@@ -1885,1420 +1932,18 @@ fn phylo_matrix_explorer_html(
 
     let mut html = String::new();
     html.push_str(
-        "<section id='matrixExplorer' class='panel full explorer' style='margin-top:14px'>",
+        "<section id='explorer' class='panel explorer'>",
     );
-    html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
-    html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Synteny X zoom <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-split synteny-hidden'><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='viewerSplitHandle' class='viewer-split-handle synteny-control' role='separator' aria-label='Resize matrix and synteny panels' title='Resize matrix and synteny panels'><input id='viewerSplitSize' type='range' min='35' max='80' step='1' value='56' aria-label='Matrix/synteny split'></div><aside id='syntenyPanel' class='synteny-panel'><div class='synteny-head'><span>Unique syntenies</span><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></aside></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
-    html.push_str("<script>window.recoreExplorerData=");
+    html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or pick a cluster to recolor tree tips. Matrix rows follow the matched tree-tip order.</p></div><div class='legend' aria-label='Cell legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
+    html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect' aria-label='Cluster selector'></select><span id='clusterInfo' class='muted num'></span></div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Tips: by selected cluster</option><option value='lineage'>Tips: by lineage</option><option value='process'>Tips: by selected process</option><option value='rescue'>Tips: by rescue burden</option><option value='absence'>Tips: by absence burden</option><option value='correction'>Tips: by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix: by evidence state</option><option value='process'>Matrix: by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Row zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Synteny zoom <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-split synteny-hidden'><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><div id='viewerSplitHandle' class='viewer-split-handle synteny-control' role='separator' aria-label='Resize matrix and synteny panels' title='Resize matrix and synteny panels'><input id='viewerSplitSize' type='range' min='35' max='80' step='1' value='56' aria-label='Matrix/synteny split'></div><aside id='syntenyPanel' class='synteny-panel'><div class='synteny-head'><span>Unique syntenies</span><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></aside></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
+    html.push_str("<script id='explorerData' type='application/json'>");
     html.push_str(&data_json);
     html.push_str(
-        r##";(() => {
-const data = window.recoreExplorerData;
-if (!data || !data.clusters.length) return;
-const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
-const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", A:"#ffffff"};
-const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
-const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC", A:"absent"};
-const processColors = {
-  clade_associated_gain:"#079455",
-  ancestral_retained_no_disruption:"#155eef",
-  duplication_or_paralog_expansion:"#7a5af8",
-  deletion_loss_candidate:"#b42318",
-  reference_or_lineage_loss_candidate:"#d92d20",
-  clean_insertion_or_acquisition_candidate:"#079455",
-  IS_interruption_supported:"#f79009",
-  pseudogenization:"#b54708",
-  gene_fragmentation_or_structural_break:"#dc6803",
-  partial_reference_homology:"#0e9384",
-  reference_gene_allelic_derivative:"#2970ff",
-  reference_gene_disruption_or_truncation:"#c11574",
-  translocation_or_context_shift_candidate:"#9e77ed",
-  annotation_or_clustering_artifact:"#667085",
-  unstable_or_homoplastic_accessory_signal:"#dd2590",
-  unresolved_accessory_variation:"#475467",
-};
-const processDescriptions = {
-  clade_associated_gain:"Legacy label for a clade-associated accessory gain; inspect current mechanism fields for final wording.",
-  ancestral_retained_no_disruption:"Conserved ancestral presence across the assessed tree; not an obvious gain/loss event.",
-  duplication_or_paralog_expansion:"Signal compatible with copy-number expansion or paralogous locus complexity.",
-  deletion_loss_candidate:"Cluster is absent in a pattern compatible with deletion or lineage loss.",
-  reference_or_lineage_loss_candidate:"Reference or a lineage appears to have lost a locus present elsewhere.",
-  clean_insertion_or_acquisition_candidate:"Presence pattern is consistent with a gain/acquisition/insertion candidate.",
-  IS_interruption_supported:"Loss/disruption is supported by nearby mobile element or insertion-sequence evidence.",
-  pseudogenization:"Evidence suggests gene disruption, frameshift, internal stop, or degraded ORF.",
-  gene_fragmentation_or_structural_break:"Partial homology or split alignment suggests fragmentation or a local structural break.",
-  partial_reference_homology:"Cluster has partial similarity to a reference locus rather than being fully novel.",
-  reference_gene_allelic_derivative:"Cluster likely represents an allelic or event-derived version of a reference gene.",
-  reference_gene_disruption_or_truncation:"Reference-like sequence is present but length/frame evidence suggests disruption or truncation.",
-  translocation_or_context_shift_candidate:"Sequence appears real but its genomic context differs from the reference locus.",
-  annotation_or_clustering_artifact:"Pattern is more likely driven by annotation or clustering behavior than biology.",
-  unstable_or_homoplastic_accessory_signal:"Patchy pattern with repeated appearances/disappearances; treat cautiously.",
-  unresolved_accessory_variation:"Accessory signal remains unresolved from the available matrix/tree/evidence.",
-};
-const lineageColors = {
-  L4:"#C94434",
-  L2:"#3B5BA9",
-  L3:"#8B6DAF",
-  L1:"#D44D6E",
-  L7:"#D4C847",
-  L5:"#A07040",
-  L6:"#4A9B68",
-  L9:"#5CB85C",
-  L10:"#7DA094",
-  A1:"#C4A546",
-  A2:"#6DB89B",
-  A3:"#7AAED4",
-  A4:"#D88EAF",
-  L8:"#E08B38",
-  "M. canettii":"#8C8C8C",
-  unknown:"#667085",
-};
-const lineageDescriptions = {
-  L4:"Euro-American",
-  L2:"East Asian (Beijing)",
-  L3:"East African-Indian (CAS)",
-  L1:"Indo-Oceanic",
-  L7:"Ethiopian",
-  L5:"West African 1 (M. africanum)",
-  L6:"West African 2 (M. africanum)",
-  L9:"East African",
-  L10:"Horn of Africa",
-  A1:"Animal-adapted",
-  A2:"Animal-adapted",
-  A3:"Animal-adapted",
-  A4:"Animal-adapted",
-  L8:"African Great Lakes",
-  "M. canettii":"Outgroup",
-  unknown:"Lineage not parsed from genome name",
-};
-const lineageOrder = ["L4","L2","L3","L1","L7","L5","L6","L9","L10","A1","A2","A3","A4","L8","M. canettii","unknown"];
-const select = document.getElementById("clusterSelect");
-const search = document.getElementById("clusterSearch");
-const sizeControl = document.getElementById("cellSize");
-const rowHeightControl = document.getElementById("rowHeight");
-const colorMode = document.getElementById("tipColorMode");
-const matrixColorMode = document.getElementById("matrixColorMode");
-const labelToggle = document.getElementById("tipLabels");
-const referenceButton = document.getElementById("referenceOnly");
-const syntenyToggle = document.getElementById("toggleSynteny");
-const splitControl = document.getElementById("viewerSplitSize");
-const syntenyZoomControl = document.getElementById("syntenyZoom");
-const fullscreenButton = document.getElementById("explorerFullscreen");
-const phylogramButton = document.getElementById("phylogramMode");
-const cladogramButton = document.getElementById("cladogramMode");
-const explorerSection = document.getElementById("matrixExplorer");
-const info = document.getElementById("clusterInfo");
-const details = document.getElementById("clusterDetails");
-const processLegend = document.getElementById("processLegend");
-const lineageLegend = document.getElementById("lineageLegend");
-const status = document.getElementById("matrixStatus");
-const svg = document.getElementById("treeSvg");
-const headerCanvas = document.getElementById("columnHeaderCanvas");
-const headerCtx = headerCanvas.getContext("2d");
-const canvas = document.getElementById("matrixCanvas");
-const ctx = canvas.getContext("2d");
-const baseCanvas = document.createElement("canvas");
-const baseCtx = baseCanvas.getContext("2d");
-const matrixPane = document.getElementById("matrixPane");
-const treePane = document.getElementById("treePane");
-const headerScroller = document.getElementById("headerScroller");
-const viewerBody = document.getElementById("viewerBody");
-const viewerSplit = document.getElementById("viewerSplit");
-const tooltip = document.getElementById("matrixTooltip");
-const syntenyPanel = document.getElementById("syntenyPanel");
-const syntenySummary = document.getElementById("syntenySummary");
-const syntenySvg = document.getElementById("syntenySvg");
-const defaultStatus = "Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.";
-let selected = 0;
-let hoverRow = -1;
-let hoverCol = -1;
-let leafOrder = [];
-let visibleClusters = [];
-let genomeStats = [];
-let maxGenomeStats = {R:1, N:1, A:1, correction:1};
-let maxDepth = 0;
-let maxDistance = 0;
-let treeHeight = 0;
-const treeWidth = 410;
-const headerH = 24;
-const maxCanvasDim = 32000;
-const maxCanvasPixels = 90000000;
-let cellH = 12;
-let cellW = 8;
-let baseCellH = 0;
-let baseCellW = 0;
-let baseValid = false;
-let treeDirty = true;
-let renderQueued = false;
-let detailsKey = "";
-let syntenyKey = "";
-let treeMode = "phylogram";
-let referenceOnly = false;
-let syntenyHidden = true;
-let selectedSyntenyBlock = 0;
-let selectedSyntenyReference = false;
-let selectedSyntenyCarriers = new Set();
-let mechanismFilters = new Set();
-let treeRoot = data.tree;
-
-function stateAt(clusterIdx, genomeIdx) {
-  return (data.states[clusterIdx] && data.states[clusterIdx][genomeIdx]) || "A";
-}
-function countsForCluster(clusterIdx) {
-  const counts = {P:0, R:0, N:0, A:0};
-  const row = data.states[clusterIdx] || "";
-  for (let i = 0; i < data.genomes.length; i += 1) {
-    const state = row[i] || "A";
-    counts[state] = (counts[state] || 0) + 1;
-  }
-  return counts;
-}
-function passesActiveFilters(idx, includeMechanism = true) {
-  const cluster = data.clusters[idx];
-  if (referenceOnly && !cluster.referenceAbsent) return false;
-  if (includeMechanism && mechanismFilters.size && !mechanismFilters.has(processKind(cluster))) return false;
-  return true;
-}
-function mechanismFilterKey() {
-  return [...mechanismFilters].sort().join("|");
-}
-function mechanismFilterSummary() {
-  const filters = [...mechanismFilters].sort();
-  if (!filters.length) return "";
-  const labels = filters.map(processLabel);
-  if (labels.length <= 2) return labels.join(" + ");
-  return `${labels.length} mechanisms`;
-}
-function refreshVisibleClusters() {
-  const previousSelected = selected;
-  visibleClusters = data.clusters
-    .map((_, idx) => idx)
-    .filter(idx => passesActiveFilters(idx, true));
-  if (!visibleClusters.length) {
-    if (referenceOnly) {
-      referenceOnly = false;
-      visibleClusters = data.clusters
-        .map((_, idx) => idx)
-        .filter(idx => passesActiveFilters(idx, true));
-    }
-    if (!visibleClusters.length && mechanismFilters.size) {
-      mechanismFilters.clear();
-      visibleClusters = data.clusters.map((_, idx) => idx);
-    }
-  }
-  if (!visibleClusters.includes(selected)) {
-    selected = visibleClusters.length ? visibleClusters[0] : 0;
-  }
-  if (selected !== previousSelected) {
-    selectedSyntenyBlock = 0;
-    selectedSyntenyReference = false;
-    selectedSyntenyCarriers = new Set();
-    syntenyKey = "";
-  }
-  if (referenceButton) {
-    referenceButton.classList.toggle("active", referenceOnly);
-    referenceButton.textContent = data.referenceGenome
-      ? `Reference-absent only (${data.referenceGenome.name})`
-      : "Reference-absent only";
-    referenceButton.disabled = !data.referenceGenome;
-  }
-}
-function selectedVisibleColumn() {
-  return visibleClusters.indexOf(selected);
-}
-function originalClusterAtVisibleColumn(col) {
-  return visibleClusters[col] ?? -1;
-}
-function computeGenomeStats() {
-  genomeStats = data.genomes.map(() => ({P:0, R:0, N:0, A:0}));
-  data.states.forEach(row => {
-    for (let gi = 0; gi < data.genomes.length; gi += 1) {
-      const state = row[gi] || "A";
-      genomeStats[gi][state] = (genomeStats[gi][state] || 0) + 1;
-    }
-  });
-  maxGenomeStats = genomeStats.reduce((acc, s) => ({
-    R: Math.max(acc.R, s.R),
-    N: Math.max(acc.N, s.N),
-    A: Math.max(acc.A, s.A),
-    correction: Math.max(acc.correction, s.R + s.N),
-  }), {R:1, N:1, A:1, correction:1});
-}
-function gradientColor(value, maxValue, low, high) {
-  if (!maxValue) return low;
-  const t = Math.max(0, Math.min(1, value / maxValue));
-  const parse = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
-  const a = parse(low);
-  const b = parse(high);
-  const rgb = a.map((v, i) => Math.round(v + (b[i] - v) * t));
-  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-}
-function processColor(mechanism) {
-  if (processColors[mechanism]) return processColors[mechanism];
-  let hash = 0;
-  const text = mechanism || "unresolved_accessory_variation";
-  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  const hue = hash % 360;
-  return `hsl(${hue} 58% 43%)`;
-}
-function processKind(cluster) {
-  return (cluster && cluster.mechanism) || "unresolved_accessory_variation";
-}
-function processLabel(mechanism) {
-  return (mechanism || "unresolved_accessory_variation").replace(/_/g, " ");
-}
-function processDescription(mechanism) {
-  return processDescriptions[mechanism] || "Evolutionary process not explicitly classified; inspect TSV evidence before interpretation.";
-}
-function lineageOfGenomeName(name) {
-  const text = String(name || "");
-  if (text.startsWith("M. canettii")) return "M. canettii";
-  const match = text.match(/^(L10|L[1-9]|A[1-4])(?=[_-])/);
-  return match ? match[1] : "unknown";
-}
-function lineageColor(lineage) {
-  return lineageColors[lineage] || lineageColors.unknown;
-}
-function lineageLabel(lineage) {
-  const description = lineageDescriptions[lineage] || "";
-  return description ? `${lineage} - ${description}` : lineage;
-}
-function renderLineageLegend() {
-  if (!lineageLegend) return;
-  if (colorMode.value !== "lineage") {
-    lineageLegend.innerHTML = "";
-    lineageLegend.style.display = "none";
-    return;
-  }
-  const counts = new Map();
-  leafOrder.forEach(genomeIdx => {
-    const lineage = lineageOfGenomeName(data.genomes[genomeIdx]);
-    counts.set(lineage, (counts.get(lineage) || 0) + 1);
-  });
-  const items = lineageOrder
-    .filter(lineage => counts.has(lineage))
-    .map(lineage => `<span class="lineage-chip"><i style="background:${lineageColor(lineage)}"></i><strong>${escapeHtml(lineage)}</strong><small>${counts.get(lineage)} tips</small></span>`)
-    .join("");
-  lineageLegend.style.display = "flex";
-  lineageLegend.innerHTML = `<span class="lineage-title">MTBC lineage colors</span>${items}`;
-}
-function visibleProcessCounts() {
-  const counts = new Map();
-  data.clusters
-    .map((_, idx) => idx)
-    .filter(idx => passesActiveFilters(idx, false))
-    .forEach(idx => {
-    const mechanism = processKind(data.clusters[idx]);
-    const row = counts.get(mechanism) || {clusters:0, present:0};
-    row.clusters += 1;
-    row.present += Number(data.clusters[idx]?.present || 0);
-    counts.set(mechanism, row);
-  });
-  return [...counts.entries()].sort((a, b) =>
-    b[1].clusters - a[1].clusters || processLabel(a[0]).localeCompare(processLabel(b[0]))
-  );
-}
-function renderProcessLegend() {
-  if (!processLegend) return;
-  const cluster = data.clusters[selected] || {};
-  const selectedMechanism = processKind(cluster);
-  const filterLabel = mechanismFilters.size
-    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing ${escapeHtml(mechanismFilterSummary())} (${visibleClusters.length} clusters). Clear filters</button>`
-    : `<span>Click mechanism cards to add/remove matrix-column filters.</span>`;
-  const items = visibleProcessCounts().map(([mechanism, row]) => {
-    const active = mechanism === selectedMechanism ? " active" : "";
-    const filtered = mechanismFilters.has(mechanism) ? " filtered" : "";
-    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${row.clusters} clusters; ${row.present} present cells. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
-  }).join("");
-  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
-}
-function tipStyle(genomeIdx) {
-  const mode = colorMode.value;
-  if (mode === "cluster") {
-    const state = stateAt(selected, genomeIdx);
-    return {fill: colors[state], stroke: strokes[state], title: labels[state]};
-  }
-  if (mode === "process") {
-    const cluster = data.clusters[selected] || {};
-    const state = stateAt(selected, genomeIdx);
-    const mechanism = processKind(cluster);
-    const color = processColor(mechanism);
-    return state === "A"
-      ? {fill: "#ffffff", stroke: "#d0d5dd", title: `${processLabel(mechanism)} absent`}
-      : {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
-  }
-  if (mode === "lineage") {
-    const genome = data.genomes[genomeIdx] || "";
-    const lineage = lineageOfGenomeName(genome);
-    const color = lineageColor(lineage);
-    return {fill: color, stroke: color, title: lineageLabel(lineage)};
-  }
-  const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
-  if (mode === "rescue") {
-    return {fill: gradientColor(stats.R, maxGenomeStats.R, "#e0f2fe", "#0369a1"), stroke: "#0369a1", title: `rescued cells ${stats.R}`};
-  }
-  if (mode === "absence") {
-    return {fill: gradientColor(stats.A, maxGenomeStats.A, "#f8fafc", "#b42318"), stroke: "#b42318", title: `absent cells ${stats.A}`};
-  }
-  const correction = stats.R + stats.N;
-  return {fill: gradientColor(correction, maxGenomeStats.correction, "#ecfdf3", "#067647"), stroke: "#067647", title: `corrected/NSC cells ${correction}`};
-}
-function subtreeLineage(node) {
-  if (node._subtreeLineage !== undefined) return node._subtreeLineage;
-  if (!node.children || !node.children.length) {
-    node._subtreeLineage = lineageOfGenomeName(tipName(node));
-    return node._subtreeLineage;
-  }
-  const childLineages = (node.children || []).map(subtreeLineage);
-  const first = childLineages[0] || "unknown";
-  node._subtreeLineage = childLineages.every(lineage => lineage === first) ? first : "mixed";
-  return node._subtreeLineage;
-}
-function treeEdgeStyle(child) {
-  if (colorMode.value !== "lineage") return "";
-  const lineage = subtreeLineage(child);
-  if (!lineage || lineage === "mixed") return "";
-  return ` style="stroke:${lineageColor(lineage)};stroke-width:1.35;stroke-opacity:.82"`;
-}
-function selectedSyntenyBlockData() {
-  const cluster = data.clusters[selected];
-  const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
-  if (!blocks.length) return null;
-  selectedSyntenyBlock = Math.max(0, Math.min(selectedSyntenyBlock, blocks.length - 1));
-  return blocks[selectedSyntenyBlock] || null;
-}
-function updateSelectedSyntenyCarriers(blocks) {
-  selectedSyntenyBlock = Math.max(0, Math.min(selectedSyntenyBlock, Math.max(0, blocks.length - 1)));
-  if (selectedSyntenyReference) {
-    const refIdx = data.referenceGenome && Number.isInteger(data.referenceGenome.index)
-      ? data.referenceGenome.index
-      : null;
-    selectedSyntenyCarriers = refIdx === null ? new Set() : new Set([refIdx]);
-    return;
-  }
-  const block = blocks[selectedSyntenyBlock];
-  selectedSyntenyCarriers = new Set(block ? syntenyCarrierIndices(block) : []);
-}
-function isSelectedSyntenyCarrier(genomeIdx) {
-  return selectedSyntenyCarriers.has(genomeIdx);
-}
-function syntenyCarrierIndices(block) {
-  if (Array.isArray(block.genomes)) return block.genomes;
-  const bits = String(block.genomeBits || "");
-  const out = [];
-  for (let i = 0; i < bits.length; i += 1) {
-    const value = parseInt(bits[i], 16);
-    if (!Number.isFinite(value)) continue;
-    for (let bit = 0; bit < 4; bit += 1) {
-      if (value & (1 << bit)) out.push(i * 4 + bit);
-    }
-  }
-  return out;
-}
-function cloneNode(node) {
-  return {
-    label: node.label || "",
-    genome: node.genome,
-    length: Number(node.length || 0),
-    children: (node.children || []).map(cloneNode),
-  };
-}
-function tipName(node) {
-  return node.genome === null || node.genome === undefined
-    ? (node.label || "")
-    : (data.genomes[node.genome] || node.label || "");
-}
-function isL8Tip(node) {
-  return (!node.children || !node.children.length) && /^L8[_-]/.test(tipName(node));
-}
-function assignTreeIds(node, parent, nodes, edges) {
-  const id = nodes.length;
-  node._id = id;
-  node._parent = parent;
-  nodes.push(node);
-  (node.children || []).forEach(child => {
-    const childId = assignTreeIds(child, node, nodes, edges);
-    const length = Number(child.length || 0);
-    edges.push([id, childId, length]);
-  });
-  return id;
-}
-function collectL8Leaves(node, out) {
-  if (isL8Tip(node)) out.push(node);
-  (node.children || []).forEach(child => collectL8Leaves(child, out));
-}
-function commonAncestor(nodes) {
-  if (!nodes.length) return null;
-  const paths = nodes.map(node => {
-    const path = [];
-    let cursor = node;
-    while (cursor) {
-      path.push(cursor);
-      cursor = cursor._parent;
-    }
-    return path.reverse();
-  });
-  let mrca = paths[0][0];
-  for (let i = 0; ; i += 1) {
-    const candidate = paths[0][i];
-    if (!candidate || paths.some(path => path[i] !== candidate)) break;
-    mrca = candidate;
-  }
-  return mrca;
-}
-function rootByL8(node) {
-  const root = cloneNode(node);
-  const nodes = [];
-  const edges = [];
-  assignTreeIds(root, null, nodes, edges);
-  const leaves = [];
-  collectL8Leaves(root, leaves);
-  if (!leaves.length) return root;
-  const rootNode = leaves.length === 1 && leaves[0]._parent ? leaves[0]._parent : commonAncestor(leaves);
-  const adj = nodes.map(() => []);
-  edges.forEach(([a, b, length]) => {
-    adj[a].push({id:b, length});
-    adj[b].push({id:a, length});
-  });
-  function build(id, parentId, length) {
-    const source = nodes[id];
-    const children = adj[id]
-      .filter(edge => edge.id !== parentId)
-      .map(edge => build(edge.id, id, edge.length));
-    children.sort((a, b) => Number(hasL8Tip(b)) - Number(hasL8Tip(a)) || countTips(b) - countTips(a));
-    return {label: source.label || "", genome: source.genome, length, children};
-  }
-  return build(rootNode ? rootNode._id : root._id, null, 0);
-}
-function hasL8Tip(node) {
-  return isL8Tip(node) || (node.children || []).some(hasL8Tip);
-}
-function countTips(node) {
-  if (!node.children || !node.children.length) return 1;
-  return node.children.reduce((sum, child) => sum + countTips(child), 0);
-}
-function findLeafByGenome(node, genomeIdx) {
-  if ((!node.children || !node.children.length) && node.genome === genomeIdx) return node;
-  for (const child of node.children || []) {
-    const found = findLeafByGenome(child, genomeIdx);
-    if (found) return found;
-  }
-  return null;
-}
-function layout(node, depth, distance = 0) {
-  node.depth = depth;
-  node.distance = distance;
-  maxDepth = Math.max(maxDepth, depth);
-  maxDistance = Math.max(maxDistance, distance);
-  if (!node.children || node.children.length === 0) {
-    node.row = leafOrder.length;
-    leafOrder.push(node.genome);
-    return node.row;
-  }
-  let sum = 0;
-  let count = 0;
-  node.children.forEach(child => { sum += layout(child, depth + 1, distance + Number(child.length || 0)); count += 1; });
-  node.row = count ? sum / count : leafOrder.length;
-  return node.row;
-}
-function populateOptions() {
-  const previousSelected = selected;
-  const q = search.value.trim().toLowerCase();
-  select.innerHTML = "";
-  visibleClusters.forEach(idx => {
-    const cluster = data.clusters[idx];
-    const haystack = (cluster.name + " " + (cluster.annotation || "")).toLowerCase();
-    if (q && !haystack.includes(q)) return;
-    const opt = document.createElement("option");
-    opt.value = String(idx);
-    opt.textContent = cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
-    select.appendChild(opt);
-  });
-  if (![...select.options].some(opt => Number(opt.value) === selected)) {
-    selected = select.options.length ? Number(select.options[0].value) : 0;
-  }
-  if (selected !== previousSelected) {
-    selectedSyntenyBlock = 0;
-    selectedSyntenyReference = false;
-    selectedSyntenyCarriers = new Set();
-    syntenyKey = "";
-  }
-  select.value = String(selected);
-}
-function currentCellSize() {
-  const value = Number(sizeControl.value || 8);
-  return Math.max(0.25, Math.min(18, value));
-}
-function currentRowHeight() {
-  const value = Number(rowHeightControl.value || 8);
-  return Math.max(1, Math.min(18, value));
-}
-function updateCellGeometry() {
-  const rows = leafOrder.length;
-  const cols = visibleClusters.length;
-  const colSize = currentCellSize();
-  const maxWByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, cols)));
-  const maxHByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, rows)));
-  cellH = Math.min(currentRowHeight(), maxHByDim);
-  cellW = Math.min(Math.max(1, Math.round(colSize * 0.82)), maxWByDim);
-  const pixelBudget = rows * cols * cellH * cellW;
-  if (pixelBudget > maxCanvasPixels) {
-    const scale = Math.sqrt(maxCanvasPixels / pixelBudget);
-    cellH = Math.max(1, Math.floor(cellH * scale));
-    cellW = Math.max(1, Math.floor(cellW * scale));
-  }
-  treeHeight = Math.max(70, Math.ceil(rows * cellH));
-  return {rows, cols};
-}
-function clusterLabel(cluster) {
-  return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
-}
-function referenceInterpretation(cluster) {
-  const referenceCell = (cluster.referenceCell || "").trim();
-  const targetGene = (cluster.targetReferenceGene || "").trim();
-  const targetCluster = (cluster.targetReferenceCluster || "").trim();
-  const eventClass = (cluster.referenceEventClass || "").trim();
-  const parts = [];
-  if (referenceCell) {
-    parts.push(`<span>reference gene(s): ${escapeHtml(referenceCell)}</span>`);
-  }
-  if (targetGene || targetCluster || eventClass) {
-    const sourceBits = [];
-    if (targetGene) sourceBits.push(`source gene ${targetGene}`);
-    if (targetCluster) sourceBits.push(`source cluster ${targetCluster}`);
-    if (eventClass) sourceBits.push(eventClass);
-    parts.push(`<span>reference-derived/event source: ${escapeHtml(sourceBits.join("; "))}</span>`);
-  }
-  if (!parts.length) {
-    const mechanism = processKind(cluster);
-    const text = mechanism === "clean_insertion_or_acquisition_candidate"
-      ? "no reference equivalent detected; candidate de novo/reference-absent locus"
-      : "no reference equivalent detected by Recore";
-    parts.push(`<span>${escapeHtml(text)}</span>`);
-  }
-  const state = cluster.referenceState ? `reference state ${cluster.referenceState}` : "reference state not assessed";
-  return `<div class="reference-meta"><strong>Reference equivalent</strong>${parts.join("")}<span>${escapeHtml(state)}</span></div>`;
-}
-function xForNode(node) {
-  const labelPad = labelToggle.checked && leafOrder.length <= 1500 ? 150 : 24;
-  const usable = Math.max(80, treeWidth - 22 - labelPad);
-  if (treeMode === "phylogram" && maxDistance > 0) {
-    return 14 + node.distance / maxDistance * usable;
-  }
-  const tipX = 14 + usable;
-  if (!node.children || !node.children.length) {
-    return tipX;
-  }
-  return 14 + node.depth * (usable / Math.max(1, maxDepth));
-}
-function drawNode(node, parts, xScale) {
-  const x = xForNode(node);
-  const y = node.row * cellH + cellH / 2;
-  if (node.children && node.children.length) {
-    node.children.forEach(child => {
-      const cx = xForNode(child);
-      const cy = child.row * cellH + cellH / 2;
-      const branchTitle = treeMode === "phylogram" ? `<title>branch length ${formatBranchLength(child.length)}</title>` : "";
-      const edgeStyle = treeEdgeStyle(child);
-      parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge"${edgeStyle}>${branchTitle}</line>`);
-      parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"${edgeStyle}/>`);
-      drawNode(child, parts, xScale);
-    });
-  } else {
-    const style = tipStyle(node.genome);
-    const label = data.genomes[node.genome] || node.label || "";
-    const radius = Math.max(0.18, Math.min(5, cellH / 2 - 0.08));
-    const strokeWidth = Math.max(0.2, Math.min(1.2, cellH * 0.45));
-    parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="${strokeWidth}"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
-    if (isSelectedSyntenyCarrier(node.genome)) {
-      const ringRadius = radius + Math.max(1.2, Math.min(3, cellH * 0.30));
-      const ringTitle = selectedSyntenyReference ? "selected H37Rv reference context" : `selected synteny #${selectedSyntenyBlock + 1}`;
-      parts.push(`<circle cx="${x}" cy="${y}" r="${ringRadius}" class="synteny-tip-ring"><title>${escapeHtml(label)}: ${escapeHtml(ringTitle)}</title></circle>`);
-    }
-    if (labelToggle.checked && leafOrder.length <= 1500 && cellH >= 4) {
-      parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
-    }
-  }
-}
-function formatBranchLength(value) {
-  const n = Number(value || 0);
-  if (!Number.isFinite(n)) return "0";
-  if (n === 0) return "0";
-  if (Math.abs(n) < 0.001) return n.toExponential(2);
-  return n.toPrecision(4);
-}
-function escapeHtml(text) {
-  return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
-}
-function clipText(text, maxLen) {
-  const value = String(text || "");
-  return value.length > maxLen ? `${value.slice(0, Math.max(1, maxLen - 3))}...` : value;
-}
-function compactAnnotation(text) {
-  return String(text || "").split(/[;|]/)[0].trim();
-}
-function referenceLocusForCluster(name) {
-  const cluster = clusterByName.get(name);
-  if (!cluster) return "";
-  const referenceCell = String(cluster.referenceCell || "")
-    .split(";")
-    .map(item => item.trim())
-    .find(Boolean);
-  if (referenceCell) return displayReferenceLocus(referenceCell);
-  const targetGene = String(cluster.targetReferenceGene || "").trim();
-  if (targetGene) return displayReferenceLocus(targetGene);
-  return "";
-}
-function displayReferenceLocus(value) {
-  const text = String(value || "").replace(/(_pseudo|_dup_\d+)$/g, "");
-  const parts = text.split(/[;:,|\s]+/);
-  const rv = parts.find(part => /^Rv\d{4}c?$/.test(part));
-  if (rv) return rv;
-  const embedded = text.match(/(?:^|_)(Rv\d{4}c?)(?:_|$)/);
-  return embedded ? embedded[1] : text;
-}
-function syntenyGeneLabel(name) {
-  const cluster = clusterByName.get(name);
-  const annotation = compactAnnotation(cluster && cluster.annotation);
-  const locus = referenceLocusForCluster(name);
-  if (locus && annotation && annotation !== name) return `${locus} (${name}) ${annotation}`;
-  if (locus) return `${locus} (${name})`;
-  if (annotation && annotation !== name) return `${name} ${annotation}`;
-  return name || "NA";
-}
-function firstExampleLocus(block) {
-  const first = String(block.examples || "").split(";").map(item => item.trim()).find(Boolean) || "";
-  if (!first) return "example locus unavailable";
-  const parts = first.split(":");
-  return parts.length > 1 ? parts.slice(1).join(":") : first;
-}
-function fallbackSyntenyGenes(block, clusterName) {
-  const upstream = [...(block.upstream || [])].reverse().map(name => ({name, cluster:name, geneId:"", strand:"+", target:false}));
-  const downstream = (block.downstream || []).map(name => ({name, cluster:name, geneId:"", strand:"+", target:false}));
-  return [...upstream, {name:clusterName, cluster:clusterName, geneId:"", strand:"+", target:true}, ...downstream];
-}
-function normalizeSyntenyGene(gene, clusterName, reference = false) {
-  const source = Array.isArray(gene)
-    ? {cluster:gene[0], geneId:gene[1], strand:gene[2], contig:gene[3], start:gene[4], end:gene[5], length:gene[6]}
-    : gene;
-  const cluster = source.cluster || source.name || "";
-  const gap = cluster === "__GAP__" || source.gap;
-  return {
-    name: cluster,
-    cluster,
-    geneId: source.geneId || source.gene_id || "",
-    strand: source.strand || "+",
-    contig: source.contig || "",
-    start: source.start || "",
-    end: source.end || "",
-    length: source.length || "",
-    target: cluster === clusterName,
-    reference,
-    gap,
-  };
-}
-function blockGenes(block, clusterName) {
-  if (Array.isArray(block.genes) && block.genes.length) {
-    return block.genes.map(gene => normalizeSyntenyGene(gene, clusterName, false));
-  }
-  return fallbackSyntenyGenes(block, clusterName);
-}
-function referenceGenesForBlock(block, clusterName) {
-  if (Array.isArray(block.referenceGenes) && block.referenceGenes.length) {
-    return block.referenceGenes.map(gene => normalizeSyntenyGene(gene, clusterName, true));
-  }
-  return [{name:"__GAP__", cluster:"__GAP__", geneId:"H37Rv context not resolved", strand:".", contig:"", start:"", end:"", length:"", target:false, reference:true, gap:true}];
-}
-function syntenyDisplayLabel(gene) {
-  if (gene.gap) return gene.geneId || "H37Rv gap";
-  const direct = gene.geneId ? displayReferenceLocus(gene.geneId) : "";
-  if (direct && /^Rv\d{4}c?$/.test(direct)) return direct;
-  if (gene.reference && direct) return direct;
-  return referenceLocusForCluster(gene.cluster) || direct || gene.cluster || "NA";
-}
-function syntenyIdentitySignature(genes) {
-  return (genes || [])
-    .map(gene => gene.gap ? "__GAP__" : syntenyDisplayLabel(gene))
-    .filter(label => label && label !== "NA")
-    .join("|");
-}
-function syntenySecondaryLabel(gene) {
-  if (gene.gap) return gene.length ? `${gene.length} bp gap` : "context gap";
-  const cluster = gene.cluster || "";
-  const annotation = compactAnnotation((clusterByName.get(cluster) || {}).annotation);
-  return annotation || cluster;
-}
-function syntenyCoordLabel(gene) {
-  const coords = gene.contig && gene.start && gene.end
-    ? `${gene.contig}:${gene.start}-${gene.end}`
-    : "";
-  const length = gene.length ? `${gene.length} bp` : "";
-  const strand = gene.strand && gene.strand !== "." ? gene.strand : "";
-  return [coords, strand, length].filter(Boolean).join(" ");
-}
-function syntenyLinkKey(gene) {
-  if (!gene || gene.gap || !gene.cluster || gene.cluster === "NA") return "";
-  return gene.cluster;
-}
-function clusterIndexForName(name) {
-  const idx = data.clusters.findIndex(cluster => cluster.name === name);
-  return idx >= 0 ? idx : -1;
-}
-function selectMatrixClusterByName(name) {
-  const idx = clusterIndexForName(name);
-  if (idx < 0) return false;
-  if (!passesActiveFilters(idx, true)) {
-    referenceOnly = false;
-    mechanismFilters.clear();
-    refreshVisibleClusters();
-  }
-  selected = idx;
-  selectedSyntenyBlock = 0;
-  selectedSyntenyReference = false;
-  selectedSyntenyCarriers = new Set();
-  search.value = "";
-  populateOptions();
-  resetMatrixCache();
-  render(true);
-  return true;
-}
-function syntenyZoom() {
-  const value = Number(syntenyZoomControl?.value || 1);
-  return Math.max(0.45, Math.min(2.4, value));
-}
-function syntenyLength(gene) {
-  const value = Number(gene && gene.length);
-  return Number.isFinite(value) && value > 0 ? value : 600;
-}
-function syntenyLengthScale(rows) {
-  const lengths = rows
-    .flatMap(row => row.genes || [])
-    .map(syntenyLength)
-    .filter(value => value > 0)
-    .sort((a, b) => a - b);
-  if (!lengths.length) return 1200;
-  const idx = Math.min(lengths.length - 1, Math.floor(lengths.length * 0.90));
-  return Math.max(300, lengths[idx]);
-}
-function syntenyGeneWidth(gene, scaleLen) {
-  const relative = Math.min(1, syntenyLength(gene) / Math.max(1, scaleLen));
-  return (34 + relative * 132) * syntenyZoom();
-}
-function syntenyRowLayout(genes, left, gap, scaleLen) {
-  let x = left;
-  return genes.map(gene => {
-    const width = syntenyGeneWidth(gene, scaleLen);
-    const item = {gene, x, width};
-    x += width + gap;
-    return item;
-  });
-}
-function arrowPath(x, y, w, h, strand = "+") {
-  const head = Math.min(12, Math.max(7, w * 0.24));
-  if (strand === "-") {
-    return `M ${x + w} ${y} H ${x + head} L ${x} ${y + h / 2} L ${x + head} ${y + h} H ${x + w} Z`;
-  }
-  return `M ${x} ${y} H ${x + w - head} L ${x + w} ${y + h / 2} L ${x + w - head} ${y + h} H ${x} Z`;
-}
-function renderSyntenyPanel() {
-  if (syntenyHidden) return;
-  if (!syntenyPanel || !syntenySvg || !syntenySummary) return;
-  const cluster = data.clusters[selected];
-  const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
-  updateSelectedSyntenyCarriers(blocks);
-  const nextKey = cluster ? `${cluster.name}|${blocks.length}|${selectedSyntenyBlock}|${selectedSyntenyReference}|${syntenyZoom()}` : "none";
-  if (nextKey === syntenyKey) return;
-  syntenyKey = nextKey;
-  treeDirty = true;
-  if (!cluster) {
-    selectedSyntenyCarriers = new Set();
-    syntenySummary.textContent = "No cluster selected.";
-    syntenySvg.setAttribute("width", "620");
-    syntenySvg.setAttribute("height", "80");
-    syntenySvg.innerHTML = `<text x="14" y="36" class="synteny-label">No cluster selected.</text>`;
-    return;
-  }
-  if (!blocks.length) {
-    selectedSyntenyCarriers = new Set();
-    syntenySummary.textContent = `${cluster.name}: no 5-neighbour synteny blocks in this run.`;
-    syntenySvg.setAttribute("width", "620");
-    syntenySvg.setAttribute("height", "88");
-    syntenySvg.innerHTML = `<text x="14" y="38" class="synteny-label">No unique synteny block data for ${escapeHtml(cluster.name)}.</text>`;
-    return;
-  }
-  const rows = [];
-  blocks.forEach((block, idx) => {
-    const representativeGenes = blockGenes(block, cluster.name);
-    rows.push({kind:"block", block, blockIndex:idx, genes:representativeGenes});
-    if (idx === 0) {
-      const referenceGenes = referenceGenesForBlock(block, cluster.name);
-      if (syntenyIdentitySignature(referenceGenes) !== syntenyIdentitySignature(representativeGenes)) {
-        rows.push({kind:"reference", block, blockIndex:idx, genes:referenceGenes});
-      }
-    }
-  });
-  const hasReferenceRow = rows.some(row => row.kind === "reference");
-  if (selectedSyntenyReference && !hasReferenceRow) {
-    selectedSyntenyReference = false;
-    updateSelectedSyntenyCarriers(blocks);
-  }
-  const rowH = 94;
-  const geneH = 20;
-  const gap = 12 * syntenyZoom();
-  const left = 176;
-  const top = 58;
-  const lengthScale = syntenyLengthScale(rows);
-  const rowLayouts = rows.map(row => syntenyRowLayout(row.genes, left, gap, lengthScale));
-  const width = Math.max(
-    740,
-    ...rowLayouts.map(layout => {
-      const last = layout[layout.length - 1];
-      return last ? last.x + last.width + 30 : left + 120;
-    }),
-  );
-  const height = top + rows.length * rowH + 24;
-  const parts = [];
-  let previousPositions = null;
-  const selectedBlock = selectedSyntenyBlockData();
-  const selectedCount = selectedSyntenyReference
-    ? selectedSyntenyCarriers.size
-    : selectedBlock ? syntenyCarrierIndices(selectedBlock).length : 0;
-  const selectedLabel = selectedSyntenyReference
-    ? `${data.referenceGenome ? data.referenceGenome.name : "reference"} context`
-    : `#${selectedSyntenyBlock + 1}`;
-  const referenceSummary = hasReferenceRow
-    ? " Row 2 is the H37Rv/reference context inferred from shared neighbours."
-    : " H37Rv/reference has the same displayed gene architecture as the representative block and is merged visually.";
-  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tree tips.${referenceSummary}`;
-  rows.forEach((row, rowIdx) => {
-    const genes = row.genes;
-    const layout = rowLayouts[rowIdx];
-    const y = top + rowIdx * rowH;
-    const positions = new Map();
-    let targetCenter = null;
-    layout.forEach(item => {
-      const gene = item.gene;
-      const center = {x:item.x + item.width / 2, y:y + geneH / 2};
-      const key = syntenyLinkKey(gene);
-      if (key && !positions.has(key)) positions.set(key, center);
-      if (gene.target) targetCenter = center;
-    });
-    positions.forEach((pos, name) => {
-      const previous = previousPositions && previousPositions.get(name);
-      if (!previous) return;
-      const midY = (previous.y + pos.y) / 2;
-      parts.push(`<path d="M ${previous.x} ${previous.y} C ${previous.x} ${midY} ${pos.x} ${midY} ${pos.x} ${pos.y}" class="synteny-link"><title>${escapeHtml(syntenyGeneLabel(name))}</title></path>`);
-    });
-    const block = row.block;
-    const rowClass = row.kind === "reference"
-      ? selectedSyntenyReference
-        ? "synteny-row-bg synteny-reference-bg synteny-row-selected"
-        : "synteny-row-bg synteny-reference-bg"
-      : row.blockIndex === selectedSyntenyBlock
-        ? "synteny-row-bg synteny-row-selected"
-        : "synteny-row-bg";
-    const rowAttrs = row.kind === "block"
-      ? ` class="synteny-row" data-block-index="${row.blockIndex}"`
-      : ` class="synteny-reference-row" data-reference-context="1"`;
-    parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="${rowClass}"/>`);
-    parts.push(`<g${rowAttrs}>`);
-    parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="synteny-row-hit"/>`);
-    if (row.kind === "reference") {
-      parts.push(`<text x="14" y="${y + 3}" class="synteny-row-label">H37Rv context</text>`);
-      const referenceText = selectedSyntenyReference ? "selected reference tip" : "click to mark reference tip";
-      parts.push(`<text x="14" y="${y + 20}" class="synteny-label">${escapeHtml(referenceText)}</text>`);
-      parts.push(`<text x="${left}" y="${y - 25}" class="synteny-locus">reference context inferred from flanking clusters</text>`);
-    } else {
-      const meta = `#${block.rank} | n=${block.nGenomes} | f=${block.fraction || "NA"}`;
-      const selectedText = row.blockIndex === selectedSyntenyBlock && !selectedSyntenyReference ? "selected" : "click to mark tips";
-      parts.push(`<text x="14" y="${y + 3}" class="synteny-row-label">${escapeHtml(meta)}</text>`);
-      parts.push(`<text x="14" y="${y + 20}" class="synteny-label">${escapeHtml(selectedText)}</text>`);
-      const repBits = [
-        block.representativeGenome || "",
-        block.representativeGene || firstExampleLocus(block),
-        block.representativeContig && block.representativeStart && block.representativeEnd ? `${block.representativeContig}:${block.representativeStart}-${block.representativeEnd}` : "",
-        block.representativeStrand || "",
-        block.representativeLength ? `${block.representativeLength} bp` : "",
-      ].filter(Boolean).join(" ");
-      parts.push(`<text x="${left}" y="${y - 25}" class="synteny-locus">${escapeHtml(clipText(repBits || firstExampleLocus(block), 82))}</text>`);
-    }
-    const locusY = y - 25;
-    if (targetCenter) {
-      parts.push(`<line x1="${left}" y1="${locusY + 4}" x2="${targetCenter.x}" y2="${targetCenter.y - geneH / 2}" class="synteny-locus-line"/>`);
-    }
-    layout.forEach(item => {
-      const gene = item.gene;
-      const x = item.x;
-      const geneW = item.width;
-      const fill = gene.gap ? "#f2f4f7" : gene.target ? "#155eef" : row.kind === "reference" ? "#ecfdf3" : "#eef2f6";
-      const cls = gene.gap ? "synteny-gene synteny-gap" : gene.target ? "synteny-gene synteny-target" : "synteny-gene";
-      const labelClass = gene.target ? "synteny-target-label" : "synteny-label";
-      const label = syntenyDisplayLabel(gene);
-      const coord = syntenyCoordLabel(gene);
-      const title = [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
-      const geneAttrs = gene.gap || !gene.cluster || gene.cluster === "NA"
-        ? ""
-        : ` data-gene-cluster="${escapeHtml(gene.cluster)}"`;
-      parts.push(`<path d="${arrowPath(x, y, geneW, geneH, gene.strand)}" fill="${fill}" class="${cls}"${geneAttrs}><title>${escapeHtml(title)}</title></path>`);
-      parts.push(`<text x="${x + geneW / 2}" y="${y + 13}" text-anchor="middle" class="${labelClass}">${escapeHtml(clipText(label, 10))}</text>`);
-      parts.push(`<text x="${x + geneW / 2}" y="${y + geneH + 13}" text-anchor="middle" class="synteny-label">${escapeHtml(clipText(syntenySecondaryLabel(gene), 12))}</text>`);
-      if (gene.length) {
-        parts.push(`<text x="${x + geneW / 2}" y="${y + geneH + 28}" text-anchor="middle" class="synteny-label">${escapeHtml(gene.length)} bp</text>`);
-      }
-    });
-    const note = row.kind === "reference" ? "reference row can share neighbours without containing the focal cluster" : (block.interpretation || "").replace(/_/g, " ");
-    if (note) {
-      parts.push(`<text x="14" y="${y + geneH + 47}" class="synteny-label">${escapeHtml(clipText(note, 45))}</text>`);
-    }
-    parts.push("</g>");
-    previousPositions = positions;
-  });
-  syntenySvg.setAttribute("width", String(width));
-  syntenySvg.setAttribute("height", String(height));
-  syntenySvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  syntenySvg.innerHTML = parts.join("");
-  const firstTargetIndex = blockGenes(blocks[0], cluster.name).findIndex(gene => gene.target);
-  if (firstTargetIndex >= 0) {
-    const targetItem = rowLayouts[0] && rowLayouts[0][firstTargetIndex];
-    const targetX = targetItem ? targetItem.x + targetItem.width / 2 : left;
-    syntenyPanel.scrollLeft = Math.max(0, targetX - syntenyPanel.clientWidth / 2);
-  }
-  syntenyPanel.scrollTop = 0;
-}
-function applyViewerSplit() {
-  if (!viewerSplit) return;
-  if (syntenyHidden) {
-    viewerSplit.style.gridTemplateColumns = "minmax(0,1fr)";
-  } else {
-    const matrixShare = Math.max(35, Math.min(80, Number(splitControl?.value || 56)));
-    const syntenyShare = 100 - matrixShare;
-    viewerSplit.style.gridTemplateColumns = `minmax(360px,${matrixShare}fr) 18px minmax(320px,${syntenyShare}fr)`;
-  }
-  document.querySelectorAll(".synteny-control").forEach(control => {
-    control.style.display = syntenyHidden ? "none" : "flex";
-  });
-}
-function applySyntenyVisibility() {
-  if (!viewerSplit || !syntenyToggle) return;
-  viewerSplit.classList.toggle("synteny-hidden", syntenyHidden);
-  syntenyToggle.classList.toggle("active", !syntenyHidden);
-  syntenyToggle.textContent = syntenyHidden ? "Show syntenies" : "Hide syntenies";
-  syntenyToggle.setAttribute(
-    "aria-pressed",
-    syntenyHidden ? "false" : "true",
-  );
-  applyViewerSplit();
-  if (!syntenyHidden) {
-    syntenyKey = "";
-    renderSyntenyPanel();
-  } else {
-    selectedSyntenyCarriers = new Set();
-    treeDirty = true;
-  }
-}
-function renderTree() {
-  const xScale = Math.max(24, (treeWidth - 155) / Math.max(1, maxDepth));
-  if (treeDirty) {
-    const parts = [];
-    drawNode(treeRoot, parts, xScale);
-    const rootLabel = hasL8Tip(treeRoot) ? "L8-rooted" : "input-rooted";
-    if (treeMode === "phylogram" && maxDistance > 0) {
-      parts.push(`<text x="14" y="13" class="tree-scale">phylogram, ${rootLabel}, branch length max ${escapeHtml(formatBranchLength(maxDistance))}</text>`);
-    } else {
-      parts.push(`<text x="14" y="13" class="tree-scale">cladogram, ${rootLabel}, branch lengths ignored</text>`);
-    }
-    svg.setAttribute("width", String(treeWidth));
-    svg.setAttribute("height", String(treeHeight));
-    svg.setAttribute("viewBox", `0 0 ${treeWidth} ${treeHeight}`);
-    svg.innerHTML = `<line id="treeHoverGuide" x1="0" y1="0" x2="${treeWidth}" y2="0" class="tree-row-guide" style="display:none"/>${parts.join("")}`;
-    treeDirty = false;
-  }
-  const guide = document.getElementById("treeHoverGuide");
-  if (!guide) return;
-  if (hoverRow >= 0) {
-    const hy = hoverRow * cellH + cellH / 2;
-    guide.setAttribute("y1", String(hy));
-    guide.setAttribute("y2", String(hy));
-    guide.style.display = "block";
-  } else {
-    guide.style.display = "none";
-  }
-}
-function renderColumnHeader() {
-  const cols = visibleClusters.length;
-  const selectedCol = selectedVisibleColumn();
-  headerCanvas.width = Math.max(1, cols * cellW);
-  headerCanvas.height = headerH;
-  headerCanvas.style.width = `${headerCanvas.width}px`;
-  headerCanvas.style.height = `${headerH}px`;
-  headerCtx.clearRect(0, 0, headerCanvas.width, headerCanvas.height);
-  headerCtx.fillStyle = "#f8fafc";
-  headerCtx.fillRect(0, 0, headerCanvas.width, headerH);
-  if (matrixColorMode.value === "process") {
-    visibleClusters.forEach((clusterIdx, c) => {
-      headerCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
-      headerCtx.fillRect(c * cellW, 0, Math.max(1, cellW), 7);
-    });
-  }
-  if (hoverCol >= 0) {
-    headerCtx.fillStyle = "#fff7ed";
-    headerCtx.fillRect(hoverCol * cellW, 0, cellW, headerH);
-  }
-  if (selectedCol >= 0) {
-    headerCtx.fillStyle = "#eef4ff";
-    headerCtx.fillRect(selectedCol * cellW, 0, cellW, headerH);
-    headerCtx.strokeStyle = "#1d4ed8";
-    headerCtx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), headerH - 1);
-  }
-  for (let c = 0; c < cols; c += 1) {
-    const clusterIdx = originalClusterAtVisibleColumn(c);
-    headerCtx.fillStyle = matrixColorMode.value === "process"
-      ? processColor(processKind(data.clusters[clusterIdx]))
-      : "#98a2b3";
-    headerCtx.fillRect(c * cellW, headerH - 9, Math.max(1, cellW), 6);
-  }
-}
-function rebuildBaseMatrix() {
-  const {rows, cols} = updateCellGeometry();
-  baseCanvas.width = Math.max(1, cols * cellW);
-  baseCanvas.height = Math.max(1, Math.ceil(rows * cellH));
-  baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
-  baseCtx.fillStyle = "#ffffff";
-  baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
-  for (let r = 0; r < rows; r += 1) {
-    const genomeIdx = leafOrder[r];
-    for (let c = 0; c < cols; c += 1) {
-      const clusterIdx = originalClusterAtVisibleColumn(c);
-      const state = stateAt(clusterIdx, genomeIdx);
-      if (matrixColorMode.value === "process" && state !== "A") {
-        baseCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
-      } else {
-        baseCtx.fillStyle = colors[state] || colors.A;
-      }
-      const cellDrawH = cellH >= 2 ? Math.max(1, cellH - 1) : Math.max(0.2, cellH);
-      baseCtx.fillRect(c * cellW, r * cellH, Math.max(1, cellW - 1), cellDrawH);
-    }
-  }
-  baseCellH = cellH;
-  baseCellW = cellW;
-  baseValid = true;
-}
-function renderMatrix(scrollToSelected) {
-  const {rows, cols} = updateCellGeometry();
-  const selectedCol = selectedVisibleColumn();
-  if (!baseValid || baseCellH !== cellH || baseCellW !== cellW) {
-    rebuildBaseMatrix();
-  }
-  canvas.width = baseCanvas.width;
-  canvas.height = baseCanvas.height;
-  canvas.style.width = `${canvas.width}px`;
-  canvas.style.height = `${canvas.height}px`;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(baseCanvas, 0, 0);
-  if (selectedCol >= 0) {
-    ctx.fillStyle = "rgba(37,99,235,.13)";
-    ctx.fillRect(selectedCol * cellW, 0, cellW, canvas.height);
-  }
-  if (hoverRow >= 0 && hoverRow < rows) {
-    ctx.fillStyle = "rgba(181,71,8,.11)";
-    ctx.fillRect(0, hoverRow * cellH, canvas.width, Math.max(0.25, cellH));
-  }
-  if (hoverCol >= 0 && hoverCol < cols) {
-    ctx.fillStyle = "rgba(181,71,8,.09)";
-    ctx.fillRect(hoverCol * cellW, 0, cellW, canvas.height);
-  }
-  if (hoverCol >= 0) {
-    ctx.strokeStyle = "#b54708";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(hoverCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, canvas.height - 1));
-  }
-  if (hoverRow >= 0) {
-    ctx.strokeStyle = "#b54708";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(0.5, hoverRow * cellH + 0.5, Math.max(1, canvas.width - 1), Math.max(0.25, cellH - 0.1));
-  }
-  ctx.strokeStyle = "#111827";
-  ctx.lineWidth = Math.max(1, Math.min(2, cellW));
-  if (selectedCol >= 0) {
-    ctx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, canvas.height - 1));
-  }
-  if (scrollToSelected && selectedCol >= 0) {
-    matrixPane.scrollLeft = Math.max(0, selectedCol * cellW - 80);
-    headerScroller.scrollLeft = matrixPane.scrollLeft;
-  }
-  const cluster = data.clusters[selected];
-  const nextDetailsKey = cluster
-    ? `${selected}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
-    : "none";
-  if (nextDetailsKey !== detailsKey && cluster) {
-    const counts = countsForCluster(selected);
-    const mechanism = processKind(cluster);
-    const support = cluster.support ? `<span>support ${escapeHtml(cluster.support)}</span>` : "";
-    const phylo = cluster.phylo ? `<span>phylogeny ${escapeHtml(cluster.phylo)}</span>` : "";
-    const detail = cluster.mechanismDetail ? `<span>${escapeHtml(cluster.mechanismDetail)}</span>` : "";
-    const wording = cluster.wording ? `<div class="process-wording">${escapeHtml(cluster.wording)}</div>` : "";
-    info.textContent = `${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)`;
-    details.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><small>${escapeHtml(cluster.annotation || "No annotation provided")}</small><div class="state-counts"><span class="state-chip">input ${counts.P}</span><span class="state-chip">rescued ${counts.R}</span><span class="state-chip">NSC ${counts.N}</span><span class="state-chip">absent ${counts.A}</span></div><div class="process-note"><span class="process-chip" style="--process-color:${processColor(mechanism)}"><i></i>${escapeHtml(processLabel(mechanism))}</span><span>${escapeHtml(processDescription(mechanism))}</span></div>${referenceInterpretation(cluster)}<div class="process-meta">${support}${phylo}${detail}</div>${wording}`;
-    renderProcessLegend();
-    detailsKey = nextDetailsKey;
-  } else if (nextDetailsKey !== detailsKey) {
-    info.textContent = "";
-    details.textContent = "No cluster selected.";
-    processLegend.innerHTML = "";
-    detailsKey = nextDetailsKey;
-  }
-}
-function render(scrollToSelected = false) {
-  renderMatrix(scrollToSelected);
-  renderColumnHeader();
-  renderSyntenyPanel();
-  renderTree();
-  renderLineageLegend();
-}
-function scheduleRender(scrollToSelected = false) {
-  if (scrollToSelected) {
-    render(true);
-    return;
-  }
-  if (renderQueued) return;
-  renderQueued = true;
-  requestAnimationFrame(() => {
-    renderQueued = false;
-    render(false);
-  });
-}
-function setHover(row, col, text) {
-  const changed = hoverRow !== row || hoverCol !== col;
-  hoverRow = row;
-  hoverCol = col;
-  if (text) status.textContent = text;
-  if (changed) scheduleRender(false);
-}
-function setTreeMode(mode) {
-  treeMode = mode;
-  phylogramButton.classList.toggle("active", mode === "phylogram");
-  cladogramButton.classList.toggle("active", mode === "cladogram");
-  treeDirty = true;
-  render(false);
-}
-function resetMatrixCache() {
-  baseValid = false;
-  hoverCol = -1;
-  treeDirty = true;
-}
-treeRoot = rootByL8(data.tree);
-leafOrder = [];
-maxDepth = 0;
-maxDistance = 0;
-layout(treeRoot, 0, 0);
-computeGenomeStats();
-refreshVisibleClusters();
-if (leafOrder.length > 1500) {
-  labelToggle.checked = false;
-  sizeControl.value = "2";
-  rowHeightControl.value = "2";
-} else if (leafOrder.length > 800) {
-  labelToggle.checked = false;
-  sizeControl.value = "3";
-  rowHeightControl.value = "3";
-} else if (leafOrder.length > 300) {
-  labelToggle.checked = false;
-  sizeControl.value = "4";
-  rowHeightControl.value = "4";
-}
-populateOptions();
-applySyntenyVisibility();
-render(true);
-search.addEventListener("input", () => { populateOptions(); treeDirty = true; render(true); });
-select.addEventListener("change", () => { selected = Number(select.value || 0); selectedSyntenyBlock = 0; selectedSyntenyReference = false; syntenyKey = ""; treeDirty = true; render(true); });
-colorMode.addEventListener("change", () => { treeDirty = true; render(false); });
-labelToggle.addEventListener("change", () => { treeDirty = true; render(false); });
-phylogramButton.addEventListener("click", () => setTreeMode("phylogram"));
-cladogramButton.addEventListener("click", () => setTreeMode("cladogram"));
-referenceButton.addEventListener("click", () => {
-  if (!data.referenceGenome) return;
-  referenceOnly = !referenceOnly;
-  refreshVisibleClusters();
-  populateOptions();
-  resetMatrixCache();
-  render(true);
-});
-syntenyToggle.addEventListener("click", () => {
-  syntenyHidden = !syntenyHidden;
-  applySyntenyVisibility();
-  render(false);
-});
-syntenySvg.addEventListener("click", event => {
-  const gene = event.target.closest(".synteny-gene[data-gene-cluster]");
-  if (gene) {
-    const clusterName = gene.getAttribute("data-gene-cluster") || "";
-    if (selectMatrixClusterByName(clusterName)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    return;
-  }
-  const referenceRow = event.target.closest(".synteny-reference-row[data-reference-context]");
-  if (referenceRow) {
-    selectedSyntenyReference = true;
-    syntenyKey = "";
-    treeDirty = true;
-    render(false);
-    return;
-  }
-  const row = event.target.closest(".synteny-row[data-block-index]");
-  if (!row) return;
-  selectedSyntenyBlock = Number(row.getAttribute("data-block-index") || 0);
-  selectedSyntenyReference = false;
-  syntenyKey = "";
-  treeDirty = true;
-  render(false);
-});
-processLegend.addEventListener("click", event => {
-  const clear = event.target.closest("[data-clear-mechanism]");
-  const card = event.target.closest("[data-mechanism]");
-  if (!clear && !card) return;
-  if (clear) {
-    mechanismFilters.clear();
-  } else {
-    const mechanism = card.getAttribute("data-mechanism") || "";
-    if (mechanismFilters.has(mechanism)) {
-      mechanismFilters.delete(mechanism);
-    } else {
-      mechanismFilters.add(mechanism);
-    }
-  }
-  refreshVisibleClusters();
-  populateOptions();
-  resetMatrixCache();
-  render(true);
-});
-fullscreenButton.addEventListener("click", async () => {
-  if (!document.fullscreenElement && explorerSection.requestFullscreen) {
-    await explorerSection.requestFullscreen();
-  } else if (document.exitFullscreen) {
-    await document.exitFullscreen();
-  }
-});
-document.addEventListener("fullscreenchange", () => {
-  fullscreenButton.textContent = document.fullscreenElement === explorerSection
-    ? "Exit fullscreen"
-    : "Fullscreen explorer";
-});
-sizeControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
-rowHeightControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
-splitControl.addEventListener("input", () => { applyViewerSplit(); });
-syntenyZoomControl.addEventListener("input", () => { syntenyKey = ""; render(false); });
-matrixColorMode.addEventListener("change", () => { resetMatrixCache(); render(false); });
-matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });
-headerScroller.addEventListener("scroll", () => { matrixPane.scrollLeft = headerScroller.scrollLeft; });
-function adjustRange(control, delta, min, max) {
-  const value = Number(control.value || min);
-  const next = Math.max(min, Math.min(max, value + delta));
-  if (next === value) return false;
-  control.value = String(next);
-  return true;
-}
-function wheelZoom(event, forcedAxis = "") {
-  const columnZoom = forcedAxis === "column" || event.shiftKey;
-  const rowZoom = forcedAxis === "row" || event.ctrlKey || event.metaKey || event.altKey;
-  if (!columnZoom && !rowZoom) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const delta = event.deltaY < 0 ? 1 : -1;
-  const changed = columnZoom
-    ? adjustRange(sizeControl, delta, 0.25, 18)
-    : adjustRange(rowHeightControl, delta, 1, 18);
-  if (changed) {
-    resetMatrixCache();
-    render(false);
-  }
-}
-viewerBody.addEventListener("wheel", wheelZoom, {passive:false});
-if (treePane) treePane.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-svg.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-headerScroller.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
-headerCanvas.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
-matrixPane.addEventListener("wheel", wheelZoom, {passive:false});
-svg.addEventListener("mousemove", event => {
-  const rect = svg.getBoundingClientRect();
-  const r = Math.floor((event.clientY - rect.top) / cellH);
-  if (r < 0 || r >= leafOrder.length) return;
-  const genomeIdx = leafOrder[r];
-  const state = stateAt(selected, genomeIdx);
-  const cluster = data.clusters[selected];
-  const tip = tipStyle(genomeIdx);
-  const tipNode = findLeafByGenome(treeRoot, genomeIdx);
-  const branchInfo = tipNode
-    ? `; root distance ${formatBranchLength(tipNode.distance)}, terminal branch ${formatBranchLength(tipNode.length)}`
-    : "";
-  const detail = colorMode.value === "cluster" && cluster
-    ? `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}${branchInfo}`
-    : `${data.genomes[genomeIdx]}: ${tip.title}${branchInfo}`;
-  tooltip.style.display = "none";
-  setHover(r, -1, detail);
-});
-svg.addEventListener("mouseleave", () => {
-  setHover(-1, -1, defaultStatus);
-});
-headerCanvas.addEventListener("mousemove", event => {
-  const rect = headerCanvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  if (c < 0 || c >= visibleClusters.length) return;
-  const clusterIdx = originalClusterAtVisibleColumn(c);
-  const cluster = data.clusters[clusterIdx];
-  setHover(-1, c, `${cluster.name}: ${cluster.annotation || "No annotation provided"}`);
-});
-headerCanvas.addEventListener("mouseleave", () => {
-  setHover(-1, -1, defaultStatus);
-});
-headerCanvas.addEventListener("click", event => {
-  const rect = headerCanvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  if (c < 0 || c >= visibleClusters.length) return;
-  selected = originalClusterAtVisibleColumn(c);
-  selectedSyntenyReference = false;
-  search.value = "";
-  populateOptions();
-  treeDirty = true;
-  render(true);
-});
-canvas.addEventListener("mousemove", event => {
-  const rect = canvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  const r = Math.floor((event.clientY - rect.top) / cellH);
-  if (c < 0 || r < 0 || c >= visibleClusters.length || r >= leafOrder.length) return;
-  const clusterIdx = originalClusterAtVisibleColumn(c);
-  const genomeIdx = leafOrder[r];
-  const state = stateAt(clusterIdx, genomeIdx);
-  const cluster = data.clusters[clusterIdx];
-  const mechanism = processKind(cluster);
-  setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}; ${processLabel(mechanism)}`);
-  const paneRect = matrixPane.getBoundingClientRect();
-  tooltip.style.display = "block";
-  tooltip.style.left = `${event.clientX - paneRect.left + matrixPane.scrollLeft + 12}px`;
-  tooltip.style.top = `${event.clientY - paneRect.top + 12}px`;
-  tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(processLabel(mechanism))}</span><br><span>${escapeHtml(cluster.annotation || "")}</span>`;
-});
-canvas.addEventListener("mouseleave", () => {
-  tooltip.style.display = "none";
-  setHover(-1, -1, defaultStatus);
-});
-canvas.addEventListener("click", event => {
-  const rect = canvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  if (c < 0 || c >= visibleClusters.length) return;
-  selected = originalClusterAtVisibleColumn(c);
-  selectedSyntenyReference = false;
-  search.value = "";
-  populateOptions();
-  treeDirty = true;
-  render(true);
-});
-})();</script>"##,
+        "</script><script>window.recoreExplorerData=JSON.parse(document.getElementById('explorerData').textContent);</script><script>",
     );
-    html.push_str("</section>");
+    html.push_str(EXPLORER_JS);
+    html.push_str("</script></section>");
     html
 }
 
@@ -3351,58 +1996,94 @@ pub(super) fn write_html_report(
         EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER,
     )?;
 
+    let priority_set: std::collections::BTreeSet<String> = top_candidates
+        .iter()
+        .map(|row| row.priority.clone())
+        .filter(|p| !p.is_empty())
+        .collect();
+
     let mut html = String::new();
-    html.push_str("<!doctype html><html lang='en'><head><meta charset='utf-8'>");
+    html.push_str("<!doctype html><html lang='en' data-theme='light'><head><meta charset='utf-8'>");
     html.push_str("<meta name='viewport' content='width=device-width,initial-scale=1'>");
     html.push_str("<title>Recore run report</title>");
-    html.push_str(
-        "<style>
-        :root{color-scheme:light;--ink:#111827;--muted:#667085;--subtle:#475467;--line:#d7dde5;--soft-line:#e6eaf0;--bg:#f3f5f7;--panel:#ffffff;--navy:#182230;--blue:#2563eb;--green:#079455;--purple:#7a5af8;--amber:#b54708;--red:#b42318}
-        *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.48 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-        main{max-width:1200px;margin:0 auto;padding:28px}
-        header{background:var(--panel);border:1px solid var(--line);border-top:5px solid var(--navy);border-radius:12px;padding:24px;margin-bottom:14px;box-shadow:0 12px 28px rgba(16,24,40,.06)}
-        .header-main{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.brand{display:flex;align-items:center;gap:18px;min-width:0}.logo{width:118px;height:66px;border-radius:8px;overflow:hidden;background:#fff;border:1px solid var(--soft-line);padding:6px;flex:0 0 auto}.logo svg{width:100%;height:100%;display:block}.hero-text{min-width:0}.path{word-break:break-all;margin-top:8px;color:var(--muted);font-size:12px}
-        .kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--muted);font-weight:800}h1{margin:5px 0 7px;font-size:29px;line-height:1.12;letter-spacing:-.01em}h2{font-size:15px;margin:0 0 12px}p{margin:0}.muted{color:var(--muted)}.report-stamp{text-align:right;min-width:180px}.report-stamp strong{display:block;font-size:12px;color:var(--navy)}.report-stamp span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
-        .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}.pill{border:1px solid var(--line);border-radius:999px;padding:5px 9px;background:#f8fafc;color:var(--subtle);font-size:12px}
-        .executive{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(320px,.9fr);gap:18px;margin-bottom:14px}.executive p{font-size:14px;color:#344054}.executive strong{color:var(--navy)}.summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.summary-item{border-left:3px solid var(--navy);background:#f8fafc;padding:10px 12px;border-radius:8px}.summary-item span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}.summary-item strong{display:block;margin-top:3px;font-size:16px}
-        .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px;box-shadow:0 8px 18px rgba(16,24,40,.04)}
-        .card .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}.card .value{font-size:25px;font-weight:760;margin-top:5px;letter-spacing:-.01em}.card .sub{color:var(--muted);font-size:12px;margin-top:3px}
-        .wide{grid-column:span 2}.full{grid-column:1/-1}.section-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
-        .bars{display:grid;gap:10px}.bar-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:4px}.track{height:8px;background:#eef2f6;border-radius:999px;overflow:hidden}.bar{height:100%;background:linear-gradient(90deg,#1d4ed8,#079455);border-radius:999px}
-        table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:750;border-bottom:1px solid var(--line);padding:8px 6px;background:#f8fafc}td{border-bottom:1px solid #eaecf0;padding:8px 6px;vertical-align:top}tr:last-child td{border-bottom:0}
-        .badge{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:750;background:#eef4ff;color:#1849a9;border:1px solid #d1e0ff}.badge.review{background:#fff6ed;color:var(--amber);border-color:#fedf89}.badge.filter{background:#fef3f2;color:var(--red);border-color:#fecdca}.badge.pass{background:#ecfdf3;color:var(--green);border-color:#abefc6}
-        .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
-        .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
-        .explorer-controls,.viewer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.cluster-controls{grid-template-columns:minmax(240px,1fr) minmax(280px,1.2fr) auto}.viewer-controls{position:sticky;top:8px;z-index:6;margin-top:12px;padding:10px;border:1px solid var(--soft-line);border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 8px 20px rgba(16,24,40,.08)}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}.process-note{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;color:#344054;font-size:12px}.process-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px;font-size:11px;font-weight:750;color:#344054}.process-chip i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--process-color)}.reference-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px;color:#344054;font-size:11px}.reference-meta strong{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.reference-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:11px}.process-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-wording{margin-top:7px;color:#344054;font-size:12px}.process-legend{display:grid;gap:8px;margin-top:10px}.process-selected{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:#344054;font-size:12px}.process-clear{border-radius:999px!important;padding:4px 9px!important;background:#eef4ff!important;border-color:#84adff!important;color:#1849a9!important;font-size:11px!important}.process-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.process-item{display:grid!important;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:start;text-align:left;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px}.process-item:hover{border-color:#84adff;background:#f8fbff}.process-item.active{border-color:#84adff;background:#eef4ff}.process-item.filtered{outline:2px solid #1849a9;outline-offset:0}.process-swatch{width:11px;height:11px;border-radius:3px;margin-top:3px}.process-item strong{display:block;font-size:12px}.process-item small{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.35;font-weight:400}.lineage-legend{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px 10px}.lineage-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.lineage-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--soft-line);border-radius:999px;padding:3px 7px;background:#f8fafc}.lineage-chip i{width:9px;height:9px;border-radius:2px;display:inline-block}.lineage-chip strong{font-size:11px}.lineage-chip small{font-size:11px;color:var(--muted)}
-        .viewer-split{display:grid;grid-template-columns:minmax(0,1fr) 18px minmax(390px,1fr);gap:8px;align-items:start;margin-top:14px}.viewer-split>*{min-width:0}.viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.viewer-split.synteny-hidden .synteny-panel,.viewer-split.synteny-hidden .viewer-split-handle{display:none}.viewer{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-split-handle{align-self:stretch;min-height:260px;border:1px solid var(--soft-line);border-radius:999px;background:#f8fafc;display:flex;align-items:center;justify-content:center;cursor:col-resize}.viewer-split-handle input{writing-mode:vertical-lr;direction:rtl;width:16px;height:220px;padding:0;accent-color:#155eef}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:24px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.synteny-tip-ring{fill:none;stroke:#f97316;stroke-width:1.4;stroke-opacity:.95}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.synteny-panel{border:1px solid var(--line);border-radius:10px;background:#fff;min-height:260px;max-height:760px;overflow:auto}.synteny-head{position:sticky;top:0;z-index:3;background:#f8fafc;border-bottom:1px solid var(--soft-line);padding:9px 10px}.synteny-head span{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.synteny-head small{display:block;margin-top:3px;color:#344054;font-size:12px}.synteny-svg{display:block;min-width:620px}.synteny-row,.synteny-reference-row{cursor:pointer}.synteny-row-hit{fill:transparent;stroke:none}.synteny-row-bg{fill:#fff;stroke:#eaecf0;stroke-width:1}.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-reference-bg{fill:#ecfdf3;stroke:#abefc6}.synteny-reference-bg.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-link{stroke:#84adff;stroke-width:8;stroke-linecap:round;stroke-opacity:.20;fill:none;pointer-events:none}.synteny-gene{stroke:#98a2b3;stroke-width:1}.synteny-gene[data-gene-cluster]{cursor:pointer}.synteny-target{stroke:#1849a9;stroke-width:1.3}.synteny-gap{stroke:#d0d5dd;stroke-dasharray:3 2}.synteny-label{font-size:9px;fill:#344054}.synteny-target-label{font-size:9px;fill:#fff;font-weight:700}.synteny-row-label{font-size:10px;fill:#475467;font-weight:700}.synteny-locus{font-size:10px;fill:#111827;font-weight:750}.synteny-locus-line{stroke:#475467;stroke-width:.8;stroke-dasharray:2 2}.synteny-empty{padding:14px;color:var(--muted);font-size:12px}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-split{grid-template-columns:minmax(0,1fr) 18px minmax(430px,1fr)}.explorer:fullscreen .viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
-        footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
-        @media(max-width:1100px){.explorer-controls,.viewer-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-        @media(max-width:820px){.viewer-split{grid-template-columns:1fr}}
-        @media(max-width:900px){.header-main,.executive{grid-template-columns:1fr;display:block}.report-stamp{text-align:left;margin-top:14px}.grid,.section-grid,.files,.explorer-grid,.explorer-controls,.viewer-controls{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:16px}h1{font-size:24px}.brand{align-items:flex-start}.logo{width:92px;height:54px}.summary-grid{grid-template-columns:1fr}}
-        </style>",
-    );
-    html.push_str("</head><body><main>");
+    html.push_str("<link rel='preconnect' href='https://rsms.me/'>");
+    html.push_str("<link rel='stylesheet' href='https://rsms.me/inter/inter.css'>");
+    html.push_str("<style>");
+    html.push_str(REPORT_CSS);
+    html.push_str("</style></head><body>");
 
-    html.push_str("<header><div class='header-main'><div class='brand'><div class='logo'>");
+    html.push_str("<div class='banner'><div class='banner-inner'><div class='banner-brand'>");
+    html.push_str("<div class='banner-logo' aria-hidden='true'>");
     html.push_str(REPORT_LOGO);
+    html.push_str("</div><div>");
+    html.push_str("<div class='kicker'>Recore audit report</div>");
+    html.push_str("<h1>Corrected pangenome matrix review</h1>");
+    html.push_str("<p class='banner-tagline'>A reproducible audit of rescued false absences, guarded matrix corrections, and the downstream interpretation signals that explain them.</p>");
     write!(
         html,
-        "</div><div class='hero-text'><div class='kicker'>Recore audit report</div><h1>Corrected pangenome matrix review</h1><p class='muted'>A reproducible audit of rescued false absences, guarded matrix corrections, and downstream interpretation signals.</p></div></div><div class='report-stamp'><strong>Recore v{}</strong><span>schema recore.outputs.v6</span><span>{} clusters x {} genomes</span></div></div><div class='meta'><span class='pill'>policy {:?}</span><span class='pill'>synteny {}</span><span class='pill'>NSC {}</span><span class='pill'>reference {}</span><span class='pill'>HTML explorer {}</span></div><p class='path'>Output: {}</p></header>",
-        html_escape(env!("CARGO_PKG_VERSION")),
-        format_count(pa.n_clusters()),
-        format_count(pa.n_genomes()),
-        stats.matrix_policy,
+        "<div class='pills'><span class='pill'><span class='dot {}'></span>synteny {}</span><span class='pill'><span class='dot {}'></span>NSC {}</span><span class='pill'><span class='dot {}'></span>tree {}</span><span class='pill'>policy <code>{:?}</code></span><span class='pill'>reference <code>{}</code></span></div>",
+        if args.synteny { "" } else { "off" },
         if args.synteny { "on" } else { "off" },
+        if args.nscluster { "" } else { "off" },
         if args.nscluster { "on" } else { "off" },
-        html_escape(args.reference_genome.as_deref().unwrap_or("not assessed")),
-        if phylo_tree.is_some() { "available" } else { "static" },
+        if phylo_tree.is_some() { "" } else { "off" },
+        if phylo_tree.is_some() { "interactive" } else { "static" },
+        stats.matrix_policy,
+        html_escape(args.reference_genome.as_deref().unwrap_or("not set")),
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<p class='path'>Output dir: {}</p>",
         html_escape(&output_dir.display().to_string()),
     )
     .expect("write to String is infallible");
-
+    html.push_str("</div></div><div class='banner-meta'>");
     write!(
         html,
-        "<section class='panel executive'><div><div class='kicker'>Executive summary</div><p><strong>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong>{}</strong> searchable gaps. Recore retained <strong>{}</strong> accepted evidence rows for audit and kept <strong>{}</strong> candidates out of the binary matrix through synteny/paralog guardrails. Core changed from <strong>{}</strong> to <strong>{}</strong> clusters ({:+}); soft-core changed from <strong>{}</strong> to <strong>{}</strong> ({:+}).</p></div><div class='summary-grid'><div class='summary-item'><span>Correction rate</span><strong>{}</strong></div><div class='summary-item'><span>Evidence retained</span><strong>{}</strong></div><div class='summary-item'><span>Guardrail rejections</span><strong>{}</strong></div><div class='summary-item'><span>Review mode</span><strong>{}</strong></div></div></section>",
+        "<span class='version'>Recore v{}</span><span class='scale num'>{} clusters &middot; {} genomes</span><span class='scale'>schema recore.outputs.v6</span>",
+        html_escape(env!("CARGO_PKG_VERSION")),
+        format_count(pa.n_clusters()),
+        format_count(pa.n_genomes()),
+    )
+    .expect("write to String is infallible");
+    html.push_str("<div class='banner-actions'>");
+    html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
+    html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label'>Dark mode</span>");
+    html.push_str("</button>");
+    html.push_str("</div></div></div></div>");
+
+    html.push_str("<main>");
+
+    html.push_str("<nav class='nav' aria-label='Section navigation'>");
+    let mut nav_items = vec![
+        ("summary", "Summary"),
+        ("stats", "Stats"),
+        ("breakdowns", "Breakdowns"),
+        ("mechanisms", "Mechanisms"),
+        ("candidates", "Candidates"),
+    ];
+    if phylo_tree.is_some() {
+        nav_items.push(("explorer", "Explorer"));
+    }
+    nav_items.push(("files", "Files"));
+    for (target, label) in &nav_items {
+        write!(
+            html,
+            "<a href='#{0}' data-target='{0}'>{1}</a>",
+            target, label,
+        )
+        .expect("write to String is infallible");
+    }
+    html.push_str("</nav>");
+
+    html.push_str("<section id='summary' class='panel'>");
+    html.push_str("<div class='executive'>");
+    html.push_str("<div>");
+    html.push_str("<div class='kicker'>Executive summary</div>");
+    write!(
+        html,
+        "<h2 style='margin:6px 0 10px;font-size:18px'>Pangenome correction at a glance</h2><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore retained <strong class='num'>{}</strong> accepted evidence rows for audit and kept <strong class='num'>{}</strong> candidates out of the binary matrix through synteny/paralog guardrails. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p>",
         format_count(matrix_corrected_total),
         stats.matrix_policy,
         format_count(stats.searchable_gaps),
@@ -3414,93 +2095,129 @@ pub(super) fn write_html_report(
         format_count(soft_before),
         format_count(soft_after),
         soft_delta,
-        format_percent(matrix_corrected_total, stats.searchable_gaps),
-        format_count(rescued),
-        format_count(rejected_total),
-        if phylo_tree.is_some() { "tree-linked" } else { "table-only" },
     )
     .expect("write to String is infallible");
+    html.push_str("</div>");
+    html.push_str("<div class='headline-grid'>");
+    write!(
+        html,
+        "<div class='headline'><span>Correction rate</span><strong>{}</strong></div>",
+        html_escape(&format_percent(matrix_corrected_total, stats.searchable_gaps))
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<div class='headline pos'><span>Evidence retained</span><strong>{}</strong></div>",
+        format_count(rescued)
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<div class='headline warn'><span>Guardrail rejections</span><strong>{}</strong></div>",
+        format_count(rejected_total)
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<div class='headline violet'><span>Review mode</span><strong>{}</strong></div>",
+        if phylo_tree.is_some() { "tree-linked" } else { "table-only" }
+    )
+    .expect("write to String is infallible");
+    html.push_str("</div></div></section>");
 
-    html.push_str("<section class='grid'>");
-    for (label, value, sub) in [
-        ("Clusters", format_count(pa.n_clusters()), "input matrix"),
-        ("Genomes", format_count(pa.n_genomes()), "input matrix"),
+    html.push_str("<section id='stats' class='panel'>");
+    html.push_str("<div class='panel-head'><div><h2>Run statistics</h2><small>Headline counts behind the executive summary.</small></div></div>");
+    html.push_str("<div class='stat-grid'>");
+    for (label, value, sub, accent) in [
+        ("Clusters", format_count(pa.n_clusters()), "input matrix", "accent"),
+        ("Genomes", format_count(pa.n_genomes()), "input matrix", "accent"),
         (
             "Searchable gaps",
             format_count(stats.searchable_gaps),
             "after filters and FASTA matching",
+            "violet",
         ),
         (
             "Matrix corrected",
             format_count(matrix_corrected_total),
             "rescues + NSC merged cells",
+            "pos",
         ),
         (
             "Accepted rescues",
             format_count(rescued),
             "all accepted evidence rows",
+            "pos",
         ),
         (
             "Rejected evidence",
             format_count(stats.synteny_rejected + stats.paralog_rejected),
             "synteny/paralog guardrails",
+            "warn",
         ),
         (
             "Core genome",
             format!(
-                "{} -> {}",
+                "{} \u{2192} {}",
                 format_count(stats.core_before),
                 format_count(core_after)
             ),
             "strict core clusters",
+            "accent",
         ),
         (
             "Soft-core",
             format!(
-                "{} -> {}",
+                "{} \u{2192} {}",
                 format_count(soft_before),
                 format_count(soft_after)
             ),
-            ">=95% prevalence",
+            "\u{2265}95% prevalence",
+            "accent",
         ),
     ] {
         write!(
             html,
-            "<div class='card'><div class='label'>{}</div><div class='value'>{}</div><div class='sub'>{}</div></div>",
+            "<div class='stat {}'><div class='label'>{}</div><div class='value num'>{}</div><div class='sub'>{}</div></div>",
+            accent,
             html_escape(label),
             html_escape(&value),
             html_escape(sub)
         )
         .expect("write to String is infallible");
     }
-    html.push_str("</section>");
+    html.push_str("</div></section>");
 
-    html.push_str("<section class='section-grid'>");
+    html.push_str("<section id='breakdowns'>");
+    html.push_str("<div class='section-grid'>");
     html.push_str(&count_items_html(
         "Orthology actions",
         &orthology_actions,
         "No orthology evidence rows found.",
+        "",
     ));
     html.push_str(&count_items_html(
         "Confidence tiers",
         &orthology_tiers,
         "No confidence tiers found.",
+        "violet",
     ));
     html.push_str(&count_items_html(
         "Evolutionary priorities",
         &priorities,
         "No evolutionary priority rows found.",
+        "warn",
     ));
     html.push_str(&count_items_html(
         "Genome QC",
         &qc,
         "No genome QC rows found.",
+        "pos",
     ));
-    html.push_str("</section>");
+    html.push_str("</div></section>");
 
-    html.push_str(
-        "<section class='panel full' style='margin-top:14px'><h2>Dominant mechanisms</h2>",
-    );
+    html.push_str("<section id='mechanisms' class='panel'>");
+    html.push_str("<div class='panel-head'><div><h2>Dominant mechanisms</h2><small>Top 12 molecular mechanisms across all clusters. Click matrix cells in the explorer to filter.</small></div></div>");
     if mechanisms.is_empty() {
         html.push_str("<p class='muted'>No mechanism counts found.</p>");
     } else {
@@ -3512,15 +2229,20 @@ pub(super) fn write_html_report(
             .max()
             .unwrap_or(1)
             .max(1);
-        html.push_str("<div class='bars'>");
+        html.push_str("<div class='mech-bars'>");
         for (label, value) in mechanism_rows.into_iter().take(12) {
-            let pct = (*value as f64 / max as f64 * 100.0).clamp(2.0, 100.0);
+            let pct = (*value as f64 / max as f64 * 100.0).clamp(1.5, 100.0);
+            let color = mechanism_color(label);
             write!(
                 html,
-                "<div class='bar-row'><div class='bar-label'><span>{}</span><strong>{}</strong></div><div class='track'><div class='bar' style='width:{:.1}%'></div></div></div>",
+                "<div class='mech-row'><div class='mech-name'><span class='swatch' style='background:{}'></span><span title='{}'>{}</span></div><div class='mech-bar-wrap'><div class='track'><div class='bar' style='width:{:.1}%;background:linear-gradient(90deg,{},{})'></div></div></div><div class='mech-count num'>{}</div></div>",
+                color,
                 html_escape(label),
+                html_escape(&pretty_label(label)),
+                pct,
+                color,
+                color,
                 format_count(*value),
-                pct
             )
             .expect("write to String is infallible");
         }
@@ -3528,36 +2250,61 @@ pub(super) fn write_html_report(
     }
     html.push_str("</section>");
 
-    html.push_str(
-        "<section class='panel full' style='margin-top:14px'><h2>Top candidate clusters</h2>",
-    );
+    html.push_str("<section id='candidates' class='panel'>");
+    html.push_str("<div class='panel-head'><div><h2>Top candidate clusters</h2><small>Ranked by evolutionary_signal_score. Search annotation or cluster name and sort columns.</small></div></div>");
     if top_candidates.is_empty() {
         html.push_str("<p class='muted'>No evolutionary event table found.</p>");
     } else {
-        html.push_str("<table><thead><tr><th>Cluster</th><th>Priority</th><th>Score</th><th>Mechanism</th><th>Phylogeny</th><th>Support</th><th>Recommended wording</th></tr></thead><tbody>");
-        for row in top_candidates {
-            let badge_class = if row.priority.contains("filter") {
-                "filter"
-            } else if row.priority.contains("review") || row.priority.contains("candidate") {
-                "review"
-            } else {
-                "pass"
-            };
+        html.push_str("<div class='toolbar'>");
+        html.push_str(
+            "<input id='candidatesSearch' type='search' placeholder='Filter by cluster, wording, mechanism'>",
+        );
+        html.push_str(
+            "<select id='candidatesPriority' aria-label='Filter by priority'><option value=''>All priorities</option>",
+        );
+        for prio in &priority_set {
             write!(
                 html,
-                "<tr><td><strong>{}</strong></td><td><span class='badge {}'>{}</span></td><td>{:.3}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<option value='{0}'>{0}</option>",
+                html_escape(prio)
+            )
+            .expect("write to String is infallible");
+        }
+        html.push_str("</select>");
+        html.push_str("<span id='candidatesCount' class='count num'></span>");
+        html.push_str("</div>");
+        html.push_str("<div class='table-wrap'>");
+        html.push_str("<table id='candidatesTable' data-sortable>");
+        html.push_str("<thead><tr>");
+        html.push_str("<th class='sortable' data-sort-type='string'>Cluster</th>");
+        html.push_str("<th class='sortable' data-sort-type='string'>Priority</th>");
+        html.push_str("<th class='sortable num' data-sort-type='number'>Score</th>");
+        html.push_str("<th class='sortable' data-sort-type='string'>Mechanism</th>");
+        html.push_str("<th class='sortable' data-sort-type='string'>Phylogeny</th>");
+        html.push_str("<th class='sortable' data-sort-type='string'>Support</th>");
+        html.push_str("<th>Recommended wording</th>");
+        html.push_str("</tr></thead><tbody>");
+        for row in top_candidates {
+            let badge_class = priority_badge_class(&row.priority);
+            let mech_color = mechanism_color(&row.mechanism);
+            write!(
+                html,
+                "<tr data-priority='{}'><td><strong>{}</strong></td><td><span class='badge {}'>{}</span></td><td class='num' data-sort-value='{:.6}'>{:.3}</td><td><span class='mech-badge' style='--mech-color:{}'><i></i>{}</span></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                html_escape(&row.priority),
                 html_escape(&row.cluster),
                 badge_class,
                 html_escape(&row.priority),
                 row.score,
-                html_escape(&row.mechanism),
+                row.score,
+                mech_color,
+                html_escape(&pretty_label(&row.mechanism)),
                 html_escape(&row.phylo),
                 html_escape(&row.support),
                 html_escape(&row.wording)
             )
             .expect("write to String is infallible");
         }
-        html.push_str("</tbody></table>");
+        html.push_str("</tbody></table></div>");
     }
     html.push_str("</section>");
 
@@ -3575,7 +2322,9 @@ pub(super) fn write_html_report(
         &explorer_synteny,
     ));
 
-    html.push_str("<section class='panel full' style='margin-top:14px'><h2>Files to inspect</h2><div class='files'>");
+    html.push_str("<section id='files' class='panel'>");
+    html.push_str("<div class='panel-head'><div><h2>Files to inspect</h2><small>Authoritative outputs alongside this report.</small></div></div>");
+    html.push_str("<div class='files'>");
     for (path, description) in [
         (
             "gene_presence_absence_recore.csv",
@@ -3613,11 +2362,17 @@ pub(super) fn write_html_report(
 
     write!(
         html,
-        "<footer>Generated by Recore v{} with <code>--write-html-report</code>. This report is an audit summary; use the TSV files for exact downstream analyses.</footer>",
-        html_escape(env!("CARGO_PKG_VERSION"))
+        "<footer><span>Generated by <strong>Recore v{}</strong> with <code>--write-html-report</code>. This report is an audit summary; use the TSV files for exact downstream analyses.</span><span class='num'>{} clusters &middot; {} genomes</span></footer>",
+        html_escape(env!("CARGO_PKG_VERSION")),
+        format_count(pa.n_clusters()),
+        format_count(pa.n_genomes()),
     )
     .expect("write to String is infallible");
-    html.push_str("</main></body></html>\n");
+    html.push_str("</main>");
+    html.push_str("<script>");
+    html.push_str(REPORT_UI_JS);
+    html.push_str("</script>");
+    html.push_str("</body></html>\n");
 
     let path = output_dir.join("recore_report.html");
     fs::write(&path, html).with_context(|| format!("Cannot write {}", path.display()))?;
