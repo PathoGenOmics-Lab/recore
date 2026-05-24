@@ -347,6 +347,418 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
 }
 
 #[test]
+fn rich_sample_report_renders_full_explorer() {
+    // Builds a realistic MTBC-style toy dataset (16 genomes spanning 12 lineages,
+    // 12 clusters with varied mechanisms, synteny blocks, NSC merge, rescue
+    // events, reference audit) and renders a full HTML report. When the
+    // RECORE_SAMPLE_DUMP env var is set the rendered report is copied there
+    // so it can be opened in a browser for visual review.
+    let out = tempfile::tempdir().unwrap();
+
+    let genomes: Vec<String> = vec![
+        "L4_AS00146", "L4_AS00150", "L4_AS00200",
+        "L2_AS00021", "L2_AS00060",
+        "L3_AS00094",
+        "L1_AS00033", "L1_AS00100",
+        "L5_AS00161", "L6_AS00352",
+        "L7_AS00044", "L8_AS00022",
+        "A1_AS00349", "A2_AS00357",
+        "A4_AS00245", "A4_AS00248",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let n_g = genomes.len();
+    let gi = |name: &str| -> usize { genomes.iter().position(|g| g == name).unwrap() };
+
+    let cluster_specs: Vec<(&str, &str, Vec<&str>)> = vec![
+        ("group_001", "dnaA chromosomal replication initiator", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
+            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
+        ]),
+        ("group_002", "PE_PGRS33 lineage-restricted surface protein", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+        ]),
+        ("group_003", "plcA phospholipase C (RD5 locus)", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
+            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357",
+        ]),
+        ("group_004", "Rv2820c hypothetical (IS6110 hotspot)", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
+            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
+        ]),
+        ("group_005", "pks15-1 polyketide synthase (degraded)", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033",
+        ]),
+        ("group_006", "RD1 / esxA virulence (lost in BCG-like ref)", vec![
+            "L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
+            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
+        ]),
+        ("group_007", "rpsL ribosomal S12 (duplicated)", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
+            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
+        ]),
+        ("group_007b", "rpsL paralog (NSC-merged)", vec![
+            "L4_AS00146","L4_AS00150","L1_AS00033","A4_AS00245",
+        ]),
+        ("group_008", "mmpL5 efflux pump (split/fragmented)", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L8_AS00022",
+        ]),
+        ("group_009", "TB7.7 antigen partial copy", vec![
+            "A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
+        ]),
+        ("group_010", "Rv0095c translocated paralog", vec![
+            "L4_AS00146","L2_AS00021","L3_AS00094","L1_AS00033",
+        ]),
+        ("group_011", "katG start-variant annotation", vec![
+            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
+            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
+            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
+        ]),
+        ("group_012", "Rv1986 patchy lineage-specific accessory", vec![
+            "L4_AS00146","L2_AS00060","L3_AS00094","L7_AS00044","A4_AS00248",
+        ]),
+    ];
+
+    let cluster_names: Vec<String> = cluster_specs.iter().map(|(n, _, _)| (*n).to_string()).collect();
+    let mut matrix: Vec<Vec<String>> = vec![vec![String::new(); n_g]; cluster_specs.len()];
+    for (ci, (_name, _ann, present_names)) in cluster_specs.iter().enumerate() {
+        for genome_name in present_names {
+            let g = gi(genome_name);
+            matrix[ci][g] = format!("{}_{}", cluster_names[ci], genomes[g]);
+        }
+    }
+
+    let pa = PresenceAbsence::new_for_test(cluster_names.clone(), genomes.clone(), matrix);
+
+    // Rescue events for a few cells that would otherwise be absent.
+    let mk_rescue = |cluster: usize, genome: usize, rtype: RescueType, contig: &str, start: u64, end: u64| -> RescueEvent {
+        RescueEvent {
+            cluster_idx: ClusterIdx(cluster),
+            genome_idx: GenomeIdx(genome),
+            rescue_type: rtype,
+            identity: 96.5,
+            coverage: 92.0,
+            contig: contig.into(),
+            start,
+            end,
+            strand: '+',
+            annotation_match: Some("RecoreRescue".into()),
+            confidence: 0.88,
+            synteny_ok: Some(true),
+            synteny_evidence: SyntenyEvidence {
+                score: Some(0.91),
+                support: 12,
+                reference_contexts: 14,
+                n_neighbors: 5,
+                matched_upstream: 5,
+                matched_downstream: 5,
+            },
+            fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        }
+    };
+
+    let rescues = vec![
+        mk_rescue(3, gi("L2_AS00021"), RescueType::Dropped, "AS00021", 819_540, 820_660),
+        mk_rescue(3, gi("L2_AS00060"), RescueType::Dropped, "AS00060", 821_010, 822_130),
+        mk_rescue(4, gi("L1_AS00033"), RescueType::MissingCds, "AS00033", 3_120_440, 3_121_310),
+        mk_rescue(5, gi("L4_AS00200"), RescueType::Pseudogene { reason: PseudogeneReason::PartialDeletion { coverage: 0.71 } }, "AS00200", 778_900, 779_510),
+        mk_rescue(7, gi("L1_AS00100"), RescueType::Split { other_cluster: "group_007b".into() }, "AS00100", 4_120_010, 4_121_220),
+        mk_rescue(8, gi("L5_AS00161"), RescueType::Fragmented { n_fragments: 2, total_coverage: 84.5 }, "AS00161", 2_544_910, 2_546_330),
+    ];
+    let rescue_map: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
+        .iter()
+        .map(|r| ((r.cluster_idx, r.genome_idx), r))
+        .collect();
+
+    // NSC: merge group_007b (idx 7) into group_007 (idx 6) as paralog redundancy.
+    let nsc = crate::nscluster::NsClusterResult {
+        merged_clusters: vec![crate::nscluster::NsCluster {
+            members: vec![ClusterIdx(6), ClusterIdx(7)],
+            representative: "group_007".into(),
+        }],
+        total_merged_genes: 2,
+        n_clusters: 1,
+        merge_map: {
+            let mut m = HashMap::new();
+            m.insert(ClusterIdx(7), ClusterIdx(6));
+            m
+        },
+    };
+
+    // MTBC-shaped phylogeny: animal clade + L8/L7/L5/L6 + L1 + L3 + L2 + L4.
+    let leaf = |name: &str| PhyloNode {
+        label: Some(name.into()),
+        genome_idx: Some(GenomeIdx(gi(name))),
+        branch_length: Some(0.002),
+        children: Vec::new(),
+    };
+    let clade = |bl: f64, children: Vec<PhyloNode>| PhyloNode {
+        label: None,
+        genome_idx: None,
+        branch_length: Some(bl),
+        children,
+    };
+    let l4 = clade(0.001, vec![leaf("L4_AS00146"), leaf("L4_AS00150"), leaf("L4_AS00200")]);
+    let l2 = clade(0.001, vec![leaf("L2_AS00021"), leaf("L2_AS00060")]);
+    let l3 = leaf("L3_AS00094");
+    let l1 = clade(0.0012, vec![leaf("L1_AS00033"), leaf("L1_AS00100")]);
+    let modern = clade(0.002, vec![
+        clade(0.001, vec![l4, l2]),
+        clade(0.0015, vec![l3, l1]),
+    ]);
+    let africanum = clade(0.002, vec![leaf("L5_AS00161"), leaf("L6_AS00352"), leaf("L7_AS00044"), leaf("L8_AS00022")]);
+    let animals = clade(0.0035, vec![leaf("A2_AS00357"), leaf("A4_AS00245"), leaf("A4_AS00248"), leaf("A1_AS00349")]);
+    let ancient = clade(0.003, vec![africanum, animals]);
+    let tree = PhyloTree {
+        root: PhyloNode {
+            label: None,
+            genome_idx: None,
+            branch_length: None,
+            children: vec![modern, ancient],
+        },
+    };
+
+    // ── TSV side-files ──
+    // orthology evidence: spread across actions and tiers.
+    std::fs::write(
+        out.path().join("orthology_evidence.tsv"),
+        "matrix_action\torthology_confidence_tier\n\
+correct_presence\thigh_confidence\n\
+correct_presence\thigh_confidence\n\
+correct_presence\tmoderate\n\
+audit_only_quality\treview\n\
+audit_only_quality\treview\n\
+audit_only_quality\treview\n\
+rejected_paralog\tlow\n\
+rejected_synteny\tlow\n\
+correct_presence\thigh_confidence\n\
+correct_presence\thigh_confidence\n",
+    )
+    .unwrap();
+
+    // genome QC: mostly pass with a few reviews/fails.
+    let mut qc = String::from("genome\tqc_status\n");
+    for (i, name) in genomes.iter().enumerate() {
+        let status = match i % 7 {
+            6 => "fail",
+            5 | 3 => "review",
+            _ => "pass",
+        };
+        qc.push_str(&format!("{}\t{}\n", name, status));
+    }
+    std::fs::write(out.path().join("genome_qc.tsv"), qc).unwrap();
+
+    // evolutionary events: one row per cluster with realistic mechanism distribution.
+    let mech_rows: Vec<(&str, &str, f64, &str, &str, &str, &str)> = vec![
+        ("group_001", "highlight", 0.98, "ancestral_retained_no_disruption", "high",  "ancestral_retained",      "Conserved core gene retained across the analysed tree."),
+        ("group_002", "highlight", 0.91, "clean_insertion_or_acquisition_candidate", "high", "clade_gain",       "Reference-absent locus concentrated in a modern clade; validate flanks before claiming novelty."),
+        ("group_003", "candidate", 0.85, "deletion_loss_candidate",          "moderate","ancestral_with_loss",   "Lost in the A4/M. bovis clade; consistent with RD5-style deletion."),
+        ("group_004", "candidate", 0.72, "IS_interruption_supported",         "moderate","homoplastic",          "Disrupted near IS6110 in two L2 isolates; treat as interrupted, not absent."),
+        ("group_005", "review",    0.55, "pseudogenization",                  "low",     "loss",                 "Frame-disrupting evidence; report as pseudogene rather than presence."),
+        ("group_006", "highlight", 0.93, "reference_or_lineage_loss_candidate","high",   "ancestral_with_loss",  "Background suggests presence; reference appears to have lost the locus."),
+        ("group_007", "review",    0.40, "duplication_or_paralog_expansion",  "low",     "paralog_complex",      "Paralog/duplication signal; group_007b merged via NSC."),
+        ("group_008", "candidate", 0.66, "gene_fragmentation_or_structural_break","moderate","fragmented",       "Split/fragmented alignment; inspect breakpoints before treating as present."),
+        ("group_009", "filter",    0.22, "partial_reference_homology",        "low",     "noise",                "Short partial match to a reference locus; not a novel gene."),
+        ("group_010", "review",    0.48, "translocation_or_context_shift_candidate","low","mixed_context",       "Sequence in incompatible context; possible translocation or paralog."),
+        ("group_011", "filter",    0.18, "annotation_or_clustering_artifact", "low",     "singleton",            "Likely annotation/clustering boundary; not a biological event."),
+        ("group_012", "review",    0.51, "unstable_or_homoplastic_accessory_signal","low","blinking",            "Patchy presence across distant lineages; deprioritise for headlines."),
+    ];
+    let mut evo = String::from(
+        "gene_cluster\thighlight_priority\tevolutionary_signal_score\tmolecular_mechanism\tsupport_level\tphylogenetic_pattern\trecommended_wording\tmechanism_detail\n",
+    );
+    for (cluster, priority, score, mechanism, support, phylo, wording) in &mech_rows {
+        evo.push_str(&format!(
+            "{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\trescue_evidence:{}\n",
+            cluster, priority, score, mechanism, support, phylo, wording, mechanism,
+        ));
+    }
+    std::fs::write(out.path().join("evolutionary_events.tsv"), evo).unwrap();
+
+    // reference audit: each cluster vs L4_AS00146 (H37Rv stand-in).
+    let mut ref_audit = String::from(
+        "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\tpublication_confidence\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note\n",
+    );
+    let ref_specs: Vec<(&str, &str, &str, &str, &str)> = vec![
+        ("group_001", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_002", "reference_absent_partial", "reference_absent_clean", "absent_in_reference", "ABSENT"),
+        ("group_003", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_004", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_005", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_006", "reference_absent_clean", "reference_absent_in_lineage", "absent_in_reference", "ABSENT"),
+        ("group_007", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_008", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_009", "reference_like_partial", "reference_like_ambiguous", "audit_only_quality", "PARTIAL_HOMOLOGY"),
+        ("group_010", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_011", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
+        ("group_012", "reference_absent_partial", "reference_absent_clean", "absent_in_reference", "ABSENT"),
+    ];
+    for (cluster, class, status, action, state) in &ref_specs {
+        ref_audit.push_str(&format!(
+            "{}\tL4_AS00146\t{}\t{}\treference_matrix\t{}\t{}\thigh\tpublication_grade\tConsistent with corrected matrix call.\tmatrix_present\t\t\t\t\t\t\t\t\t\t\t\t\n",
+            cluster, class, status, action, state,
+        ));
+    }
+    std::fs::write(out.path().join("reference_genome_audit.tsv"), ref_audit).unwrap();
+
+    // reference cluster events: one cluster identified as event-derived ref allele.
+    std::fs::write(
+        out.path().join("reference_cluster_events.tsv"),
+        "gene_cluster\ttarget_reference_cluster\ttarget_reference_gene\treference_event_class\tidentity\tquery_coverage\treference_coverage\tquery_length\treference_length\tevent_size_nt\tevent_size_aa\tmatches\tmismatches\tgaps_in_query\tgaps_in_reference\tshared_kmers\tmatrix_recommendation\tinterpretation\n\
+group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\t561\t-324\t-108\t218\t19\t324\t0\t1\tkeep_separate_cluster_annotate_event\tShort partial reference-gene homology; keep separate but flag as event-derived allele.\n",
+    )
+    .unwrap();
+
+    // cluster_synteny_blocks: one block per cluster (or two for group_003 to show variation).
+    // The schema columns:
+    let synteny_header = "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes\tcarrier_genomes\trepresentative_genome\trepresentative_gene\trepresentative_contig\trepresentative_start\trepresentative_end\trepresentative_strand\trepresentative_length_bp\trepresentative_block_genes\treference_block_genes\n";
+    let mut syn = String::from(synteny_header);
+    // helper to build a representative gene block string of 5 upstream + target + 5 downstream
+    let block_genes = |target: &str, target_genome: &str, start: u64, len: u64| -> String {
+        let upstream_names = ["group_101","group_102","group_103","group_104","group_105"];
+        let downstream_names = ["group_106","group_107","group_108","group_109","group_110"];
+        let mut parts: Vec<String> = Vec::new();
+        let pos = start.saturating_sub(6 * 900);
+        for (i, name) in upstream_names.iter().enumerate() {
+            let g_start = pos + (i as u64) * 900;
+            let g_end = g_start + 720;
+            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, 1200 + i, target_genome, g_start, g_end, 720));
+        }
+        parts.push(format!("{},Rv{:04},+,{},{},{},{}", target, 1300, target_genome, start, start + len, len));
+        for (i, name) in downstream_names.iter().enumerate() {
+            let g_start = start + len + 200 + (i as u64) * 900;
+            let g_end = g_start + 720;
+            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, 1310 + i, target_genome, g_start, g_end, 720));
+        }
+        parts.join(";")
+    };
+    let reference_block_genes = |target: &str| -> String {
+        let upstream_names = ["group_101","group_102","group_103","group_104","group_105"];
+        let downstream_names = ["group_106","group_107","group_108","group_109","group_110"];
+        let mut parts: Vec<String> = Vec::new();
+        let pos = 1_500_000u64;
+        for (i, name) in upstream_names.iter().enumerate() {
+            let g_start = pos + (i as u64) * 900;
+            let g_end = g_start + 720;
+            parts.push(format!("{},Rv{:04},+,AS00146,{},{},{}", name, 1200 + i, g_start, g_end, 720));
+        }
+        parts.push(format!("{},Rv{:04},+,AS00146,{},{},{}", target, 1300, 1_504_500, 1_505_700, 1200));
+        for (i, name) in downstream_names.iter().enumerate() {
+            let g_start = 1_506_000 + (i as u64) * 900;
+            let g_end = g_start + 720;
+            parts.push(format!("{},Rv{:04},+,AS00146,{},{},{}", name, 1310 + i, g_start, g_end, 720));
+        }
+        parts.join(";")
+    };
+    let syn_blocks: Vec<(&str, &str, &str, u64, u64, u64, f64, &str)> = vec![
+        ("group_001", "L4_AS00146", "AS00146", 1_504_500, 1_500, 16, 1.000, "dominant_block"),
+        ("group_002", "L4_AS00146", "AS00146",   801_200,   980,  5, 1.000, "dominant_block"),
+        ("group_003", "L4_AS00146", "AS00146", 1_734_734, 1_200, 14, 1.000, "dominant_block_minor_alternatives"),
+        ("group_003", "A4_AS00245", "AS00245", 1_812_990, 1_180,  2, 0.143, "alternative_synteny_block"),
+        ("group_004", "L4_AS00146", "AS00146", 2_440_010,   870, 14, 1.000, "dominant_block"),
+        ("group_005", "L4_AS00146", "AS00146", 3_120_400, 1_410,  7, 1.000, "dominant_block"),
+        ("group_006", "L2_AS00021", "AS00021", 4_200_990,   980, 13, 1.000, "dominant_block_reference_absent"),
+        ("group_007", "L4_AS00146", "AS00146",   980_100,   375, 16, 1.000, "dominant_block"),
+        ("group_008", "L4_AS00146", "AS00146", 1_120_000, 2_410,  9, 1.000, "dominant_block"),
+        ("group_009", "A4_AS00245", "AS00245",   544_900,   237,  4, 1.000, "dominant_block_partial_only"),
+        ("group_010", "L4_AS00146", "AS00146",   220_010,   612,  4, 1.000, "dominant_block_minor_alternatives"),
+        ("group_011", "L4_AS00146", "AS00146",   745_500, 2_220, 16, 1.000, "dominant_block"),
+        ("group_012", "L7_AS00044", "AS00044", 1_990_100,   615,  5, 1.000, "dominant_block"),
+    ];
+    let mut rank_counter: HashMap<&str, usize> = HashMap::new();
+    for (cluster, rep_genome, rep_contig, start, len, n, frac, interp) in &syn_blocks {
+        let rank_entry = rank_counter.entry(cluster).or_insert(0);
+        *rank_entry += 1;
+        let rank = *rank_entry;
+        let carriers_list = cluster_specs
+            .iter()
+            .find(|(c, _, _)| c == cluster)
+            .map(|(_, _, names)| names.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .join(";");
+        let example = format!(
+            "{}:{}_{}",
+            rep_genome, cluster, rep_genome
+        );
+        syn.push_str(&format!(
+            "{cluster}\t{rank}\t{n}\t{frac:.3}\tgroup_105|group_104|group_103|group_102|group_101\tgroup_106|group_107|group_108|group_109|group_110\t{interp}\t{example}\t{carriers_list}\t{rep_genome}\t{cluster}_{rep_genome}\t{rep_contig}\t{start}\t{end}\t+\t{len}\t{rep_block}\t{ref_block}\n",
+            end = start + len,
+            rep_block = block_genes(cluster, rep_contig, *start, *len),
+            ref_block = reference_block_genes(cluster),
+        ));
+    }
+    std::fs::write(out.path().join("cluster_synteny_blocks.tsv"), syn).unwrap();
+
+    // Phylogeny file path is also embedded in args (the file doesn't need to exist
+    // for the report renderer because we pass the tree object directly, but the
+    // banner reports the tree as "interactive" when args.tree is Some).
+    let tree_path = out.path().join("tree.nwk");
+    std::fs::write(&tree_path, b"(L4_AS00146,(L4_AS00150,L4_AS00200));\n").unwrap();
+
+    let mut args = default_args_for_validation();
+    args.output = out.path().to_path_buf();
+    args.write_html_report = true;
+    args.tree = Some(tree_path);
+    args.reference_genome = Some("L4_AS00146".into());
+    args.synteny = true;
+    args.nscluster = true;
+    args.matrix_policy = MatrixPolicy::Balanced;
+
+    let stats = SummaryStats {
+        core_before: 8,
+        total_gaps: 64,
+        filtered_gaps: 58,
+        skipped_by_prevalence: 6,
+        searchable_gaps: 58,
+        missing_fasta_gaps: 0,
+        dropped: 2,
+        missing_cds: 1,
+        split: 1,
+        fragmented: 1,
+        alignment_split: 0,
+        start_variant: 0,
+        paralog: 0,
+        pseudogene: 1,
+        synteny_rejected: 3,
+        paralog_rejected: 1,
+        matrix_policy: MatrixPolicy::Balanced,
+        matrix_corrected: rescues.len(),
+        nsc_matrix_corrected: 4,
+        synteny_enabled: true,
+        nsc_clusters: 1,
+        nsc_merged_genes: 1,
+    };
+
+    write_html_report(&args, &pa, &stats, &rescue_map, &Some(nsc), Some(&tree), out.path()).unwrap();
+
+    if let Some(dump) = std::env::var_os("RECORE_SAMPLE_DUMP") {
+        let dest = std::path::PathBuf::from(dump);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::copy(out.path().join("recore_report.html"), &dest).ok();
+    }
+
+    let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
+    // Spot-check key sections.
+    assert!(text.contains("Phylogeny and corrected matrix explorer"));
+    assert!(text.contains("L4_AS00146"));
+    assert!(text.contains("group_001"));
+    assert!(text.contains("ancestral_retained_no_disruption"));
+    assert!(text.contains("clean_insertion_or_acquisition_candidate"));
+    assert!(text.contains("mech-badge"));
+    assert!(text.contains("candidatesTable"));
+    assert!(text.contains("synteny"));
+}
+
+#[test]
 fn clear_optional_outputs_removes_stale_optional_files() {
     let out = tempfile::tempdir().unwrap();
     let stale_file = out.path().join("synteny_rejected_report.tsv");
