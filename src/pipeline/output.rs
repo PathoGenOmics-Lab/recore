@@ -1810,7 +1810,7 @@ fn phylo_matrix_explorer_html(
     );
     html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or choose a cluster to recolor tree tips dynamically. Matrix rows follow the matched tree tip order.</p></div><div class='legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
     html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect'></select><span id='clusterInfo' class='muted'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Hide syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-split'><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><aside id='syntenyPanel' class='synteny-panel'><div class='synteny-head'><span>Unique syntenies</span><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></aside></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Color tips by selected cluster</option><option value='lineage'>Color tips by lineage</option><option value='process'>Color tips by selected process</option><option value='rescue'>Color tips by rescue burden</option><option value='absence'>Color tips by absence burden</option><option value='correction'>Color tips by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix by evidence state</option><option value='process'>Matrix by evolutionary process</option></select><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='scale-control'>Column zoom <input id='cellSize' type='range' min='0.25' max='18' step='0.25' value='8'></label><label class='scale-control'>Y collapse/zoom <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Matrix/synteny split <input id='viewerSplitSize' type='range' min='35' max='80' step='1' value='56'></label><label class='scale-control synteny-control'>Synteny X zoom <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen explorer</button></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-split synteny-hidden'><div class='viewer'><div class='viewer-top'><div class='tree-title'>Matched phylogeny</div><div class='matrix-scroller' id='headerScroller'><div class='matrix-title'>Corrected matrix by gene cluster</div><canvas id='columnHeaderCanvas' class='column-head'></canvas></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div></div><aside id='syntenyPanel' class='synteny-panel'><div class='synteny-head'><span>Unique syntenies</span><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></aside></div><div id='matrixStatus' class='matrix-status muted'>Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.</div>");
     html.push_str("<script>window.recoreExplorerData=");
     html.push_str(&data_json);
     html.push_str(
@@ -1903,6 +1903,8 @@ const matrixColorMode = document.getElementById("matrixColorMode");
 const labelToggle = document.getElementById("tipLabels");
 const referenceButton = document.getElementById("referenceOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
+const splitControl = document.getElementById("viewerSplitSize");
+const syntenyZoomControl = document.getElementById("syntenyZoom");
 const fullscreenButton = document.getElementById("explorerFullscreen");
 const phylogramButton = document.getElementById("phylogramMode");
 const cladogramButton = document.getElementById("cladogramMode");
@@ -1954,8 +1956,9 @@ let detailsKey = "";
 let syntenyKey = "";
 let treeMode = "phylogram";
 let referenceOnly = false;
-let syntenyHidden = false;
+let syntenyHidden = true;
 let selectedSyntenyBlock = 0;
+let selectedSyntenyReference = false;
 let selectedSyntenyCarriers = new Set();
 let mechanismFilters = new Set();
 let treeRoot = data.tree;
@@ -2010,6 +2013,7 @@ function refreshVisibleClusters() {
   }
   if (selected !== previousSelected) {
     selectedSyntenyBlock = 0;
+    selectedSyntenyReference = false;
     selectedSyntenyCarriers = new Set();
     syntenyKey = "";
   }
@@ -2170,6 +2174,13 @@ function selectedSyntenyBlockData() {
 }
 function updateSelectedSyntenyCarriers(blocks) {
   selectedSyntenyBlock = Math.max(0, Math.min(selectedSyntenyBlock, Math.max(0, blocks.length - 1)));
+  if (selectedSyntenyReference) {
+    const refIdx = data.referenceGenome && Number.isInteger(data.referenceGenome.index)
+      ? data.referenceGenome.index
+      : null;
+    selectedSyntenyCarriers = refIdx === null ? new Set() : new Set([refIdx]);
+    return;
+  }
   const block = blocks[selectedSyntenyBlock];
   selectedSyntenyCarriers = new Set(block ? syntenyCarrierIndices(block) : []);
 }
@@ -2313,6 +2324,7 @@ function populateOptions() {
   }
   if (selected !== previousSelected) {
     selectedSyntenyBlock = 0;
+    selectedSyntenyReference = false;
     selectedSyntenyCarriers = new Set();
     syntenyKey = "";
   }
@@ -2404,7 +2416,8 @@ function drawNode(node, parts, xScale) {
     parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="${strokeWidth}"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
     if (isSelectedSyntenyCarrier(node.genome)) {
       const ringRadius = radius + Math.max(1.2, Math.min(3, cellH * 0.30));
-      parts.push(`<circle cx="${x}" cy="${y}" r="${ringRadius}" class="synteny-tip-ring"><title>${escapeHtml(label)}: selected synteny #${selectedSyntenyBlock + 1}</title></circle>`);
+      const ringTitle = selectedSyntenyReference ? "selected H37Rv reference context" : `selected synteny #${selectedSyntenyBlock + 1}`;
+      parts.push(`<circle cx="${x}" cy="${y}" r="${ringRadius}" class="synteny-tip-ring"><title>${escapeHtml(label)}: ${escapeHtml(ringTitle)}</title></circle>`);
     }
     if (labelToggle.checked && leafOrder.length <= 1500 && cellH >= 4) {
       parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
@@ -2525,6 +2538,59 @@ function syntenyLinkKey(gene) {
   if (!gene || gene.gap || !gene.cluster || gene.cluster === "NA") return "";
   return gene.cluster;
 }
+function clusterIndexForName(name) {
+  const idx = data.clusters.findIndex(cluster => cluster.name === name);
+  return idx >= 0 ? idx : -1;
+}
+function selectMatrixClusterByName(name) {
+  const idx = clusterIndexForName(name);
+  if (idx < 0) return false;
+  if (!passesActiveFilters(idx, true)) {
+    referenceOnly = false;
+    mechanismFilters.clear();
+    refreshVisibleClusters();
+  }
+  selected = idx;
+  selectedSyntenyBlock = 0;
+  selectedSyntenyReference = false;
+  selectedSyntenyCarriers = new Set();
+  search.value = "";
+  populateOptions();
+  resetMatrixCache();
+  render(true);
+  return true;
+}
+function syntenyZoom() {
+  const value = Number(syntenyZoomControl?.value || 1);
+  return Math.max(0.45, Math.min(2.4, value));
+}
+function syntenyLength(gene) {
+  const value = Number(gene && gene.length);
+  return Number.isFinite(value) && value > 0 ? value : 600;
+}
+function syntenyLengthScale(rows) {
+  const lengths = rows
+    .flatMap(row => row.genes || [])
+    .map(syntenyLength)
+    .filter(value => value > 0)
+    .sort((a, b) => a - b);
+  if (!lengths.length) return 1200;
+  const idx = Math.min(lengths.length - 1, Math.floor(lengths.length * 0.90));
+  return Math.max(300, lengths[idx]);
+}
+function syntenyGeneWidth(gene, scaleLen) {
+  const relative = Math.min(1, syntenyLength(gene) / Math.max(1, scaleLen));
+  return (34 + relative * 132) * syntenyZoom();
+}
+function syntenyRowLayout(genes, left, gap, scaleLen) {
+  let x = left;
+  return genes.map(gene => {
+    const width = syntenyGeneWidth(gene, scaleLen);
+    const item = {gene, x, width};
+    x += width + gap;
+    return item;
+  });
+}
 function arrowPath(x, y, w, h, strand = "+") {
   const head = Math.min(12, Math.max(7, w * 0.24));
   if (strand === "-") {
@@ -2538,7 +2604,7 @@ function renderSyntenyPanel() {
   const cluster = data.clusters[selected];
   const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
   updateSelectedSyntenyCarriers(blocks);
-  const nextKey = cluster ? `${cluster.name}|${blocks.length}|${selectedSyntenyBlock}` : "none";
+  const nextKey = cluster ? `${cluster.name}|${blocks.length}|${selectedSyntenyBlock}|${selectedSyntenyReference}|${syntenyZoom()}` : "none";
   if (nextKey === syntenyKey) return;
   syntenyKey = nextKey;
   if (!cluster) {
@@ -2565,27 +2631,39 @@ function renderSyntenyPanel() {
     }
   });
   const rowH = 94;
-  const geneW = 72;
   const geneH = 20;
-  const gap = 12;
+  const gap = 12 * syntenyZoom();
   const left = 176;
   const top = 58;
-  const maxGenes = Math.max(1, ...rows.map(row => row.genes.length));
-  const width = Math.max(740, left + maxGenes * (geneW + gap) + 30);
+  const lengthScale = syntenyLengthScale(rows);
+  const rowLayouts = rows.map(row => syntenyRowLayout(row.genes, left, gap, lengthScale));
+  const width = Math.max(
+    740,
+    ...rowLayouts.map(layout => {
+      const last = layout[layout.length - 1];
+      return last ? last.x + last.width + 30 : left + 120;
+    }),
+  );
   const height = top + rows.length * rowH + 24;
   const parts = [];
   let previousPositions = null;
   const selectedBlock = selectedSyntenyBlockData();
-  const selectedCount = selectedBlock ? syntenyCarrierIndices(selectedBlock).length : 0;
-  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected #${selectedSyntenyBlock + 1} marks ${selectedCount} tree tips. Row 2 is the H37Rv/reference context inferred from shared neighbours.`;
+  const selectedCount = selectedSyntenyReference
+    ? selectedSyntenyCarriers.size
+    : selectedBlock ? syntenyCarrierIndices(selectedBlock).length : 0;
+  const selectedLabel = selectedSyntenyReference
+    ? `${data.referenceGenome ? data.referenceGenome.name : "reference"} context`
+    : `#${selectedSyntenyBlock + 1}`;
+  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tree tips. Row 2 is the H37Rv/reference context inferred from shared neighbours.`;
   rows.forEach((row, rowIdx) => {
     const genes = row.genes;
+    const layout = rowLayouts[rowIdx];
     const y = top + rowIdx * rowH;
     const positions = new Map();
     let targetCenter = null;
-    genes.forEach((gene, idx) => {
-      const x = left + idx * (geneW + gap);
-      const center = {x:x + geneW / 2, y:y + geneH / 2};
+    layout.forEach(item => {
+      const gene = item.gene;
+      const center = {x:item.x + item.width / 2, y:y + geneH / 2};
       const key = syntenyLinkKey(gene);
       if (key && !positions.has(key)) positions.set(key, center);
       if (gene.target) targetCenter = center;
@@ -2598,25 +2676,26 @@ function renderSyntenyPanel() {
     });
     const block = row.block;
     const rowClass = row.kind === "reference"
-      ? "synteny-row-bg synteny-reference-bg"
+      ? selectedSyntenyReference
+        ? "synteny-row-bg synteny-reference-bg synteny-row-selected"
+        : "synteny-row-bg synteny-reference-bg"
       : row.blockIndex === selectedSyntenyBlock
         ? "synteny-row-bg synteny-row-selected"
         : "synteny-row-bg";
     const rowAttrs = row.kind === "block"
       ? ` class="synteny-row" data-block-index="${row.blockIndex}"`
-      : ` class="synteny-reference-row"`;
+      : ` class="synteny-reference-row" data-reference-context="1"`;
     parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="${rowClass}"/>`);
     parts.push(`<g${rowAttrs}>`);
-    if (row.kind === "block") {
-      parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="synteny-row-hit"/>`);
-    }
+    parts.push(`<rect x="6" y="${y - 18}" width="${width - 18}" height="${rowH - 8}" rx="8" class="synteny-row-hit"/>`);
     if (row.kind === "reference") {
       parts.push(`<text x="14" y="${y + 3}" class="synteny-row-label">H37Rv context</text>`);
-      parts.push(`<text x="14" y="${y + 20}" class="synteny-label">shared-neighbour anchor</text>`);
+      const referenceText = selectedSyntenyReference ? "selected reference tip" : "click to mark reference tip";
+      parts.push(`<text x="14" y="${y + 20}" class="synteny-label">${escapeHtml(referenceText)}</text>`);
       parts.push(`<text x="${left}" y="${y - 25}" class="synteny-locus">reference context inferred from flanking clusters</text>`);
     } else {
       const meta = `#${block.rank} | n=${block.nGenomes} | f=${block.fraction || "NA"}`;
-      const selectedText = row.blockIndex === selectedSyntenyBlock ? "selected" : "click to mark tips";
+      const selectedText = row.blockIndex === selectedSyntenyBlock && !selectedSyntenyReference ? "selected" : "click to mark tips";
       parts.push(`<text x="14" y="${y + 3}" class="synteny-row-label">${escapeHtml(meta)}</text>`);
       parts.push(`<text x="14" y="${y + 20}" class="synteny-label">${escapeHtml(selectedText)}</text>`);
       const repBits = [
@@ -2632,15 +2711,20 @@ function renderSyntenyPanel() {
     if (targetCenter) {
       parts.push(`<line x1="${left}" y1="${locusY + 4}" x2="${targetCenter.x}" y2="${targetCenter.y - geneH / 2}" class="synteny-locus-line"/>`);
     }
-    genes.forEach((gene, idx) => {
-      const x = left + idx * (geneW + gap);
+    layout.forEach(item => {
+      const gene = item.gene;
+      const x = item.x;
+      const geneW = item.width;
       const fill = gene.gap ? "#f2f4f7" : gene.target ? "#155eef" : row.kind === "reference" ? "#ecfdf3" : "#eef2f6";
       const cls = gene.gap ? "synteny-gene synteny-gap" : gene.target ? "synteny-gene synteny-target" : "synteny-gene";
       const labelClass = gene.target ? "synteny-target-label" : "synteny-label";
       const label = syntenyDisplayLabel(gene);
       const coord = syntenyCoordLabel(gene);
       const title = [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
-      parts.push(`<path d="${arrowPath(x, y, geneW, geneH, gene.strand)}" fill="${fill}" class="${cls}"><title>${escapeHtml(title)}</title></path>`);
+      const geneAttrs = gene.gap || !gene.cluster || gene.cluster === "NA"
+        ? ""
+        : ` data-gene-cluster="${escapeHtml(gene.cluster)}"`;
+      parts.push(`<path d="${arrowPath(x, y, geneW, geneH, gene.strand)}" fill="${fill}" class="${cls}"${geneAttrs}><title>${escapeHtml(title)}</title></path>`);
       parts.push(`<text x="${x + geneW / 2}" y="${y + 13}" text-anchor="middle" class="${labelClass}">${escapeHtml(clipText(label, 10))}</text>`);
       parts.push(`<text x="${x + geneW / 2}" y="${y + geneH + 13}" text-anchor="middle" class="synteny-label">${escapeHtml(clipText(syntenySecondaryLabel(gene), 12))}</text>`);
       if (gene.length) {
@@ -2660,20 +2744,35 @@ function renderSyntenyPanel() {
   syntenySvg.innerHTML = parts.join("");
   const firstTargetIndex = blockGenes(blocks[0], cluster.name).findIndex(gene => gene.target);
   if (firstTargetIndex >= 0) {
-    const targetX = left + firstTargetIndex * (geneW + gap) + geneW / 2;
+    const targetItem = rowLayouts[0] && rowLayouts[0][firstTargetIndex];
+    const targetX = targetItem ? targetItem.x + targetItem.width / 2 : left;
     syntenyPanel.scrollLeft = Math.max(0, targetX - syntenyPanel.clientWidth / 2);
   }
   syntenyPanel.scrollTop = 0;
 }
+function applyViewerSplit() {
+  if (!viewerSplit) return;
+  if (syntenyHidden) {
+    viewerSplit.style.gridTemplateColumns = "minmax(0,1fr)";
+  } else {
+    const matrixShare = Math.max(35, Math.min(80, Number(splitControl?.value || 56)));
+    const syntenyShare = 100 - matrixShare;
+    viewerSplit.style.gridTemplateColumns = `minmax(360px,${matrixShare}fr) minmax(320px,${syntenyShare}fr)`;
+  }
+  document.querySelectorAll(".synteny-control").forEach(control => {
+    control.style.display = syntenyHidden ? "none" : "flex";
+  });
+}
 function applySyntenyVisibility() {
   if (!viewerSplit || !syntenyToggle) return;
   viewerSplit.classList.toggle("synteny-hidden", syntenyHidden);
-  syntenyToggle.classList.toggle("active", syntenyHidden);
+  syntenyToggle.classList.toggle("active", !syntenyHidden);
   syntenyToggle.textContent = syntenyHidden ? "Show syntenies" : "Hide syntenies";
   syntenyToggle.setAttribute(
     "aria-pressed",
-    syntenyHidden ? "true" : "false",
+    syntenyHidden ? "false" : "true",
   );
+  applyViewerSplit();
   if (!syntenyHidden) {
     syntenyKey = "";
     renderSyntenyPanel();
@@ -2896,7 +2995,7 @@ populateOptions();
 applySyntenyVisibility();
 render(true);
 search.addEventListener("input", () => { populateOptions(); treeDirty = true; render(true); });
-select.addEventListener("change", () => { selected = Number(select.value || 0); selectedSyntenyBlock = 0; syntenyKey = ""; treeDirty = true; render(true); });
+select.addEventListener("change", () => { selected = Number(select.value || 0); selectedSyntenyBlock = 0; selectedSyntenyReference = false; syntenyKey = ""; treeDirty = true; render(true); });
 colorMode.addEventListener("change", () => { treeDirty = true; render(false); });
 labelToggle.addEventListener("change", () => { treeDirty = true; render(false); });
 phylogramButton.addEventListener("click", () => setTreeMode("phylogram"));
@@ -2915,9 +3014,27 @@ syntenyToggle.addEventListener("click", () => {
   render(false);
 });
 syntenySvg.addEventListener("click", event => {
+  const gene = event.target.closest(".synteny-gene[data-gene-cluster]");
+  if (gene) {
+    const clusterName = gene.getAttribute("data-gene-cluster") || "";
+    if (selectMatrixClusterByName(clusterName)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return;
+  }
+  const referenceRow = event.target.closest(".synteny-reference-row[data-reference-context]");
+  if (referenceRow) {
+    selectedSyntenyReference = true;
+    syntenyKey = "";
+    treeDirty = true;
+    render(false);
+    return;
+  }
   const row = event.target.closest(".synteny-row[data-block-index]");
   if (!row) return;
   selectedSyntenyBlock = Number(row.getAttribute("data-block-index") || 0);
+  selectedSyntenyReference = false;
   syntenyKey = "";
   treeDirty = true;
   render(false);
@@ -2955,6 +3072,8 @@ document.addEventListener("fullscreenchange", () => {
 });
 sizeControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
 rowHeightControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
+splitControl.addEventListener("input", () => { applyViewerSplit(); });
+syntenyZoomControl.addEventListener("input", () => { syntenyKey = ""; render(false); });
 matrixColorMode.addEventListener("change", () => { resetMatrixCache(); render(false); });
 matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });
 headerScroller.addEventListener("scroll", () => { matrixPane.scrollLeft = headerScroller.scrollLeft; });
@@ -3023,6 +3142,7 @@ headerCanvas.addEventListener("click", event => {
   const c = Math.floor((event.clientX - rect.left) / cellW);
   if (c < 0 || c >= visibleClusters.length) return;
   selected = originalClusterAtVisibleColumn(c);
+  selectedSyntenyReference = false;
   search.value = "";
   populateOptions();
   treeDirty = true;
@@ -3054,6 +3174,7 @@ canvas.addEventListener("click", event => {
   const c = Math.floor((event.clientX - rect.left) / cellW);
   if (c < 0 || c >= visibleClusters.length) return;
   selected = originalClusterAtVisibleColumn(c);
+  selectedSyntenyReference = false;
   search.value = "";
   populateOptions();
   treeDirty = true;
@@ -3137,7 +3258,7 @@ pub(super) fn write_html_report(
         .files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.file{text-decoration:none;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff;display:block}.file span{font-weight:750;display:block}.file small{color:var(--muted)}
         .explorer-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--soft-line);padding-bottom:12px}.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);justify-content:flex-end}.sw{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line);margin-right:5px;vertical-align:-1px}.sw.p{background:#2563eb}.sw.r{background:#079455}.sw.n{background:#7a5af8}.sw.a{background:#fff}
         .explorer-controls,.viewer-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center;margin-top:14px}.cluster-controls{grid-template-columns:minmax(240px,1fr) minmax(280px,1.2fr) auto}.viewer-controls{position:sticky;top:8px;z-index:6;margin-top:12px;padding:10px;border:1px solid var(--soft-line);border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 8px 20px rgba(16,24,40,.08)}.explorer input,.explorer select,.explorer button{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink);font:inherit;min-width:0}.explorer button{cursor:pointer;font-weight:700}.explorer button:disabled{cursor:not-allowed;color:#98a2b3;background:#f8fafc}.action-button.active,.segmented-control button.active{background:#eef4ff;border-color:#84adff;color:#1849a9}.segmented-control{display:grid;grid-template-columns:1fr 1fr;gap:4px;border:1px solid var(--line);border-radius:9px;padding:3px;background:#f8fafc}.segmented-control button{border:0;border-radius:6px;background:transparent;padding:6px 8px}.scale-control,.toggle-control{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.scale-control input{padding:0}.toggle-control input{width:14px;height:14px}#clusterInfo{white-space:nowrap}.cluster-details{margin-top:10px;border:1px solid var(--soft-line);background:#f8fafc;border-radius:9px;padding:10px 12px}.cluster-details strong{font-size:13px}.cluster-details small{display:block;color:var(--muted);margin-top:2px}.state-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.state-chip{font-size:11px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px}.process-note{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px;color:#344054;font-size:12px}.process-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:3px 8px;font-size:11px;font-weight:750;color:#344054}.process-chip i{display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--process-color)}.reference-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px;color:#344054;font-size:11px}.reference-meta strong{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.reference-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:11px}.process-meta span{border:1px solid var(--soft-line);border-radius:999px;background:#fff;padding:2px 7px}.process-wording{margin-top:7px;color:#344054;font-size:12px}.process-legend{display:grid;gap:8px;margin-top:10px}.process-selected{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:#344054;font-size:12px}.process-clear{border-radius:999px!important;padding:4px 9px!important;background:#eef4ff!important;border-color:#84adff!important;color:#1849a9!important;font-size:11px!important}.process-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.process-item{display:grid!important;grid-template-columns:12px minmax(0,1fr);gap:8px;align-items:start;text-align:left;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px}.process-item:hover{border-color:#84adff;background:#f8fbff}.process-item.active{border-color:#84adff;background:#eef4ff}.process-item.filtered{outline:2px solid #1849a9;outline-offset:0}.process-swatch{width:11px;height:11px;border-radius:3px;margin-top:3px}.process-item strong{display:block;font-size:12px}.process-item small{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.35;font-weight:400}.lineage-legend{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;border:1px solid var(--soft-line);border-radius:9px;background:#fff;padding:8px 10px}.lineage-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.lineage-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--soft-line);border-radius:999px;padding:3px 7px;background:#f8fafc}.lineage-chip i{width:9px;height:9px;border-radius:2px;display:inline-block}.lineage-chip strong{font-size:11px}.lineage-chip small{font-size:11px;color:var(--muted)}
-        .viewer-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(390px,1fr);gap:12px;align-items:start;margin-top:14px}.viewer-split>*{min-width:0}.viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.viewer-split.synteny-hidden .synteny-panel{display:none}.viewer{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:24px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.synteny-tip-ring{fill:none;stroke:#f97316;stroke-width:1.4;stroke-opacity:.95}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.synteny-panel{border:1px solid var(--line);border-radius:10px;background:#fff;min-height:260px;max-height:760px;overflow:auto}.synteny-head{position:sticky;top:0;z-index:3;background:#f8fafc;border-bottom:1px solid var(--soft-line);padding:9px 10px}.synteny-head span{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.synteny-head small{display:block;margin-top:3px;color:#344054;font-size:12px}.synteny-svg{display:block;min-width:620px}.synteny-row{cursor:pointer}.synteny-row-hit{fill:transparent;stroke:none}.synteny-row-bg{fill:#fff;stroke:#eaecf0;stroke-width:1}.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-reference-bg{fill:#ecfdf3;stroke:#abefc6}.synteny-link{stroke:#84adff;stroke-width:8;stroke-linecap:round;stroke-opacity:.20;fill:none;pointer-events:none}.synteny-gene{stroke:#98a2b3;stroke-width:1}.synteny-target{stroke:#1849a9;stroke-width:1.3}.synteny-gap{stroke:#d0d5dd;stroke-dasharray:3 2}.synteny-label{font-size:9px;fill:#344054}.synteny-target-label{font-size:9px;fill:#fff;font-weight:700}.synteny-row-label{font-size:10px;fill:#475467;font-weight:700}.synteny-locus{font-size:10px;fill:#111827;font-weight:750}.synteny-locus-line{stroke:#475467;stroke-width:.8;stroke-dasharray:2 2}.synteny-empty{padding:14px;color:var(--muted);font-size:12px}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-split{grid-template-columns:minmax(0,1fr) minmax(430px,1fr)}.explorer:fullscreen .viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
+        .viewer-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(390px,1fr);gap:12px;align-items:start;margin-top:14px}.viewer-split>*{min-width:0}.viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.viewer-split.synteny-hidden .synteny-panel{display:none}.viewer{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.viewer-top{display:grid;grid-template-columns:410px minmax(0,1fr);border-bottom:1px solid var(--soft-line);background:#f8fafc}.tree-title,.matrix-title{padding:8px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.matrix-title{border-left:1px solid var(--soft-line);position:sticky;left:0;background:#f8fafc;z-index:2}.matrix-scroller{overflow-x:auto;overflow-y:hidden}.column-head{display:block;height:24px;image-rendering:auto;cursor:crosshair}.viewer-body{display:grid;grid-template-columns:410px minmax(0,1fr);max-height:680px;overflow-y:auto}.tree-pane{border-right:1px solid var(--soft-line);overflow:hidden;background:#fff}.matrix-pane{position:relative;overflow-x:auto;overflow-y:hidden}.tree-pane svg,.matrix-pane canvas{display:block}.tree-pane svg,.matrix-pane canvas{cursor:crosshair}.matrix-pane canvas{image-rendering:pixelated}.tree-edge{stroke:#98a2b3;stroke-width:1.1;fill:none}.tree-row-guide{stroke:#f97316;stroke-width:.9;stroke-opacity:.32}.tree-scale{font-size:9px;fill:#667085}.tip-label{font-size:10px;fill:#344054}.synteny-tip-ring{fill:none;stroke:#f97316;stroke-width:1.4;stroke-opacity:.95}.matrix-tooltip{position:absolute;display:none;pointer-events:none;z-index:4;background:#111827;color:white;border-radius:7px;padding:7px 9px;font-size:12px;box-shadow:0 8px 20px rgba(16,24,40,.22);max-width:280px}.matrix-tooltip span{color:#d0d5dd}.synteny-panel{border:1px solid var(--line);border-radius:10px;background:#fff;min-height:260px;max-height:760px;overflow:auto}.synteny-head{position:sticky;top:0;z-index:3;background:#f8fafc;border-bottom:1px solid var(--soft-line);padding:9px 10px}.synteny-head span{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.synteny-head small{display:block;margin-top:3px;color:#344054;font-size:12px}.synteny-svg{display:block;min-width:620px}.synteny-row,.synteny-reference-row{cursor:pointer}.synteny-row-hit{fill:transparent;stroke:none}.synteny-row-bg{fill:#fff;stroke:#eaecf0;stroke-width:1}.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-reference-bg{fill:#ecfdf3;stroke:#abefc6}.synteny-reference-bg.synteny-row-selected{fill:#eef4ff;stroke:#84adff}.synteny-link{stroke:#84adff;stroke-width:8;stroke-linecap:round;stroke-opacity:.20;fill:none;pointer-events:none}.synteny-gene{stroke:#98a2b3;stroke-width:1}.synteny-gene[data-gene-cluster]{cursor:pointer}.synteny-target{stroke:#1849a9;stroke-width:1.3}.synteny-gap{stroke:#d0d5dd;stroke-dasharray:3 2}.synteny-label{font-size:9px;fill:#344054}.synteny-target-label{font-size:9px;fill:#fff;font-weight:700}.synteny-row-label{font-size:10px;fill:#475467;font-weight:700}.synteny-locus{font-size:10px;fill:#111827;font-weight:750}.synteny-locus-line{stroke:#475467;stroke-width:.8;stroke-dasharray:2 2}.synteny-empty{padding:14px;color:var(--muted);font-size:12px}.matrix-status{margin-top:8px;font-size:12px}.explorer:fullscreen{overflow:auto;background:var(--bg);padding:18px}.explorer:fullscreen .viewer-split{grid-template-columns:minmax(0,1fr) minmax(430px,1fr)}.explorer:fullscreen .viewer-split.synteny-hidden{grid-template-columns:minmax(0,1fr)}.explorer:fullscreen .viewer-body{max-height:calc(100vh - 310px)}
         footer{color:var(--muted);font-size:12px;margin:18px 4px;border-top:1px solid var(--soft-line);padding-top:12px}
         @media(max-width:1100px){.explorer-controls,.viewer-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
         @media(max-width:820px){.viewer-split{grid-template-columns:1fr}}

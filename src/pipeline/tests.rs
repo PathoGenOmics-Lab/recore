@@ -289,8 +289,15 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("syntenyPanel"));
     assert!(text.contains("syntenySvg"));
     assert!(text.contains("toggleSynteny"));
+    assert!(text.contains("Show syntenies"));
     assert!(text.contains("synteny-hidden"));
     assert!(text.contains("applySyntenyVisibility"));
+    assert!(text.contains("applyViewerSplit"));
+    assert!(text.contains("viewerSplitSize"));
+    assert!(text.contains("syntenyZoom"));
+    assert!(text.contains("let syntenyHidden = true"));
+    assert!(text.contains("selectedSyntenyReference"));
+    assert!(text.contains("data-gene-cluster"));
     assert!(text.contains("\"synteny\""));
     assert!(text.contains("selectedSyntenyBlock"));
     assert!(text.contains("synteny-tip-ring"));

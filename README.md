@@ -633,14 +633,16 @@ observed evolutionary process. Clicking evolutionary-mechanism cards adds or
 removes those mechanisms from the matrix-column filter, and the selected-cluster
 panel reports the reference gene/cell or reference-derived event source when
 Recore can identify one. When `cluster_synteny_blocks.tsv` is available, the
-viewer also opens a split panel showing the top unique five-neighbour synteny
-blocks for the selected gene cluster. The selected synteny marks its carrier
-tips on the tree, row 2 shows the inferred H37Rv/reference context from shared
-neighbours, gene arrows keep strand orientation, labels prefer reference locus
+viewer can open an optional split panel showing the top unique five-neighbour
+synteny blocks for the selected gene cluster. It is hidden by default so dense
+tree/matrix review starts full-width, then can be shown with a viewer control.
+The selected synteny marks its carrier tips on the tree, row 2 shows the
+clickable inferred H37Rv/reference context from shared neighbours, gene arrows
+keep strand orientation and proportional length, labels prefer reference locus
 IDs, and tooltips expose representative coordinates and gene length. Shared
-neighbouring clusters are connected only between adjacent block rows. The
-synteny panel can be hidden from the viewer controls when the tree plus matrix
-needs the full available width.
+neighbouring clusters are connected only between adjacent block rows. Extra
+viewer controls resize the matrix/synteny split and zoom the synteny x-axis;
+clicking any gene arrow jumps to and highlights that cluster in the matrix.
 
 Recore also includes lightweight Python utilities for reproducible review:
 

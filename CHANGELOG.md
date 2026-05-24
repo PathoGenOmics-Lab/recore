@@ -78,6 +78,10 @@ and Recore uses semantic versioning.
   tips on the embedded tree.
 - The synteny panel can now be hidden from the embedded viewer controls so the
   tree plus matrix expand to the full available width during dense inspection.
+- The embedded synteny panel is hidden by default, includes matrix/synteny
+  split and synteny x-axis zoom sliders, draws proportional gene arrows, lets
+  the H37Rv/reference context row mark the reference tip, and lets gene-arrow
+  clicks jump back to the corresponding matrix column.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.

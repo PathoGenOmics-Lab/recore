@@ -563,14 +563,16 @@ zoom slider, mouse wheel over the tree or column header, and fullscreen mode.
 When `cluster_synteny_blocks.tsv` is present, the explorer uses a split view:
 the left side keeps the tree plus matrix, and the right side draws up to ten
 ranked unique five-neighbour synteny blocks for the selected gene cluster. The
-selected block marks its carrier genomes on the tree, the focal cluster is
-highlighted, gene arrows carry strand orientation, and row 2 shows the inferred
-reference/H37Rv context from shared neighbours. Labels prefer reference locus
-IDs where available, and each gene tooltip includes cluster, locus, coordinates,
-strand, and length. Shared neighbouring clusters are connected only between
-adjacent synteny rows. A viewer control can hide this synteny panel, expanding
-the phylogeny plus matrix to the full available width for dense matrix
-inspection.
+synteny side is hidden by default and can be shown from the viewer controls.
+Once visible, a split slider changes how much width belongs to the matrix versus
+the synteny panel, and a synteny x-axis zoom slider expands or compresses the
+gene-arrow layout. The selected block marks its carrier genomes on the tree,
+the clickable H37Rv/reference row marks the reference tip, the focal cluster is
+highlighted, and clicking any gene arrow jumps to that cluster in the matrix.
+Gene arrows carry strand orientation and proportional length. Labels prefer
+reference locus IDs where available, and each gene tooltip includes cluster,
+locus, coordinates, strand, and length. Shared neighbouring clusters are
+connected only between adjacent synteny rows.
 
 The embedded explorer is intentionally size-limited. Larger runs keep the
 static audit summary and report why the explorer was omitted, rather than
