@@ -361,6 +361,11 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("\"referenceGenome\":null"));
     assert!(text.contains("\"states\":[\"PA\",\"AP\"]"));
     assert!(text.contains("matrixCanvas"));
+    // Canvases must be allocated at the device ratio, and wide columns must be named.
+    assert!(text.contains("devicePixelRatio"));
+    assert!(text.contains("function canvasScale"));
+    assert!(text.contains("function columnLabelBand"));
+    assert!(text.contains("fitLabel"));
 }
 
 #[test]

@@ -20,6 +20,7 @@ function refreshThemeColors() {
   selectColTint = readVar("--accent-soft", "#eef4ff");
   selectStroke = readVar("--accent-ink", "#1d4ed8");
   gridStroke = readVar("--faint", "#98a2b3");
+  labelInk = readVar("--subtle", "#475467");
 }
 const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
 const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", A:"#ffffff"};
@@ -30,6 +31,7 @@ let hoverColTint = "#fff7ed";
 let selectColTint = "#eef4ff";
 let selectStroke = "#1d4ed8";
 let gridStroke = "#98a2b3";
+let labelInk = "#475467";
 const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC", A:"absent"};
 const processColors = {
   clade_associated_gain:"#079455",
@@ -154,6 +156,12 @@ const MIN_TREE_W = 180;
 const MIN_MATRIX_W = 220;
 const MIN_SYNTENY_W = 260;
 const LINEAGE_STRIP_W = 6;
+const MAX_COL_ZOOM = 44;
+// Column names are only worth drawing once a cell is wide enough to carry a
+// rotated label without the text of neighbouring columns touching.
+const LABEL_MIN_CELL_W = 9;
+const LABEL_BAND_H = 82;
+const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 const defaultStatus = "Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.";
 let selected = 0;
 let hoverRow = -1;
@@ -573,7 +581,7 @@ function populateOptions() {
 }
 function currentCellSize() {
   const value = Number(sizeControl.value || 8);
-  return Math.max(0.25, Math.min(18, value));
+  return Math.max(0.25, Math.min(MAX_COL_ZOOM, value));
 }
 function currentRowHeight() {
   const value = Number(rowHeightControl.value || 8);
@@ -1303,37 +1311,69 @@ function renderTree() {
     guide.style.display = "none";
   }
 }
+function columnLabelBand() {
+  return cellW >= LABEL_MIN_CELL_W && visibleClusters.length <= 400 ? LABEL_BAND_H : 0;
+}
 function renderColumnHeader() {
   const cols = visibleClusters.length;
   const selectedCol = selectedVisibleColumn();
+  const band = columnLabelBand();
   const cssW = Math.max(1, cols * cellW);
-  sizeCanvas(headerCanvas, headerCtx, cssW, headerH, canvasScale(cssW, headerH));
-  headerCtx.clearRect(0, 0, cssW, headerH);
+  const cssH = headerH + band;
+  sizeCanvas(headerCanvas, headerCtx, cssW, cssH, canvasScale(cssW, cssH));
+  headerCtx.clearRect(0, 0, cssW, cssH);
   headerCtx.fillStyle = headerBg;
-  headerCtx.fillRect(0, 0, cssW, headerH);
+  headerCtx.fillRect(0, 0, cssW, cssH);
   if (matrixColorMode.value === "process") {
     visibleClusters.forEach((clusterIdx, c) => {
       headerCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
-      headerCtx.fillRect(c * cellW, 0, Math.max(1, cellW), 7);
+      headerCtx.fillRect(c * cellW, band, Math.max(1, cellW), 7);
     });
   }
   if (hoverCol >= 0) {
     headerCtx.fillStyle = hoverColTint;
-    headerCtx.fillRect(hoverCol * cellW, 0, cellW, headerH);
+    headerCtx.fillRect(hoverCol * cellW, 0, cellW, cssH);
   }
   if (selectedCol >= 0) {
     headerCtx.fillStyle = selectColTint;
-    headerCtx.fillRect(selectedCol * cellW, 0, cellW, headerH);
+    headerCtx.fillRect(selectedCol * cellW, 0, cellW, cssH);
     headerCtx.strokeStyle = selectStroke;
-    headerCtx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), headerH - 1);
+    headerCtx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), cssH - 1);
   }
   for (let c = 0; c < cols; c += 1) {
     const clusterIdx = originalClusterAtVisibleColumn(c);
     headerCtx.fillStyle = matrixColorMode.value === "process"
       ? processColor(processKind(data.clusters[clusterIdx]))
       : gridStroke;
-    headerCtx.fillRect(c * cellW, headerH - 9, Math.max(1, cellW), 6);
+    headerCtx.fillRect(c * cellW, cssH - 9, Math.max(1, cellW), 6);
   }
+  if (!band) return;
+  headerCtx.save();
+  headerCtx.font = LABEL_FONT;
+  headerCtx.textBaseline = "middle";
+  // After rotate(-90deg) the local +x axis points up the screen, so left-aligned
+  // text grows upward from the tick row and reads bottom to top.
+  headerCtx.textAlign = "left";
+  for (let c = 0; c < cols; c += 1) {
+    const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
+    if (!cluster) continue;
+    headerCtx.fillStyle = c === selectedCol ? selectStroke : labelInk;
+    headerCtx.save();
+    headerCtx.translate(c * cellW + cellW / 2, band - 6);
+    headerCtx.rotate(-Math.PI / 2);
+    headerCtx.fillText(fitLabel(cluster.name, band - 12), 0, 0);
+    headerCtx.restore();
+  }
+  headerCtx.restore();
+}
+function fitLabel(text, maxWidth) {
+  const value = String(text || "");
+  if (headerCtx.measureText(value).width <= maxWidth) return value;
+  for (let len = value.length - 1; len > 1; len -= 1) {
+    const candidate = `${value.slice(0, len)}…`;
+    if (headerCtx.measureText(candidate).width <= maxWidth) return candidate;
+  }
+  return "…";
 }
 /* Canvases are laid out in CSS pixels but were also allocated in CSS pixels, so on
    any HiDPI screen the browser upscaled a 1x bitmap and the matrix came out soft.
@@ -1576,23 +1616,30 @@ maxDistance = 0;
 layout(treeRoot, 0, 0);
 computeGenomeStats();
 refreshVisibleClusters();
-// Open at a zoom that suits the run. A 16-genome tree at the old fixed 8px rows
-// was a thumbnail in a half-empty pane; a 3000-tip tree needed the opposite.
-(() => {
+// Open at a zoom that suits the run. A 16-genome, 12-cluster matrix at the old
+// fixed sliders was a thumbnail in a half-empty pane; a 3000-tip tree needed the
+// opposite. Column width is fitted to the space the matrix pane actually has.
+function fitZoomToData() {
   const tips = Math.max(1, leafOrder.length);
   const cols = Math.max(1, visibleClusters.length);
+  const bodyW = viewerBody ? viewerBody.clientWidth : 0;
+  const matrixW = bodyW > 0
+    ? Math.max(220, bodyW - layoutState.treeW - (syntenyHidden ? 0 : (bodyW * layoutState.syntenyPct) / 100) - 24)
+    : FIT_TARGET_W;
   const rowFit = Math.max(1, Math.min(18, Math.floor(FIT_TARGET_H / tips)));
-  const colFit = Math.max(1, Math.min(12, Math.floor(FIT_TARGET_W / cols)));
+  // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
+  const colFit = Math.max(1, Math.min(MAX_COL_ZOOM, Math.floor((matrixW / cols) / 0.82)));
   rowHeightControl.value = String(rowFit);
   sizeControl.value = String(colFit);
   labelToggle.checked = tips <= 500 && rowFit >= 4;
-})();
+}
 populateOptions();
 if (layoutState.syntenyHiddenStored === false) {
   syntenyHidden = false;
 }
 applyLayout();
 applySyntenyVisibility();
+fitZoomToData();
 setupDragHandle(treeHandle, "tree");
 setupDragHandle(syntenyHandle, "synteny");
 if (typeof ResizeObserver !== "undefined") {

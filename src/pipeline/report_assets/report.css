@@ -1471,9 +1471,10 @@ td a {
   min-height: 0;
 }
 
+/* Height is set inline by the renderer: it grows when there is room for rotated
+   cluster labels above the column ticks. */
 .column-head {
   display: block;
-  height: 22px;
   image-rendering: auto;
   cursor: crosshair;
 }

@@ -98,6 +98,18 @@ and Recore uses semantic versioning.
 - The HTML report no longer requests a remote webfont stylesheet, so it renders
   identically on offline and air-gapped machines and makes no network request
   when opened.
+- The report logo keeps its aspect ratio instead of being stretched into a
+  square, and the theme is resolved before the first paint so dark-mode readers
+  no longer get a white flash.
+- The embedded viewer draws its matrix, column header, and lineage strip at the
+  device pixel ratio, so cells and selection outlines are sharp on HiDPI
+  screens.
+- The embedded tree caption moved to the pane header; it used to be drawn over
+  the first tip labels.
+- The embedded viewer now opens at a row/column zoom fitted to the tip and
+  cluster counts, sizes its panes to the data instead of always reserving the
+  maximum height, and labels matrix columns with the cluster name when the
+  columns are wide enough.
 - Dataset self-benchmark reports `precision_proxy=NA` when no negative controls
   are sampled instead of implying perfect precision.
 - Run comparison now includes cells present in only one run, so cluster/genome
