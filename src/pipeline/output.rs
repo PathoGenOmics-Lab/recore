@@ -1963,6 +1963,15 @@ fn build_explorer_data_json(
     Some(out)
 }
 
+/// The workspace markup, and whether the viewer was actually embedded. Without a
+/// tree (or above the size ceilings) only the fallback notice is written, and no
+/// script comes with it, so the chrome that drives the viewer must not be drawn
+/// either.
+struct ExplorerWorkspace {
+    html: String,
+    embedded: bool,
+}
+
 fn explorer_unavailable_html(reason: &str) -> String {
     format!(
         "<section class='panel full explorer explorer-fallback'><h2>Phylogeny and matrix explorer</h2><p class='muted'>{}</p></section>",
@@ -1972,7 +1981,7 @@ fn explorer_unavailable_html(reason: &str) -> String {
 
 /// Inline 16px icon set. A dense tool reads as controls, not as a wall of words,
 /// and every icon button carries a data-tip so nothing is a guess.
-fn icon(name: &str) -> &'static str {
+fn icon(name: &str) -> String {
     let path = match name {
         "book" => "<path d='M4 19.5A2.5 2.5 0 0 1 6.5 17H20'/><path d='M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'/>",
         "github" => "<path d='M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 20 5.8a4.9 4.9 0 0 0-.1-3.6s-1.1-.3-3.6 1.4a12.3 12.3 0 0 0-6.6 0C7.2 1.9 6.1 2.2 6.1 2.2A4.9 4.9 0 0 0 6 5.8a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.6V22'/>",
@@ -1992,7 +2001,9 @@ fn icon(name: &str) -> &'static str {
         "close" => "<path d='M6 6l12 12M18 6 6 18'/>",
         _ => "<circle cx='12' cy='12' r='9'/>",
     };
-    Box::leak(format!("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{path}</svg>").into_boxed_str())
+    // A String rather than Box::leak: this is called once per chrome control per
+    // report, and leaking to satisfy a &'static str signature buys nothing.
+    format!("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{path}</svg>")
 }
 
 /// The workspace is the report: phylogeny, matrix and synteny fill the viewport
@@ -2005,22 +2016,27 @@ fn explorer_workspace_html(
     reference_gi: Option<GenomeIdx>,
     evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
-) -> String {
+) -> ExplorerWorkspace {
     use std::fmt::Write as _;
 
+    let unavailable = |reason: &str| ExplorerWorkspace {
+        html: explorer_unavailable_html(reason),
+        embedded: false,
+    };
+
     let Some(tree) = phylo_tree else {
-        return explorer_unavailable_html(
+        return unavailable(
             "Add --tree to open the phylogeny, matrix and synteny workspace. Without a tree the run details drawer still carries every number and table.",
         );
     };
     let matched_tips = matched_phylo_tips(&tree.root);
     if matched_tips == 0 {
-        return explorer_unavailable_html(
+        return unavailable(
             "The supplied tree has no tips matching matrix genomes, so the workspace was not embedded.",
         );
     }
     if matched_tips > EXPLORER_MAX_TIPS {
-        return explorer_unavailable_html(&format!(
+        return unavailable(&format!(
             "The tree has {} matched tips. The workspace is embedded up to {} tips to keep the report responsive.",
             format_count(matched_tips),
             format_count(EXPLORER_MAX_TIPS)
@@ -2033,7 +2049,7 @@ fn explorer_workspace_html(
         .unwrap_or_else(|| pa.n_clusters());
     let cell_count = matched_tips.saturating_mul(rendered_clusters);
     if cell_count > EXPLORER_MAX_CELLS {
-        return explorer_unavailable_html(&format!(
+        return unavailable(&format!(
             "The matrix would embed {} cells ({} tips x {} clusters), above the {} cell limit. Use gene_presence_absence_recore_states.csv for the full matrix.",
             format_count(cell_count),
             format_count(matched_tips),
@@ -2051,7 +2067,7 @@ fn explorer_workspace_html(
         evolution_rows,
         synteny_blocks,
     ) else {
-        return explorer_unavailable_html(
+        return unavailable(
             "The tree could not be converted into a matched-tip browser workspace.",
         );
     };
@@ -2152,7 +2168,10 @@ fn explorer_workspace_html(
     );
     html.push_str(EXPLORER_JS);
     html.push_str("</script>");
-    html
+    ExplorerWorkspace {
+        html,
+        embedded: true,
+    }
 }
 
 pub(super) fn write_html_report(
@@ -2230,6 +2249,25 @@ pub(super) fn write_html_report(
     html.push_str(REPORT_CSS);
     html.push_str("</style></head><body class='app'>");
 
+    // Build the workspace first: without a tree the viewer is not embedded and no
+    // script comes with it, so the chrome that drives the viewer must not be
+    // drawn either. It used to be emitted unconditionally, which left a topbar of
+    // controls that looked live and did nothing.
+    let reference_gi = args
+        .reference_genome
+        .as_deref()
+        .and_then(|name| resolve_reference_genome(pa, name));
+    let workspace = explorer_workspace_html(
+        pa,
+        rescue_map,
+        nsc_result,
+        phylo_tree,
+        reference_gi,
+        &explorer_evolution,
+        &explorer_synteny,
+    );
+    let has_viewer = workspace.embedded;
+
     // ---- One chrome row. Everything that shapes a single pane moved into that
     // pane's own menu, which left identity, the find field, the run readout and
     // the global actions -- and gave the data back the 40px the second row took.
@@ -2240,21 +2278,23 @@ pub(super) fn write_html_report(
 
     // The find field is the primary control, so it gets primary placement and a
     // shortcut. A 30,000-option <select> was neither reachable nor fast.
-    html.push_str("<div class='topbar-find'>");
-    write!(
+    if has_viewer {
+        html.push_str("<div class='topbar-find'>");
+        write!(
         html,
         "<button id='clusterOmnibox' type='button' class='omnibox' aria-haspopup='dialog' aria-expanded='false' aria-controls='palette' data-tip='Find any cluster or genome by name or annotation'>{}<span class='omnibox-body'><span class='omnibox-name' id='omniboxName'>Search</span><span class='omnibox-note' id='omniboxNote'>clusters and genomes</span></span><kbd class='omnibox-key' id='omniboxKey'>&#8984;K</kbd></button>",
         icon("search")
     )
     .expect("write to String is infallible");
-    write!(
+        write!(
         html,
         "<div class='step-group' role='group' aria-label='Step through clusters'><button id='prevCluster' type='button' class='icon-btn flush' data-tip='Previous cluster (\u{2190})' aria-label='Previous cluster'>{}</button><span id='clusterPosition' class='step-count num'></span><button id='nextCluster' type='button' class='icon-btn flush' data-tip='Next cluster (\u{2192})' aria-label='Next cluster'>{}</button></div>",
         icon("left"),
         icon("right")
     )
     .expect("write to String is infallible");
-    html.push_str("</div>");
+        html.push_str("</div>");
+    }
 
     // A readout, not a row of pills: the number carries the weight and the unit
     // sits under it in small caps, so six figures read at a glance.
@@ -2316,19 +2356,21 @@ pub(super) fn write_html_report(
     html.push_str("</div>");
 
     html.push_str("<div class='topbar-actions'>");
-    write!(
-        html,
-        "<button id='toggleSynteny' type='button' class='icon-btn' data-tip='Show the flanking-gene context for the selected cluster (S)' aria-label='Show synteny' aria-pressed='false'>{}</button>",
-        icon("layers")
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<button id='shortcutsButton' type='button' class='icon-btn' data-tip='Keyboard shortcuts (?)' aria-label='Keyboard shortcuts'>{}</button>",
-        icon("keyboard")
-    )
-    .expect("write to String is infallible");
-    html.push_str("<span class='action-rule' aria-hidden='true'></span>");
+    if has_viewer {
+        write!(
+            html,
+            "<button id='toggleSynteny' type='button' class='icon-btn' data-tip='Show the flanking-gene context for the selected cluster (S)' aria-label='Show synteny' aria-pressed='false'>{}</button>",
+            icon("layers")
+        )
+        .expect("write to String is infallible");
+        write!(
+            html,
+            "<button id='shortcutsButton' type='button' class='icon-btn' data-tip='Keyboard shortcuts (?)' aria-label='Keyboard shortcuts'>{}</button>",
+            icon("keyboard")
+        )
+        .expect("write to String is infallible");
+        html.push_str("<span class='action-rule' aria-hidden='true'></span>");
+    }
     write!(
         html,
         "<a class='version-chip' data-tip='Release notes for this version' href='{}/releases/tag/v{}' target='_blank' rel='noopener'>v{}</a>",
@@ -2357,93 +2399,86 @@ pub(super) fn write_html_report(
         icon("info")
     )
     .expect("write to String is infallible");
-    write!(
-        html,
-        "<button id='exportView' type='button' class='icon-btn' data-tip='Download this view as PNG, and the synteny panel as SVG (E)' aria-label='Export view'>{}</button>",
-        icon("download")
-    )
-    .expect("write to String is infallible");
+    if has_viewer {
+        write!(
+            html,
+            "<button id='exportView' type='button' class='icon-btn' data-tip='Download this view as PNG, and the synteny panel as SVG (E)' aria-label='Export view'>{}</button>",
+            icon("download")
+        )
+        .expect("write to String is infallible");
+    }
     write!(
         html,
         "<button id='themeToggle' type='button' class='icon-btn' data-tip='Switch between light and dark' aria-pressed='false' aria-label='Toggle colour theme'>{}<span class='label sr-only'>Dark</span></button>",
         icon("moon")
     )
     .expect("write to String is infallible");
-    write!(
-        html,
-        "<button id='explorerFullscreen' type='button' class='icon-btn' data-tip='Fullscreen (F)' aria-label='Fullscreen' aria-pressed='false'>{}</button>",
-        icon("expand")
-    )
-    .expect("write to String is infallible");
+    if has_viewer {
+        write!(
+            html,
+            "<button id='explorerFullscreen' type='button' class='icon-btn' data-tip='Fullscreen (F)' aria-label='Fullscreen' aria-pressed='false'>{}</button>",
+            icon("expand")
+        )
+        .expect("write to String is infallible");
+    }
     html.push_str("</div>");
     html.push_str("</header>");
 
-    // ---- Find-anything palette. Shared by clusters and genomes so one shortcut
-    // answers both "where is pks12" and "where is AS00146".
-    html.push_str("<div id='palette' class='palette' hidden><div class='palette-scrim' id='paletteScrim'></div>");
-    html.push_str("<div class='palette-box' role='dialog' aria-modal='true' aria-label='Find a cluster or genome'>");
-    write!(
+    // ---- Find-anything palette and shortcut sheet. Both are driven from
+    // explorer.js, so neither is written when the viewer is not embedded.
+    if has_viewer {
+        html.push_str("<div id='palette' class='palette' hidden><div class='palette-scrim' id='paletteScrim'></div>");
+        html.push_str("<div class='palette-box' role='dialog' aria-modal='true' aria-label='Find a cluster or genome'>");
+        write!(
         html,
         "<div class='palette-input'>{}<input id='clusterSearch' type='search' autocomplete='off' spellcheck='false' placeholder='Search clusters and genomes' aria-label='Search clusters and genomes' aria-controls='paletteList'><kbd>esc</kbd></div>",
         icon("search")
     )
     .expect("write to String is infallible");
-    html.push_str("<div class='palette-tabs' role='tablist' aria-label='Search scope'><button type='button' role='tab' data-scope='all' class='active' aria-selected='true'>All</button><button type='button' role='tab' data-scope='cluster' aria-selected='false'>Clusters</button><button type='button' role='tab' data-scope='genome' aria-selected='false'>Genomes</button></div>");
-    html.push_str(
-        "<ul id='paletteList' class='palette-list' role='listbox' aria-label='Results'></ul>",
-    );
-    html.push_str("<div class='palette-foot'><span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> move</span><span><kbd>&#8629;</kbd> open</span><span id='paletteCount' class='num'></span></div>");
-    html.push_str("</div></div>");
+        html.push_str("<div class='palette-tabs' role='tablist' aria-label='Search scope'><button type='button' role='tab' data-scope='all' class='active' aria-selected='true'>All</button><button type='button' role='tab' data-scope='cluster' aria-selected='false'>Clusters</button><button type='button' role='tab' data-scope='genome' aria-selected='false'>Genomes</button></div>");
+        html.push_str(
+            "<ul id='paletteList' class='palette-list' role='listbox' aria-label='Results'></ul>",
+        );
+        html.push_str("<div class='palette-foot'><span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> move</span><span><kbd>&#8629;</kbd> open</span><span id='paletteCount' class='num'></span></div>");
+        html.push_str("</div></div>");
 
-    // ---- Shortcut sheet.
-    write!(
+        // ---- Shortcut sheet.
+        write!(
         html,
         "<div id='shortcutSheet' class='sheet' hidden><div class='sheet-scrim' id='sheetScrim'></div><div class='sheet-box' role='dialog' aria-modal='true' aria-labelledby='sheetTitle'><div class='sheet-head'><h2 id='sheetTitle'>Keyboard shortcuts</h2><button id='closeShortcuts' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close shortcuts'>{}</button></div><div class='sheet-grid'>",
         icon("close")
     )
     .expect("write to String is infallible");
-    for (keys, action) in [
-        ("\u{2318}K / Ctrl K", "Find a cluster or genome"),
-        ("/", "Find a cluster or genome"),
-        ("\u{2190} \u{2192}", "Previous / next cluster"),
-        ("\u{21e7} \u{2190} \u{2192}", "Jump ten clusters"),
-        ("S", "Show or hide the synteny panel"),
-        ("D", "Open the run details"),
-        ("E", "Export the view"),
-        ("F", "Fullscreen"),
-        ("T", "Switch theme"),
-        ("C", "Phylogram or cladogram"),
-        ("R", "Reroot at the midpoint"),
-        ("Z", "Fit the matrix to the window"),
-        ("\u{21e7} wheel", "Zoom columns"),
-        ("\u{2318} wheel", "Zoom rows"),
-        ("Alt-click a tip", "Root the tree on that genome"),
-        ("Esc", "Close whatever is open"),
-    ] {
-        write!(
-            html,
-            "<div class='sheet-row'><kbd>{}</kbd><span>{}</span></div>",
-            html_escape(keys),
-            html_escape(action)
-        )
-        .expect("write to String is infallible");
+        for (keys, action) in [
+            ("\u{2318}K / Ctrl K", "Find a cluster or genome"),
+            ("/", "Find a cluster or genome"),
+            ("\u{2190} \u{2192}", "Previous / next cluster"),
+            ("\u{21e7} \u{2190} \u{2192}", "Jump ten clusters"),
+            ("S", "Show or hide the synteny panel"),
+            ("D", "Open the run details"),
+            ("E", "Export the view"),
+            ("F", "Fullscreen"),
+            ("T", "Switch theme"),
+            ("C", "Phylogram or cladogram"),
+            ("R", "Reroot at the midpoint"),
+            ("Z", "Fit the matrix to the window"),
+            ("\u{21e7} wheel", "Zoom columns"),
+            ("\u{2318} wheel", "Zoom rows"),
+            ("Alt-click a tip", "Root the tree on that genome"),
+            ("Esc", "Close whatever is open"),
+        ] {
+            write!(
+                html,
+                "<div class='sheet-row'><kbd>{}</kbd><span>{}</span></div>",
+                html_escape(keys),
+                html_escape(action)
+            )
+            .expect("write to String is infallible");
+        }
+        html.push_str("</div></div></div>");
     }
-    html.push_str("</div></div></div>");
 
-    let reference_gi = args
-        .reference_genome
-        .as_deref()
-        .and_then(|name| resolve_reference_genome(pa, name));
-
-    html.push_str(&explorer_workspace_html(
-        pa,
-        rescue_map,
-        nsc_result,
-        phylo_tree,
-        reference_gi,
-        &explorer_evolution,
-        &explorer_synteny,
-    ));
+    html.push_str(&workspace.html);
 
     // ---- Run details drawer: everything that used to push the viewer off screen.
     write!(

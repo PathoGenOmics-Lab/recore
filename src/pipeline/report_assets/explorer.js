@@ -2204,7 +2204,6 @@ function render(scrollToSelected = false) {
   renderColumnHeader();
   renderSyntenyPanel();
   renderTree();
-  renderLineageStrip();
   renderLineageLegend();
   renderTreeScaleBar();
   renderOverview();
@@ -2875,6 +2874,17 @@ if (treeScroll) {
     inspectGenome(genomeIdx);
   });
 }
+
+/* The run-details drawer ships with every report, the viewer only when there is
+   a tree. It asks by name and we answer if the cluster is here. */
+window.addEventListener("recore:select-cluster", event => {
+  const name = event.detail && event.detail.cluster;
+  if (!name) return;
+  if (selectMatrixClusterByName(name)) {
+    setInspectorTab("cluster");
+    event.detail.handled = true;
+  }
+});
 
 /* ---- Find palette ---------------------------------------------------------
    Clusters and genomes answer to the same shortcut, because "where is X" is one

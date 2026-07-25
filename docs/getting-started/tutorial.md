@@ -66,11 +66,11 @@ recore \
 The lines that matter in the log:
 
 ```title="Output"
-Gaps: 50 total, 39 after prevalence filter (>=10%), 11 skipped
+Gaps: 50 total, 39 after prevalence filter (≥10%), 11 skipped
 Core genome (before): 14 / 24 clusters
 Final rescues: 11 (DROPPED: 6, MISSING_CDS: 2, SPLIT: 0, FRAGMENTED: 0,
                    ALIGNMENT_SPLIT: 0, START_VARIANT: 0, PARALOG: 0, PSEUDOGENE: 3)
-Core genome: 14 -> 17 (+3)
+Core genome: 14 → 17 (+3)
 ```
 
 Read that against what was planted:
@@ -149,9 +149,10 @@ done
 Three things fall out of that table:
 
 - **`strict` without annotation context corrects nothing.** It only accepts
-  same-locus evidence, and without synteny there is no locus evidence to have:
-  every call is `SEQUENCE_ONLY`. Strict is not "balanced but fussier", it is a
-  different question.
+  same-locus evidence, and without synteny none of the eight correctable cells
+  has any: they come through as `SEQUENCE_ONLY`, which strict does not take.
+  (The other three are `PSEUDOGENE` either way.) Strict is not "balanced but
+  fussier", it is a different question.
 - **`balanced` does not care.** Full-length sequence evidence is enough for it,
   so the eight cells are corrected either way. What changes is the provenance:
   `STRICT_PRESENT` with synteny, `SEQUENCE_ONLY` without.
@@ -217,7 +218,7 @@ grep "Core genome" tutorial_out/summary.txt
 ```
 
 ```title="Output"
-Core genome (strict):  14 -> 17 (+3)
+Core genome (strict):  14 → 17 (+3)
 ```
 
 Three clusters that were missing from at least one genome are now found in all

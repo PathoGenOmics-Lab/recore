@@ -95,7 +95,7 @@ These events are reported separately so downstream analyses can avoid treating t
 
 **Evidence:** Full-coverage hit (≥80%) with ≥98% identity, overlapping a GFF gene of similar length (within ±300 bp), where the length difference is non-zero.
 
-**Confidence:** `identity × coverage × 0.95`
+**Confidence:** `identity × 0.95` (the only rescue type whose score does not multiply in coverage)
 
 **Example:**
 ```

@@ -2,21 +2,27 @@
 
 ## Development checks
 
-Everything CI runs, in the order it runs:
+Exactly what CI runs, in the order it runs, is three commands:
 
 ```bash
-cargo fmt
-cargo clippy --all-targets -- -D warnings
-cargo test
-python3 benchmarks/synthetic_benchmark.py
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
 ```
 
 The end-to-end test needs minimap2 on `PATH`. It skips silently without one,
-which is not what you want in CI, so set the guard to turn a skip into a
-failure:
+which is not what you want in CI, so CI exports the guard that turns a skip into
+a failure, and you should too:
 
 ```bash
-RECORE_REQUIRE_MINIMAP2=1 cargo test
+RECORE_REQUIRE_MINIMAP2=1 cargo test --locked --all-targets
+```
+
+The benchmarks are not part of CI. Run them by hand when a change could move the
+numbers:
+
+```bash
+python3 benchmarks/synthetic_benchmark.py
 ```
 
 ## Working on the HTML report

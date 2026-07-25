@@ -26,7 +26,6 @@
       });
     }
 
-    setupNavObserver();
     setupCandidatesTable();
     setupSortableTables();
     setupDrawer();
@@ -112,60 +111,23 @@
       if (event.key === "Escape" && drawer.classList.contains("open")) setOpen(false);
     });
 
-    // Picking a candidate should take you to it in the matrix, not just close.
+    /* Picking a candidate should take you to it in the matrix, not just close.
+       This file ships with every report; the viewer only ships when there is a
+       tree to draw, so ask for the cluster by name and let the viewer answer if
+       it is there. It used to reach for a <select> the redesign removed, which
+       made every candidate row a no-op. */
     const table = document.getElementById("candidatesTable");
     if (table) {
       table.addEventListener("click", event => {
         const row = event.target.closest("tr[data-cluster]");
         if (!row) return;
-        const select = document.getElementById("clusterSelect");
-        if (select && [...select.options].some(o => o.textContent.startsWith(row.dataset.cluster))) {
-          const match = [...select.options].find(o => o.textContent.startsWith(row.dataset.cluster));
-          select.value = match.value;
-          select.dispatchEvent(new Event("change"));
-          setOpen(false);
-        }
+        const request = new CustomEvent("recore:select-cluster", {
+          detail: {cluster: row.dataset.cluster, handled: false},
+        });
+        window.dispatchEvent(request);
+        if (request.detail.handled) setOpen(false);
       });
     }
-  }
-
-  function setupNavObserver() {
-    const links = Array.from(document.querySelectorAll(".nav-bar a[data-target]"));
-    if (!links.length) return;
-    const targets = new Map();
-    links.forEach(link => {
-      const id = link.dataset.target;
-      const el = document.getElementById(id);
-      if (el) targets.set(id, link);
-    });
-    if (!targets.size) return;
-
-    links.forEach(link => {
-      link.addEventListener("click", event => {
-        const el = document.getElementById(link.dataset.target);
-        if (!el) return;
-        event.preventDefault();
-        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        el.scrollIntoView({behavior: reduce ? "auto" : "smooth", block: "start"});
-        history.replaceState(null, "", `#${link.dataset.target}`);
-      });
-    });
-
-    const observer = new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        const link = targets.get(entry.target.id);
-        if (!link) return;
-        if (entry.isIntersecting) {
-          links.forEach(other => other.classList.remove("active"));
-          link.classList.add("active");
-        }
-      });
-    }, {rootMargin: "-40% 0px -50% 0px", threshold: 0.01});
-
-    targets.forEach((_link, id) => {
-      const el = document.getElementById(id);
-      if (el) observer.observe(el);
-    });
   }
 
   function setupCandidatesTable() {

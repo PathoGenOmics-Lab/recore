@@ -192,6 +192,28 @@ fn html_report_summarizes_run_outputs() {
     assert!(text.contains("Orthology actions"));
     assert!(text.contains("Add --tree"));
     assert!(text.contains("gene_presence_absence_recore.csv"));
+    // Without a tree the viewer is not embedded and explorer.js is not inlined,
+    // so none of the chrome it drives may be drawn. It used to be, which left a
+    // topbar of controls that looked live and did nothing.
+    for control in [
+        "id='clusterOmnibox'",
+        "id='prevCluster'",
+        "id='nextCluster'",
+        "id='toggleSynteny'",
+        "id='shortcutsButton'",
+        "id='exportView'",
+        "id='explorerFullscreen'",
+        "id='palette'",
+        "id='shortcutSheet'",
+    ] {
+        assert!(
+            !text.contains(control),
+            "tree-less report draws {control}, whose handler ships with the viewer"
+        );
+    }
+    // What does work without a tree stays.
+    assert!(text.contains("id='themeToggle'"));
+    assert!(text.contains("id='openDetails'"));
     assert_no_remote_assets(&text);
 }
 
@@ -317,7 +339,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("syntenySvg"));
     assert!(text.contains("toggleSynteny"));
     assert!(text.contains("Show synteny"));
-    assert!(text.contains("synteny-hidden"));
+    assert!(text.contains("class='workspace synteny-hidden'"));
     assert!(text.contains("applySyntenyVisibility"));
     assert!(text.contains("applyLayout"));
     assert!(text.contains("setupDragHandle"));
@@ -326,7 +348,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("syntenyZoom"));
     assert!(text.contains("let syntenyHidden = true"));
     assert!(text.contains("selectedSyntenyReference"));
-    assert!(text.contains("data-gene-cluster"));
+    assert!(text.contains("id='syntenySvg'"));
     assert!(text.contains("treeEdgeStyle"));
     assert!(text.contains("subtreeLineage"));
     assert!(text.contains("\"synteny\""));
@@ -1218,9 +1240,9 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
     assert!(text.contains("group_001"));
     assert!(text.contains("ancestral_retained_no_disruption"));
     assert!(text.contains("clean_insertion_or_acquisition_candidate"));
-    assert!(text.contains("mech-badge"));
-    assert!(text.contains("candidatesTable"));
-    assert!(text.contains("synteny"));
+    assert!(text.contains("<span class='mech-badge'"));
+    assert!(text.contains("id='candidatesTable'"));
+    assert!(text.contains("id='syntenyPanel'"));
     // Sortable headers must stay reachable and announced for keyboard/screen readers.
     assert!(text.contains("aria-sort='none'"));
     assert!(text.contains("scope='col'"));

@@ -92,9 +92,6 @@ and Recore uses semantic versioning.
 - Output manifest schema version is now `recore.outputs.v6`.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.
-
-### Changed
-
 - The HTML report is now a full-viewport workspace built around the phylogeny,
   the corrected matrix and synteny, with the run summary, breakdowns, candidate
   table and file list moved into a run-details drawer. Synteny is a full-width
@@ -113,6 +110,40 @@ and Recore uses semantic versioning.
   character per cell, and each pane renders only its visible window, so the
   viewer handles runs of 10,000 genomes by 30,000 clusters. The tip limit rises
   from 5,000 to 20,000.
+- The report chrome is one row. Everything that shapes a single pane moved into
+  that pane's own menu, which leaves identity, finding, the run readout and the
+  global actions on top and gives the data back the second row.
+- Finding a cluster is a palette on `Cmd-K` or `/` rather than a `<select>`, and
+  it answers for genomes as well, ranking name prefixes over name hits over
+  annotation hits. At 30,000 clusters the old control rebuilt 30,000 option
+  elements on every keystroke.
+- The run figures are a readout rather than a row of pills, and they give way in
+  a deliberate order as the window narrows instead of widening the page.
+- Clicking a tip opens a genome card in the inspector instead of rerooting the
+  tree; rerooting moved to Alt-click and to a button on the card. The inspector
+  is tabbed, so a genome question no longer evicts the selected cluster.
+- The phylogeny has a scale bar, and the matrix has a whole-matrix prevalence
+  strip for runs above 40 columns.
+- Matrix column names are drawn across the column once it is wide enough to hold
+  them, and the opening zoom is fitted to the pane that exists rather than to a
+  fixed target height.
+- The synteny band opens at the height of its own content until the reader drags
+  the seam.
+- Keyboard shortcuts throughout, with a reference sheet on `?`.
+- The report logo is cropped to the wordmark and stripped of the opaque plate the
+  export wrapped it in, so it fills the box it is given rather than two thirds
+  of it.
+
+### Added
+
+- Documentation site built with MkDocs Material, published from `docs/` to
+  GitHub Pages. The four reference documents are now the deep half of a site
+  with a landing page, installation, quick start, inputs, matrix policies, the
+  run report, evidence states, limits, citation and contributing.
+- `docs/getting-started/tutorial.md`, a full run on a dataset with known answers.
+  `benchmarks/make_tutorial_dataset.py` generates that dataset deterministically:
+  twelve MTBC-style genomes, twenty-four clusters, GFF3 annotations, a Newick
+  tree, and eleven false absences planted on purpose.
 
 ### Fixed
 
@@ -143,6 +174,48 @@ and Recore uses semantic versioning.
   is no longer ambiguous between "most clusters" and "one of twelve".
 - Mouse-wheel column zoom in the embedded viewer no longer snaps the zoom back
   down when it is above the old ceiling.
+- Leaving fullscreen wrote text into the fullscreen button, which replaced its
+  icon with a blank box.
+- The chrome could grow wider than the window, which took the workspace with it:
+  the shell's single implicit grid column sized itself to the widest child.
+- The workspace slid into the wrong grid row whenever the lineage legend was
+  absent, which is whenever tips are not coloured by lineage, and the free
+  vertical space went to the status bar.
+- The reference audit block rendered as a bare heading with an indented body,
+  because its `dt` and `dd` sat outside the definition list.
+- The run-details drawer and the shortcut sheet can be closed with a button, not
+  only with `Esc`.
+- The tree scale bar chose its step from a quarter of the tree depth, which in a
+  narrow pane rounded to a bar just under the display threshold, so no bar
+  appeared at all.
+- In dark mode the white counters of the logo's `e` and `o` read as blobs rather
+  than as holes; they are repainted to the panel colour.
+- The lineage strip beside the tree was blanked on every frame: `render()` called
+  its draw function a second time with no arguments, after `renderTree()` had
+  already drawn it with the correct window, which sized its canvas to 0 by 0.
+- Without `--tree` the topbar drew the find field, cluster stepping, synteny,
+  export, fullscreen and the shortcut sheet, none of which have handlers in a
+  report that does not embed the viewer. They are no longer written, and a test
+  asserts it.
+- Clicking a candidate row in the run-details drawer did nothing: it looked for
+  the `<select>` the redesign removed. The drawer now asks the viewer by cluster
+  name and closes only if the viewer answers.
+- The narrow-screen breakpoint targeted the pane container by its pre-rewrite
+  class name, so below 820px it set the tree pane to full width inside a still
+  horizontal row and pushed the matrix off screen.
+- Removed 300 lines of stylesheet whose selectors no longer match anything the
+  report emits, four rule blocks that were declared twice, a `:fullscreen` rule
+  aimed at a class the fullscreen element does not carry, and the in-page
+  navigation observer left over from the document layout.
+- Six report assertions were matched by strings inside the inlined stylesheet
+  and script rather than by the markup they claimed to test, so they could not
+  fail. They are anchored on emitted markup now.
+- `icon()` leaked a `String` per call to satisfy a `&'static str` signature.
+- Documentation: the output-files page still described the pre-rewrite synteny
+  layout and a `summary.txt` without four of the lines the writer always emits;
+  the contributing page listed a benchmark command CI does not run; the
+  START_VARIANT confidence formula included a coverage factor the code does not
+  apply.
 - `cargo fmt --check` and `cargo clippy -D warnings` pass again.
 - CI installs minimap2 and fails when it is missing, so the end-to-end test
   actually runs instead of skipping silently. Its assertions were updated to the
