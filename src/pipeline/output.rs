@@ -1485,6 +1485,7 @@ fn file_link_html(path: &str, description: &str) -> String {
     )
 }
 
+const RECORE_REPO_URL: &str = "https://github.com/PathoGenOmics-Lab/recore";
 const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
 const REPORT_CSS: &str = include_str!("report_assets/report.css");
 const REPORT_UI_JS: &str = include_str!("report_assets/report-ui.js");
@@ -2058,6 +2059,7 @@ fn explorer_workspace_html(
     // Tree, lineage strip and matrix all draw only their visible window onto a
     // viewport-sized canvas; the spacers carry the virtual size so the browser
     // still owns the scrollbars.
+    html.push_str("<div class='tree-head-spacer' id='treeHeadSpacer' aria-hidden='true'></div>");
     html.push_str("<div class='pane-viewport tree-viewport'><canvas id='treeCanvas' class='tree-canvas' role='img' aria-label='Matched phylogeny'></canvas><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas><div class='pane-scroll' id='treeScroll'><div class='pane-spacer' id='treeSpacer'></div></div></div>");
     html.push_str("<div class='zoom-rail'><label class='rail-label' for='rowHeight'>Rows</label><input id='rowHeight' type='range' min='1' max='18' value='8' aria-label='Row zoom'></div>");
     html.push_str("</section>");
@@ -2221,6 +2223,28 @@ pub(super) fn write_html_report(
     html.push_str("</div>");
 
     html.push_str("<div class='topbar-actions'>");
+    // Version, docs and source, so a reader who did not run the tool can trace
+    // the report back to the exact build that produced it.
+    write!(
+        html,
+        "<a class='version-chip' href='{}/releases/tag/v{}' target='_blank' rel='noopener' title='Release notes for this version'>v{}</a>",
+        RECORE_REPO_URL,
+        html_escape(env!("CARGO_PKG_VERSION")),
+        html_escape(env!("CARGO_PKG_VERSION"))
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<a class='ghost-btn' href='{}/tree/main/docs' target='_blank' rel='noopener'>Docs</a>",
+        RECORE_REPO_URL
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<a class='ghost-btn' href='{}' target='_blank' rel='noopener'>GitHub</a>",
+        RECORE_REPO_URL
+    )
+    .expect("write to String is infallible");
     html.push_str("<button id='openDetails' type='button' class='ghost-btn' aria-expanded='false' aria-controls='runDetails'>Run details</button>");
     html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
     html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label'>Dark</span>");

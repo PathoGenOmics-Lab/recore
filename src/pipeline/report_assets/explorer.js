@@ -141,6 +141,7 @@ const treeCanvas = document.getElementById("treeCanvas");
 const treeCtx = treeCanvas ? treeCanvas.getContext("2d") : null;
 const treeViewport = treeCanvas ? treeCanvas.parentElement : null;
 const treeSpacer = document.getElementById("treeSpacer");
+const treeHeadSpacer = document.getElementById("treeHeadSpacer");
 const ctx = canvas.getContext("2d");
 const matrixPane = document.getElementById("matrixPane");
 const treePane = document.getElementById("treePane");
@@ -1750,6 +1751,8 @@ function renderColumnHeader() {
   sizeCanvas(headerCanvas, headerCtx, width, cssH, canvasScale(width, cssH));
   const headerWrap = headerCanvas.parentElement;
   if (headerWrap) headerWrap.style.height = `${cssH}px`;
+  // Keep the tree pane's first row level with the matrix's first row.
+  if (treeHeadSpacer) treeHeadSpacer.style.height = `${cssH}px`;
   headerCtx.fillStyle = headerBg;
   headerCtx.fillRect(0, 0, width, cssH);
 

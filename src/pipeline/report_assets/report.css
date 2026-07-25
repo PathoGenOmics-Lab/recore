@@ -1486,6 +1486,7 @@ body.app {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  flex: 1 1 auto;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1516,12 +1517,49 @@ body.app {
 .chip.pos b { color: var(--positive); }
 .chip.warn b { color: var(--warning); }
 
+.version-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: var(--radius-pill);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.version-chip:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+/* Anchors styled as buttons need the same box as the real ones. */
+a.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+a.ghost-btn:hover {
+  text-decoration: none;
+  color: var(--ink);
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+.topbar-actions .ghost-btn,
+.topbar-actions a.ghost-btn {
+  padding: 5px 9px;
+  font-size: 12px;
 }
 
 /* ===== Toolbar ===== */
@@ -1659,10 +1697,16 @@ body.app {
   position: relative;
 }
 
+/* Fixed height and no wrapping: the panes are aligned row for row, and a header
+   that wraps to two lines in one pane offsets its rows against the others. */
 .pane-head {
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
+  height: 34px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
   padding: 7px 12px;
   border-bottom: 1px solid var(--soft-line);
   background: var(--bg-subtle);
@@ -1730,6 +1774,15 @@ body.app {
 
 .tree-canvas {
   cursor: crosshair;
+}
+
+/* Mirrors the matrix column header so both panes start their first row at the
+   same screen position. Without it the tree sat a whole header higher than the
+   matrix, and tip N did not line up with row N. */
+.tree-head-spacer {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
 }
 
 .lineage-strip {
@@ -2050,14 +2103,20 @@ body.app {
   box-shadow: var(--shadow-3);
 }
 
-@media (max-width: 1100px) {
-  .inspector {
+@media (max-width: 1380px) {
+  /* The run chips are the first thing to go: they repeat what the drawer says,
+     while the actions do not exist anywhere else. */
+  .run-chips {
     display: none;
   }
+}
+
+@media (max-width: 1100px) {
+  .inspector,
   .inspector-handle {
     display: none;
   }
-  .run-chips {
+  .topbar-title {
     display: none;
   }
 }

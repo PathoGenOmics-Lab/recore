@@ -196,17 +196,28 @@ fn html_report_summarizes_run_outputs() {
 }
 
 /// The report is opened from result directories on offline machines, so it must
-/// not pull stylesheets, fonts, scripts, or images over the network.
+/// not pull stylesheets, fonts, scripts, or images over the network. Navigational
+/// links to the project are fine: they only resolve if the reader clicks them.
 fn assert_no_remote_assets(html: &str) {
-    for attr in ["href='http", "href=\"http", "src='http", "src=\"http"] {
-        assert!(
-            !html.contains(attr),
-            "report references a remote asset via {attr}"
-        );
+    for tag in ["<link", "<script", "<img", "<iframe", "<use"] {
+        let mut rest = html;
+        while let Some(at) = rest.find(tag) {
+            rest = &rest[at + tag.len()..];
+            let end = rest.find('>').unwrap_or(rest.len());
+            let element = &rest[..end];
+            assert!(
+                !element.contains("http://") && !element.contains("https://"),
+                "report loads a remote resource: {tag}{element}>"
+            );
+        }
     }
     assert!(
         !html.contains("@import"),
         "report pulls a stylesheet with @import"
+    );
+    assert!(
+        !html.contains("url(http"),
+        "report references a remote url() in CSS"
     );
 }
 

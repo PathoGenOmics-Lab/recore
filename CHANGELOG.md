@@ -99,6 +99,8 @@ and Recore uses semantic versioning.
   the corrected matrix and synteny, with the run summary, breakdowns, candidate
   table and file list moved into a run-details drawer. Synteny is a full-width
   band under the matrix, and the zoom controls sit on the axis they drive.
+- Tree tips are aligned row for row with the matrix, and the top bar carries the
+  version with links to the documentation and the repository.
 - The workspace can order matrix columns by prevalence, mechanism, corrected
   cells or name instead of only the input matrix order, and can find a genome by
   name, ringing the matching tips and scrolling to the first hit.

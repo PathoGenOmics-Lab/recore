@@ -239,12 +239,18 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("phylogramMode"));
     assert!(html_report.contains("referenceOnly"));
     assert!(html_report.contains("visibleColumnRange"));
-    // The report has to stay openable from an offline results directory.
-    for attr in ["href='http", "href=\"http", "src='http", "src=\"http"] {
-        assert!(
-            !html_report.contains(attr),
-            "report references a remote asset via {attr}"
-        );
+    // The report has to stay openable from an offline results directory. Links to
+    // the project are fine; loading a resource is not.
+    for tag in ["<link", "<script", "<img"] {
+        let mut rest = html_report.as_str();
+        while let Some(at) = rest.find(tag) {
+            rest = &rest[at + tag.len()..];
+            let end = rest.find('>').unwrap_or(rest.len());
+            assert!(
+                !rest[..end].contains("http://") && !rest[..end].contains("https://"),
+                "report loads a remote resource in a {tag} element"
+            );
+        }
     }
 
     // ── Verify corrected GFF ──
