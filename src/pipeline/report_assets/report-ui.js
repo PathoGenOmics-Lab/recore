@@ -30,7 +30,58 @@
     setupCandidatesTable();
     setupSortableTables();
     setupDrawer();
+    setupTooltips();
   });
+
+  /* Icon buttons need an explanation that arrives immediately, not after the
+     browser's own one-second delay, and one that can hold a full sentence. */
+  function setupTooltips() {
+    const bubble = document.createElement("div");
+    bubble.className = "tip-bubble";
+    bubble.setAttribute("role", "tooltip");
+    document.body.appendChild(bubble);
+    let current = null;
+
+    const hide = () => {
+      current = null;
+      bubble.classList.remove("show");
+    };
+    const show = target => {
+      const text = target.getAttribute("data-tip");
+      if (!text) return;
+      current = target;
+      bubble.textContent = text;
+      bubble.classList.add("show");
+      const anchor = target.getBoundingClientRect();
+      const box = bubble.getBoundingClientRect();
+      const left = Math.min(
+        Math.max(8, anchor.left + anchor.width / 2 - box.width / 2),
+        window.innerWidth - box.width - 8,
+      );
+      // Flip above when there is no room below.
+      const below = anchor.bottom + 8;
+      const top = below + box.height > window.innerHeight - 8
+        ? anchor.top - box.height - 8
+        : below;
+      bubble.style.left = `${left}px`;
+      bubble.style.top = `${Math.max(8, top)}px`;
+    };
+
+    document.addEventListener("pointerover", event => {
+      const target = event.target.closest("[data-tip]");
+      if (target === current) return;
+      if (target) show(target);
+      else hide();
+    });
+    document.addEventListener("pointerdown", hide);
+    // Keyboard users get it too.
+    document.addEventListener("focusin", event => {
+      const target = event.target.closest("[data-tip]");
+      if (target) show(target);
+    });
+    document.addEventListener("focusout", hide);
+    window.addEventListener("scroll", hide, true);
+  }
 
   /* The run summary, breakdowns, candidate table and file list are reference
      material, not the thing you came to look at, so they slide over the

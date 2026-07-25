@@ -115,6 +115,7 @@ const rowHeightControl = document.getElementById("rowHeight");
 const colorMode = document.getElementById("tipColorMode");
 const matrixColorMode = document.getElementById("matrixColorMode");
 const columnOrder = document.getElementById("columnOrder");
+const rootMode = document.getElementById("rootMode");
 const labelToggle = document.getElementById("tipLabels");
 const referenceButton = document.getElementById("referenceOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
@@ -429,9 +430,12 @@ function refreshVisibleClusters() {
   }
   if (referenceButton) {
     referenceButton.classList.toggle("active", referenceOnly);
-    referenceButton.textContent = data.referenceGenome
-      ? `Reference-absent only (${data.referenceGenome.name})`
-      : "Reference-absent only";
+    referenceButton.setAttribute(
+      "data-tip",
+      data.referenceGenome
+        ? `Show only clusters absent from ${data.referenceGenome.name}`
+        : "No reference genome was supplied for this run",
+    );
     referenceButton.disabled = !data.referenceGenome;
   }
 }
@@ -1423,7 +1427,12 @@ function applySyntenyVisibility() {
   if (!explorerSection || !syntenyToggle) return;
   explorerSection.classList.toggle("synteny-hidden", syntenyHidden);
   syntenyToggle.classList.toggle("active", !syntenyHidden);
-  syntenyToggle.textContent = syntenyHidden ? "Show synteny" : "Hide synteny";
+  syntenyToggle.setAttribute(
+    "data-tip",
+    syntenyHidden
+      ? "Show the flanking-gene context for the selected cluster"
+      : "Hide the synteny panel",
+  );
   syntenyToggle.setAttribute("aria-pressed", syntenyHidden ? "false" : "true");
   applyLayout();
   persistLayout();
@@ -1820,6 +1829,97 @@ function fitLabel(text, maxWidth) {
 /* The tree is a canvas rather than SVG: 10,000 tips is roughly 40,000 SVG nodes,
    which the browser will not lay out at an interactive frame rate. Only the tips
    inside the visible band are drawn, and internal edges are clipped to it. */
+/* ---- Rerooting ------------------------------------------------------------
+   The displayed root drives every ancestral reading in the panel, so it has to
+   be the reader's choice rather than whatever the Newick happened to carry.
+   assignTreeIds already yields an adjacency list, so rooting anywhere is a
+   matter of picking the node and rebuilding downwards from it. */
+function treeGraph(node) {
+  const root = cloneNode(node);
+  const nodes = [];
+  const edges = [];
+  assignTreeIds(root, null, nodes, edges);
+  const adj = nodes.map(() => []);
+  edges.forEach(([a, b, length]) => {
+    adj[a].push({id: b, length: Number(length) || 0});
+    adj[b].push({id: a, length: Number(length) || 0});
+  });
+  return {root, nodes, adj};
+}
+function buildFrom(nodes, adj, id, parentId, length) {
+  const source = nodes[id];
+  const children = adj[id]
+    .filter(edge => edge.id !== parentId)
+    .map(edge => buildFrom(nodes, adj, edge.id, id, edge.length));
+  children.sort((a, b) => countTips(b) - countTips(a));
+  return {label: source.label || "", genome: source.genome, length, children};
+}
+/** Farthest node from a start, by summed branch length. */
+function farthestFrom(adj, start) {
+  const dist = new Array(adj.length).fill(-1);
+  const prev = new Array(adj.length).fill(-1);
+  const stack = [start];
+  dist[start] = 0;
+  let best = start;
+  while (stack.length) {
+    const id = stack.pop();
+    for (const edge of adj[id]) {
+      if (dist[edge.id] >= 0) continue;
+      dist[edge.id] = dist[id] + edge.length;
+      prev[edge.id] = id;
+      if (dist[edge.id] > dist[best]) best = edge.id;
+      stack.push(edge.id);
+    }
+  }
+  return {best, dist, prev};
+}
+/* Midpoint rooting: the two most distant tips define the tree's diameter, and
+   the root goes halfway along the path between them. */
+function midpointRoot(nodes, adj) {
+  if (!adj.length) return 0;
+  const first = farthestFrom(adj, 0).best;
+  const {best: second, dist, prev} = farthestFrom(adj, first);
+  const half = dist[second] / 2;
+  let cursor = second;
+  while (prev[cursor] >= 0 && dist[cursor] > half) {
+    const parent = prev[cursor];
+    // Stop at whichever end of the straddling edge is nearer the midpoint.
+    if (dist[parent] <= half) {
+      return half - dist[parent] <= dist[cursor] - half ? parent : cursor;
+    }
+    cursor = parent;
+  }
+  return cursor;
+}
+function rerootTree(mode) {
+  if (mode === "input") return cloneNode(data.tree);
+  if (mode === "l8") return rootByL8(data.tree);
+  const {nodes, adj} = treeGraph(data.tree);
+  if (mode === "midpoint") return buildFrom(nodes, adj, midpointRoot(nodes, adj), null, 0);
+  if (mode.startsWith("genome:")) {
+    const genomeIdx = Number(mode.slice(7));
+    const id = nodes.findIndex(n => n.genome === genomeIdx);
+    if (id >= 0) {
+      // Root on the tip's parent, so the chosen genome hangs off the root as an
+      // outgroup rather than becoming a degenerate root itself.
+      const parent = adj[id][0];
+      return buildFrom(nodes, adj, parent ? parent.id : id, null, 0);
+    }
+  }
+  return rootByL8(data.tree);
+}
+/** Rebuild layout state after the displayed root changes. */
+function applyRoot(mode) {
+  treeRoot = rerootTree(mode);
+  leafOrder = [];
+  maxDepth = 0;
+  maxDistance = 0;
+  layout(treeRoot, 0, 0);
+  buildRowOfGenome();
+  treeDirty = true;
+  resetMatrixCache();
+  syntenyKey = "";
+}
 function renderTree() {
   if (!treeCanvas || !treeCtx) return;
   const view = viewportSize(treeViewport);
@@ -2059,12 +2159,7 @@ function resetMatrixCache() {
   treeDirty = true;
 }
 refreshThemeColors();
-treeRoot = rootByL8(data.tree);
-leafOrder = [];
-maxDepth = 0;
-maxDistance = 0;
-layout(treeRoot, 0, 0);
-buildRowOfGenome();
+applyRoot(hasL8Tip(data.tree) ? "l8" : "input");
 computeGenomeStats();
 refreshVisibleClusters();
 // Open at a zoom that suits the run. A 16-genome, 12-cluster matrix at the old
@@ -2547,6 +2642,35 @@ if (genomeSearch) {
     }
     treeDirty = true;
     render(false);
+  });
+}
+
+
+if (rootMode) {
+  rootMode.addEventListener("change", () => {
+    applyRoot(rootMode.value);
+    render(false);
+    status.textContent = `Tree rerooted: ${rootMode.options[rootMode.selectedIndex].textContent}.`;
+  });
+}
+/* Clicking a tip roots on it, which is how every tree viewer people already use
+   behaves, and is far easier to reach for than a menu. */
+if (treeScroll) {
+  treeScroll.addEventListener("click", event => {
+    const row = rowAtPointer(event, treeScroll);
+    if (row < 0) return;
+    const genomeIdx = leafOrder[row];
+    const name = data.genomes[genomeIdx] || "";
+    if (rootMode) {
+      const option = [...rootMode.options].find(o => o.value.startsWith("genome:"))
+        || rootMode.appendChild(document.createElement("option"));
+      option.value = `genome:${genomeIdx}`;
+      option.textContent = `Root: ${name}`;
+      rootMode.value = option.value;
+    }
+    applyRoot(`genome:${genomeIdx}`);
+    render(false);
+    status.textContent = `Tree rooted on ${name}. Use the root menu to go back.`;
   });
 }
 

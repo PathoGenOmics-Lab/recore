@@ -1465,7 +1465,7 @@ body.app {
 /* 16:9 wordmark on an opaque white plate, so the tile keeps that ratio and stays
    white in both themes rather than stretching into a square. */
 .topbar-logo {
-  width: 54px;
+  width: 84px;
   aspect-ratio: 2048 / 1153;
   flex: 0 0 auto;
   border-radius: var(--radius-sm);
@@ -1694,8 +1694,38 @@ a.ghost-btn:hover {
 }
 
 .icon-btn .glyph {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Tooltip: the browser's own takes a second to appear and cannot be styled,
+   which is no use for controls that are now icons. */
+.tip-bubble {
+  position: fixed;
+  z-index: 90;
+  max-width: 260px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: var(--bg-elev);
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-3);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.tip-bubble.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* ===== Workspace ===== */

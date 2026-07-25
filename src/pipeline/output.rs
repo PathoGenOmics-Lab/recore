@@ -1950,6 +1950,25 @@ fn explorer_unavailable_html(reason: &str) -> String {
     )
 }
 
+/// Inline 16px icon set. A dense tool reads as controls, not as a wall of words,
+/// and every icon button carries a data-tip so nothing is a guess.
+fn icon(name: &str) -> &'static str {
+    let path = match name {
+        "book" => "<path d='M4 19.5A2.5 2.5 0 0 1 6.5 17H20'/><path d='M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'/>",
+        "github" => "<path d='M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 20 5.8a4.9 4.9 0 0 0-.1-3.6s-1.1-.3-3.6 1.4a12.3 12.3 0 0 0-6.6 0C7.2 1.9 6.1 2.2 6.1 2.2A4.9 4.9 0 0 0 6 5.8a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.6V22'/>",
+        "info" => "<circle cx='12' cy='12' r='10'/><path d='M12 16v-4M12 8h.01'/>",
+        "moon" => "<path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/>",
+        "download" => "<path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3'/>",
+        "expand" => "<path d='M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/>",
+        "filter" => "<path d='M22 3H2l8 9.5V19l4 2v-8.5L22 3z'/>",
+        "target" => "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",
+        "layers" => "<path d='M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/>",
+        "tree" => "<path d='M4 4v16M4 8h6M4 16h6M10 5v6M10 13v6M10 5h5M10 11h5M10 13h5M10 19h5'/>",
+        _ => "<circle cx='12' cy='12' r='9'/>",
+    };
+    Box::leak(format!("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{path}</svg>").into_boxed_str())
+}
+
 /// The workspace is the report: phylogeny, matrix and synteny fill the viewport
 /// and everything else lives in the run-details drawer.
 fn explorer_workspace_html(
@@ -1961,6 +1980,8 @@ fn explorer_workspace_html(
     evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
 ) -> String {
+    use std::fmt::Write as _;
+
     let Some(tree) = phylo_tree else {
         return explorer_unavailable_html(
             "Add --tree to open the phylogeny, matrix and synteny workspace. Without a tree the run details drawer still carries every number and table.",
@@ -2029,17 +2050,28 @@ fn explorer_workspace_html(
     html.push_str("<select id='columnOrder' aria-label='Column order'><option value='matrix'>Order: input matrix</option><option value='prevalence'>Order: prevalence</option><option value='mechanism'>Order: mechanism</option><option value='corrected'>Order: corrected cells</option><option value='name'>Order: cluster name</option></select>");
     html.push_str("</div>");
     html.push_str("<div class='tool-group'>");
-    html.push_str("<div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div>");
-    html.push_str("<label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label>");
+    html.push_str("<div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active' data-tip='Branch lengths drawn to scale'>Phylogram</button><button id='cladogramMode' type='button' data-tip='Topology only, branch lengths ignored'>Cladogram</button></div>");
+    html.push_str("<select id='rootMode' data-tip='Where the displayed tree is rooted. Every ancestral reading depends on this.' aria-label='Tree root'><option value='l8'>Root: L8 outgroup</option><option value='input'>Root: as supplied</option><option value='midpoint'>Root: midpoint</option></select><label class='toggle-control' data-tip='Draw genome names beside the tips'><input id='tipLabels' type='checkbox' checked>Tip labels</label>");
     html.push_str("</div>");
     html.push_str("<div class='tool-group tool-right'>");
-    html.push_str("<button id='mechanismFilter' type='button' class='ghost-btn' aria-expanded='false' aria-controls='processLegend'>Mechanisms</button>");
-    html.push_str(
-        "<button id='referenceOnly' type='button' class='ghost-btn'>Reference-absent only</button>",
-    );
-    html.push_str(
-        "<button id='toggleSynteny' type='button' class='ghost-btn'>Show synteny</button>",
-    );
+    write!(
+        html,
+        "<button id='mechanismFilter' type='button' class='icon-btn' data-tip='Filter matrix columns by evolutionary mechanism' aria-label='Mechanism filter' aria-expanded='false' aria-controls='processLegend'>{}</button>",
+        icon("filter")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<button id='referenceOnly' type='button' class='icon-btn' data-tip='Show only clusters absent from the reference genome' aria-label='Reference-absent only'>{}</button>",
+        icon("target")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<button id='toggleSynteny' type='button' class='icon-btn' data-tip='Show the flanking-gene context for the selected cluster' aria-label='Show synteny'>{}</button>",
+        icon("layers")
+    )
+    .expect("write to String is infallible");
     html.push_str("</div>");
     html.push_str("</div>");
     html.push_str("<div id='processLegend' class='process-legend' hidden></div>");
@@ -2181,7 +2213,9 @@ pub(super) fn write_html_report(
 
     // ---- Top bar: identity and the numbers worth seeing without opening anything.
     html.push_str("<header class='topbar'>");
-    html.push_str("<div class='topbar-brand'><span class='topbar-logo' aria-hidden='true'>");
+    html.push_str(
+        "<div class='topbar-brand'><span class='topbar-logo' data-tip='Recore' aria-hidden='true'>",
+    );
     html.push_str(&report_logo_svg());
     html.push_str("</span><span class='topbar-title'>Corrected pangenome matrix</span></div>");
 
@@ -2220,11 +2254,9 @@ pub(super) fn write_html_report(
     html.push_str("</div>");
 
     html.push_str("<div class='topbar-actions'>");
-    // Version, docs and source, so a reader who did not run the tool can trace
-    // the report back to the exact build that produced it.
     write!(
         html,
-        "<a class='version-chip' href='{}/releases/tag/v{}' target='_blank' rel='noopener' title='Release notes for this version'>v{}</a>",
+        "<a class='version-chip' data-tip='Release notes for this version' href='{}/releases/tag/v{}' target='_blank' rel='noopener'>v{}</a>",
         RECORE_REPO_URL,
         html_escape(env!("CARGO_PKG_VERSION")),
         html_escape(env!("CARGO_PKG_VERSION"))
@@ -2232,24 +2264,43 @@ pub(super) fn write_html_report(
     .expect("write to String is infallible");
     write!(
         html,
-        "<a class='ghost-btn' href='{}/tree/main/docs' target='_blank' rel='noopener'>Docs</a>",
-        RECORE_REPO_URL
+        "<a class='icon-btn' data-tip='Documentation' aria-label='Documentation' href='{}/tree/main/docs' target='_blank' rel='noopener'>{}</a>",
+        RECORE_REPO_URL,
+        icon("book")
     )
     .expect("write to String is infallible");
     write!(
         html,
-        "<a class='ghost-btn' href='{}' target='_blank' rel='noopener'>GitHub</a>",
-        RECORE_REPO_URL
+        "<a class='icon-btn' data-tip='Source on GitHub' aria-label='Source on GitHub' href='{}' target='_blank' rel='noopener'>{}</a>",
+        RECORE_REPO_URL,
+        icon("github")
     )
     .expect("write to String is infallible");
-    html.push_str("<button id='openDetails' type='button' class='ghost-btn' aria-expanded='false' aria-controls='runDetails'>Run details</button>");
-    html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
-    html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label sr-only'>Dark</span>");
-    html.push_str("</button>");
-    html.push_str("<button id='exportView' type='button' class='ghost-btn' title='Download the current view as PNG, and the synteny panel as SVG when it is open'>Export</button>");
-    html.push_str(
-        "<button id='explorerFullscreen' type='button' class='ghost-btn'>Fullscreen</button>",
-    );
+    write!(
+        html,
+        "<button id='openDetails' type='button' class='icon-btn' data-tip='Run details: summary, breakdowns, candidates and output files' aria-label='Run details' aria-expanded='false' aria-controls='runDetails'>{}</button>",
+        icon("info")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<button id='exportView' type='button' class='icon-btn' data-tip='Download this view as PNG, and the synteny panel as SVG' aria-label='Export view'>{}</button>",
+        icon("download")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<button id='themeToggle' type='button' class='icon-btn' data-tip='Switch between light and dark' aria-pressed='false' aria-label='Toggle colour theme'>{}<span class='label sr-only'>Dark</span></button>",
+        icon("moon")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<button id='explorerFullscreen' type='button' class='icon-btn' data-tip='Fullscreen' aria-label='Fullscreen'>{}</button>",
+        icon("expand")
+    )
+    .expect("write to String is infallible");
+    html.push_str("</div>");
     html.push_str("</div></header>");
 
     let reference_gi = args
