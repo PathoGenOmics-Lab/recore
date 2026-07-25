@@ -2020,8 +2020,13 @@ fn explorer_workspace_html(
     html.push_str("<span id='clusterInfo' class='muted num'></span>");
     html.push_str("</div>");
     html.push_str("<div class='tool-group'>");
+    html.push_str("<input id='genomeSearch' type='search' placeholder='Find genome' aria-label='Find genome by name'>");
+    html.push_str("<span id='genomeInfo' class='muted num'></span>");
+    html.push_str("</div>");
+    html.push_str("<div class='tool-group'>");
     html.push_str("<select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Tips: selected cluster</option><option value='lineage'>Tips: lineage</option><option value='process'>Tips: mechanism</option><option value='rescue'>Tips: rescue burden</option><option value='absence'>Tips: absence burden</option><option value='correction'>Tips: any correction</option></select>");
     html.push_str("<select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Cells: evidence state</option><option value='process'>Cells: mechanism</option></select>");
+    html.push_str("<select id='columnOrder' aria-label='Column order'><option value='matrix'>Order: input matrix</option><option value='prevalence'>Order: prevalence</option><option value='mechanism'>Order: mechanism</option><option value='corrected'>Order: corrected cells</option><option value='name'>Order: cluster name</option></select>");
     html.push_str("</div>");
     html.push_str("<div class='tool-group'>");
     html.push_str("<div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div>");

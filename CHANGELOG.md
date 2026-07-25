@@ -99,6 +99,10 @@ and Recore uses semantic versioning.
   the corrected matrix and synteny, with the run summary, breakdowns, candidate
   table and file list moved into a run-details drawer. Synteny is a full-width
   band under the matrix, and the zoom controls sit on the axis they drive.
+- The workspace can order matrix columns by prevalence, mechanism, corrected
+  cells or name instead of only the input matrix order, and can find a genome by
+  name, ringing the matching tips and scrolling to the first hit.
+- The report can export the current view as a PNG, and the synteny panel as SVG.
 - The embedded matrix ships as compact per-cluster state sets rather than one
   character per cell, and each pane renders only its visible window, so the
   viewer handles runs of 10,000 genomes by 30,000 clusters. The tip limit rises

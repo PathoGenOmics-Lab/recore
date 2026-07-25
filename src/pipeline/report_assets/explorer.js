@@ -108,10 +108,13 @@ const lineageDescriptions = {
 const lineageOrder = ["L4","L2","L3","L1","L7","L5","L6","L9","L10","A1","A2","A3","A4","L8","M. canettii","unknown"];
 const select = document.getElementById("clusterSelect");
 const search = document.getElementById("clusterSearch");
+const genomeSearch = document.getElementById("genomeSearch");
+const genomeInfo = document.getElementById("genomeInfo");
 const sizeControl = document.getElementById("cellSize");
 const rowHeightControl = document.getElementById("rowHeight");
 const colorMode = document.getElementById("tipColorMode");
 const matrixColorMode = document.getElementById("matrixColorMode");
+const columnOrder = document.getElementById("columnOrder");
 const labelToggle = document.getElementById("tipLabels");
 const referenceButton = document.getElementById("referenceOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
@@ -218,6 +221,8 @@ let selectedSyntenyBlock = 0;
 let selectedSyntenyReference = false;
 let selectedSyntenyCarriers = new Set();
 let mechanismFilters = new Set();
+/* Rows matching the genome search, marked on the tree and the lineage strip. */
+let highlightedRows = new Set();
 let treeRoot = data.tree;
 
 /* ---- Cell decoding -------------------------------------------------------
@@ -368,21 +373,49 @@ function mechanismFilterSummary() {
   if (labels.length <= 2) return labels.join(" + ");
   return `${labels.length} mechanisms`;
 }
+/* Column order is a real analysis control, not decoration. Panaroo emits
+   clusters in its own order, which over 30,000 columns is arbitrary: sorting by
+   prevalence or mechanism is what turns the matrix from a colour wash into
+   something where clade-associated blocks group together. */
+function sortVisibleClusters(indices) {
+  const mode = columnOrder ? columnOrder.value : "matrix";
+  if (mode === "matrix") return indices;
+  const key = idx => {
+    const cluster = data.clusters[idx] || {};
+    if (mode === "prevalence") return -(cluster.prevalence || 0);
+    if (mode === "name") return String(cluster.name || "");
+    if (mode === "mechanism") return processLabel(processKind(cluster));
+    if (mode === "corrected") {
+      const counts = countsForCluster(idx);
+      return -(counts.R + counts.N);
+    }
+    return idx;
+  };
+  return indices
+    .map(idx => ({idx, key: key(idx)}))
+    .sort((a, b) => {
+      if (a.key < b.key) return -1;
+      if (a.key > b.key) return 1;
+      // Ties keep matrix order, so the view is stable between renders.
+      return a.idx - b.idx;
+    })
+    .map(entry => entry.idx);
+}
 function refreshVisibleClusters() {
   const previousSelected = selected;
-  visibleClusters = data.clusters
+  visibleClusters = sortVisibleClusters(data.clusters
     .map((_, idx) => idx)
-    .filter(idx => passesActiveFilters(idx, true));
+    .filter(idx => passesActiveFilters(idx, true)));
   if (!visibleClusters.length) {
     if (referenceOnly) {
       referenceOnly = false;
-      visibleClusters = data.clusters
+      visibleClusters = sortVisibleClusters(data.clusters
         .map((_, idx) => idx)
-        .filter(idx => passesActiveFilters(idx, true));
+        .filter(idx => passesActiveFilters(idx, true)));
     }
     if (!visibleClusters.length && mechanismFilters.size) {
       mechanismFilters.clear();
-      visibleClusters = data.clusters.map((_, idx) => idx);
+      visibleClusters = sortVisibleClusters(data.clusters.map((_, idx) => idx));
     }
   }
   if (!visibleClusters.includes(selected)) {
@@ -791,7 +824,14 @@ function drawNode(node, parts) {
     const radius = Math.max(0.18, Math.min(5, cellH / 2 - 0.08));
     const strokeWidth = Math.max(0.2, Math.min(1.2, cellH * 0.45));
     parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="${strokeWidth}"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
-    if (isSelectedSyntenyCarrier(node.genome)) {
+    if (highlightedRows.has(node.row)) {
+    treeCtx.strokeStyle = "#0ea5e9";
+    treeCtx.lineWidth = 1.6;
+    treeCtx.beginPath();
+    treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
+    treeCtx.stroke();
+  }
+  if (isSelectedSyntenyCarrier(node.genome)) {
       const ringRadius = radius + Math.max(1.2, Math.min(3, cellH * 0.30));
       const ringTitle = selectedSyntenyReference ? "selected H37Rv reference context" : `selected synteny #${selectedSyntenyBlock + 1}`;
       parts.push(`<circle cx="${x}" cy="${y}" r="${ringRadius}" class="synteny-tip-ring"><title>${escapeHtml(label)}: ${escapeHtml(ringTitle)}</title></circle>`);
@@ -1836,6 +1876,13 @@ function drawTreeNode(node, top, firstRow, lastRow, viewH, showLabels) {
     treeCtx.lineWidth = 1;
     treeCtx.stroke();
   }
+  if (highlightedRows.has(node.row)) {
+    treeCtx.strokeStyle = "#0ea5e9";
+    treeCtx.lineWidth = 1.6;
+    treeCtx.beginPath();
+    treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
+    treeCtx.stroke();
+  }
   if (isSelectedSyntenyCarrier(node.genome)) {
     treeCtx.strokeStyle = "#f97316";
     treeCtx.lineWidth = 1.4;
@@ -2211,6 +2258,14 @@ sizeControl.addEventListener("input", () => { resetMatrixCache(); render(false);
 rowHeightControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
 syntenyZoomControl.addEventListener("input", () => { syntenyKey = ""; render(false); });
 matrixColorMode.addEventListener("change", () => { resetMatrixCache(); render(false); });
+if (columnOrder) {
+  columnOrder.addEventListener("change", () => {
+    refreshVisibleClusters();
+    populateOptions();
+    resetMatrixCache();
+    render(true);
+  });
+}
 matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });
 headerScroller.addEventListener("scroll", () => { matrixPane.scrollLeft = headerScroller.scrollLeft; });
 function adjustRange(control, delta, min, max) {
@@ -2451,6 +2506,43 @@ if (exportButton) {
     status.textContent = svg
       ? "Exported recore_matrix.png and recore_synteny.svg."
       : "Exported recore_matrix.png.";
+  });
+}
+
+
+/* With 10,000 tips there was no way to answer "where is AS00146". Matching tips
+   are ringed on the tree and the view scrolls to the first hit. */
+if (genomeSearch) {
+  genomeSearch.addEventListener("input", () => {
+    const query = genomeSearch.value.trim().toLowerCase();
+    highlightedRows = new Set();
+    if (!query) {
+      if (genomeInfo) genomeInfo.textContent = "";
+      treeDirty = true;
+      render(false);
+      return;
+    }
+    let firstRow = -1;
+    for (let row = 0; row < leafOrder.length; row += 1) {
+      const name = (data.genomes[leafOrder[row]] || "").toLowerCase();
+      if (name.includes(query)) {
+        highlightedRows.add(row);
+        if (firstRow < 0) firstRow = row;
+      }
+    }
+    if (genomeInfo) {
+      genomeInfo.textContent = highlightedRows.size
+        ? `${highlightedRows.size} of ${leafOrder.length} tips`
+        : "no match";
+    }
+    if (firstRow >= 0 && matrixPane) {
+      const view = viewportSize(matrixViewport);
+      matrixPane.scrollTop = Math.max(0, firstRow * cellH - view.h / 2);
+      if (treeScroll) treeScroll.scrollTop = matrixPane.scrollTop;
+      status.textContent = `${data.genomes[leafOrder[firstRow]]}: tip ${firstRow + 1} of ${leafOrder.length}`;
+    }
+    treeDirty = true;
+    render(false);
   });
 }
 
