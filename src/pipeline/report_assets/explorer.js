@@ -172,6 +172,9 @@ let selected = 0;
 let hoverRow = -1;
 let hoverCol = -1;
 let leafOrder = [];
+/* Matrix rows follow tree-tip order while cell sets are keyed by matrix genome
+   index, so drawing needs the inverse mapping. -1 marks a genome with no tip. */
+let rowOfGenome = new Int32Array(0);
 let visibleClusters = [];
 let genomeStats = [];
 let maxGenomeStats = {R:1, N:1, A:1, correction:1};
@@ -180,7 +183,10 @@ let maxDistance = 0;
 let treeHeight = 0;
 let treeWidth = DEFAULT_TREE_W;
 const headerH = 24;
-const maxCanvasDim = 32000;
+// Chrome refuses a 2D canvas wider or taller than 16384 device pixels, and does
+// it silently: allocation succeeds and every draw is discarded, so the matrix
+// comes out blank rather than erroring. The old 32000 sat above that line.
+const maxCanvasDim = 16384;
 const maxCanvasPixels = 90000000;
 let cellH = 12;
 let cellW = 8;
@@ -202,13 +208,22 @@ let treeRoot = data.tree;
 
 /* ---- Cell decoding -------------------------------------------------------
    Cells arrive as one base64 blob per cluster holding the genome indices that
-   are not absent, split by state (see cellcodec.rs). Decoding every cluster up
-   front would rebuild the dense matrix we are trying to avoid, so rows are
-   decoded on demand and kept in a bounded cache: rendering only ever touches
-   the columns currently on screen. */
+   are not absent, split by state (see cellcodec.rs).
+
+   Rows stay in set form rather than being expanded into a dense array. That is
+   what keeps this viable at scale: a decoded cluster costs about what its
+   encoding costs, so every cluster can be held at once (a few MB for 30,000
+   clusters) instead of 10 KB each, and drawing a column costs the number of
+   cells that actually carry information rather than the number of genomes.
+
+   A set is one of:
+     {kind:"all"}                 every genome, drawn as one filled rect
+     {kind:"list", idx}           sorted genome indices
+     {kind:"complement", idx}     every genome except these, drawn as a filled
+                                  rect with the exclusions punched back out */
 const STATE_CODES = ["P", "R", "N", "A"];
-const CELL_CACHE_LIMIT = 4096;
-const cellCache = new Map();
+const EMPTY_SET = {kind: "list", idx: new Int32Array(0)};
+const decodedRows = new Map();
 
 function decodeBase64(text) {
   const binary = atob(text);
@@ -216,9 +231,9 @@ function decodeBase64(text) {
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
-function decodeClusterRow(encoded, nGenomes) {
-  const row = new Uint8Array(nGenomes).fill(3);
-  if (!encoded) return row;
+function decodeClusterSets(encoded, nGenomes) {
+  const sets = [EMPTY_SET, EMPTY_SET, EMPTY_SET];
+  if (!encoded) return sets;
   const bytes = decodeBase64(encoded);
   let pos = 0;
   const readVarint = () => {
@@ -232,61 +247,95 @@ function decodeClusterRow(encoded, nGenomes) {
       shift += 7;
     }
   };
+  const readIndices = () => {
+    const count = readVarint();
+    const idx = new Int32Array(count);
+    let previous = 0;
+    for (let i = 0; i < count; i += 1) {
+      previous += readVarint();
+      idx[i] = previous;
+    }
+    return idx;
+  };
   for (let state = 0; state < 3; state += 1) {
     const mode = bytes[pos];
     pos += 1;
-    if (mode === 0 || mode === 1) {
-      const count = readVarint();
-      const indices = new Int32Array(count);
-      let previous = 0;
-      for (let i = 0; i < count; i += 1) {
-        previous += readVarint();
-        indices[i] = previous;
-      }
-      if (mode === 0) {
-        for (let i = 0; i < count; i += 1) row[indices[i]] = state;
-      } else {
-        const absent = new Uint8Array(nGenomes);
-        for (let i = 0; i < count; i += 1) absent[indices[i]] = 1;
-        for (let g = 0; g < nGenomes; g += 1) if (!absent[g]) row[g] = state;
-      }
+    if (mode === 0) {
+      sets[state] = {kind: "list", idx: readIndices()};
+    } else if (mode === 1) {
+      const idx = readIndices();
+      sets[state] = idx.length === 0 ? {kind: "all"} : {kind: "complement", idx};
     } else if (mode === 2) {
+      // Bitset mode only wins near 50% prevalence, where a plain list is the
+      // cheapest thing to draw from anyway.
       const len = Math.ceil(nGenomes / 8);
+      const idx = [];
       for (let g = 0; g < nGenomes; g += 1) {
-        if (bytes[pos + (g >> 3)] & (1 << (g & 7))) row[g] = state;
+        if (bytes[pos + (g >> 3)] & (1 << (g & 7))) idx.push(g);
       }
       pos += len;
+      sets[state] = {kind: "list", idx: Int32Array.from(idx)};
     } else {
-      return row;
+      return sets;
     }
   }
-  return row;
+  return sets;
 }
-function clusterRow(clusterIdx) {
-  const cached = cellCache.get(clusterIdx);
-  if (cached) {
-    // Refresh recency so the working set survives a pan across the matrix.
-    cellCache.delete(clusterIdx);
-    cellCache.set(clusterIdx, cached);
-    return cached;
+function buildRowOfGenome() {
+  rowOfGenome = new Int32Array(data.genomes.length).fill(-1);
+  for (let row = 0; row < leafOrder.length; row += 1) {
+    const genomeIdx = leafOrder[row];
+    if (genomeIdx >= 0 && genomeIdx < rowOfGenome.length) rowOfGenome[genomeIdx] = row;
   }
-  const row = decodeClusterRow(data.cells[clusterIdx], data.genomes.length);
-  cellCache.set(clusterIdx, row);
-  if (cellCache.size > CELL_CACHE_LIMIT) {
-    cellCache.delete(cellCache.keys().next().value);
+}
+function clusterSets(clusterIdx) {
+  let sets = decodedRows.get(clusterIdx);
+  if (!sets) {
+    sets = decodeClusterSets(data.cells[clusterIdx], data.genomes.length);
+    decodedRows.set(clusterIdx, sets);
   }
-  return row;
+  return sets;
+}
+function setSize(set, nGenomes) {
+  if (set.kind === "all") return nGenomes;
+  if (set.kind === "complement") return nGenomes - set.idx.length;
+  return set.idx.length;
+}
+/** Index of the first entry >= value, or idx.length. */
+function lowerBound(idx, value) {
+  let lo = 0;
+  let hi = idx.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (idx[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+function setContains(set, value) {
+  if (set.kind === "all") return true;
+  const at = lowerBound(set.idx, value);
+  const found = at < set.idx.length && set.idx[at] === value;
+  return set.kind === "complement" ? !found : found;
 }
 function stateAt(clusterIdx, genomeIdx) {
-  const row = clusterRow(clusterIdx);
-  return STATE_CODES[row ? row[genomeIdx] : 3] || "A";
+  const sets = clusterSets(clusterIdx);
+  // Later states win, matching the writer's ordering.
+  for (let state = 2; state >= 0; state -= 1) {
+    if (setContains(sets[state], genomeIdx)) return STATE_CODES[state];
+  }
+  return "A";
 }
 function countsForCluster(clusterIdx) {
-  const counts = {P:0, R:0, N:0, A:0};
-  const row = clusterRow(clusterIdx);
-  for (let i = 0; i < data.genomes.length; i += 1) {
-    counts[STATE_CODES[row[i]]] += 1;
-  }
+  const n = data.genomes.length;
+  const sets = clusterSets(clusterIdx);
+  const counts = {
+    P: setSize(sets[0], n),
+    R: setSize(sets[1], n),
+    N: setSize(sets[2], n),
+    A: 0,
+  };
+  counts.A = Math.max(0, n - counts.P - counts.R - counts.N);
   return counts;
 }
 function passesActiveFilters(idx, includeMechanism = true) {
@@ -1477,6 +1526,10 @@ function sizeCanvas(target, context, cssW, cssH, scale) {
   context.setTransform(scale, 0, 0, scale, 0, 0);
 }
 let matrixScale = 1;
+/* The matrix is drawn from the per-cluster state sets, not by walking the grid.
+   A grid walk costs clusters x genomes, which is 300 million cells at the scale
+   these runs reach; walking the sets costs the number of cells that actually
+   carry a state, and a core cluster collapses to a single filled rect. */
 function rebuildBaseMatrix() {
   const {rows, cols} = updateCellGeometry();
   const cssW = Math.max(1, cols * cellW);
@@ -1486,20 +1539,52 @@ function rebuildBaseMatrix() {
   baseCanvas.height = Math.max(1, Math.round(cssH * matrixScale));
   baseCtx.setTransform(matrixScale, 0, 0, matrixScale, 0, 0);
   baseCtx.clearRect(0, 0, cssW, cssH);
+  // Absent is the background, so absent cells are never drawn.
   baseCtx.fillStyle = panelBg;
   baseCtx.fillRect(0, 0, cssW, cssH);
-  for (let r = 0; r < rows; r += 1) {
-    const genomeIdx = leafOrder[r];
-    for (let c = 0; c < cols; c += 1) {
-      const clusterIdx = originalClusterAtVisibleColumn(c);
-      const state = stateAt(clusterIdx, genomeIdx);
-      if (matrixColorMode.value === "process" && state !== "A") {
-        baseCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
+  const drawW = Math.max(1, cellW - 1);
+  const cellDrawH = cellH >= 2 ? Math.max(1, cellH - 1) : Math.max(0.2, cellH);
+  const byProcess = matrixColorMode.value === "process";
+  for (let c = 0; c < cols; c += 1) {
+    const clusterIdx = originalClusterAtVisibleColumn(c);
+    if (clusterIdx < 0) continue;
+    const sets = clusterSets(clusterIdx);
+    const x = c * cellW;
+    const processFill = byProcess
+      ? processColor(processKind(data.clusters[clusterIdx]))
+      : null;
+    // A column that covers every genome is one rect when rows are too short to
+    // show the gutter, and per-row rects when they are, so a core cluster reads
+    // the same as any other column instead of a solid unbroken bar.
+    const fillWholeColumn = () => {
+      if (cellH >= 2) {
+        for (let r = 0; r < rows; r += 1) {
+          baseCtx.fillRect(x, r * cellH, drawW, cellDrawH);
+        }
       } else {
-        baseCtx.fillStyle = colors[state] || colors.A;
+        baseCtx.fillRect(x, 0, drawW, rows * cellH);
       }
-      const cellDrawH = cellH >= 2 ? Math.max(1, cellH - 1) : Math.max(0.2, cellH);
-      baseCtx.fillRect(c * cellW, r * cellH, Math.max(1, cellW - 1), cellDrawH);
+    };
+    for (let state = 0; state < 3; state += 1) {
+      const set = sets[state];
+      baseCtx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
+      if (set.kind === "all") {
+        fillWholeColumn();
+        continue;
+      }
+      if (set.kind === "complement") {
+        fillWholeColumn();
+        baseCtx.fillStyle = panelBg;
+        for (let i = 0; i < set.idx.length; i += 1) {
+          const row = rowOfGenome[set.idx[i]];
+          if (row >= 0) baseCtx.fillRect(x, row * cellH, drawW, cellH);
+        }
+        continue;
+      }
+      for (let i = 0; i < set.idx.length; i += 1) {
+        const row = rowOfGenome[set.idx[i]];
+        if (row >= 0) baseCtx.fillRect(x, row * cellH, drawW, cellDrawH);
+      }
     }
   }
   baseCellH = cellH;
@@ -1703,6 +1788,7 @@ leafOrder = [];
 maxDepth = 0;
 maxDistance = 0;
 layout(treeRoot, 0, 0);
+buildRowOfGenome();
 computeGenomeStats();
 refreshVisibleClusters();
 // Open at a zoom that suits the run. A 16-genome, 12-cluster matrix at the old
