@@ -46,7 +46,8 @@
         const el = document.getElementById(link.dataset.target);
         if (!el) return;
         event.preventDefault();
-        el.scrollIntoView({behavior: "smooth", block: "start"});
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        el.scrollIntoView({behavior: reduce ? "auto" : "smooth", block: "start"});
         history.replaceState(null, "", `#${link.dataset.target}`);
       });
     });
@@ -113,10 +114,14 @@
       const headers = Array.from(table.tHead?.rows[0]?.cells || []);
       headers.forEach((header, idx) => {
         if (!header.classList.contains("sortable")) return;
-        header.addEventListener("click", () => {
+        const sort = () => {
           const isAsc = header.classList.contains("sort-asc");
-          headers.forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+          headers.forEach(h => {
+            h.classList.remove("sort-asc", "sort-desc");
+            if (h.hasAttribute("aria-sort")) h.setAttribute("aria-sort", "none");
+          });
           header.classList.add(isAsc ? "sort-desc" : "sort-asc");
+          header.setAttribute("aria-sort", isAsc ? "descending" : "ascending");
           const dir = isAsc ? -1 : 1;
           const type = header.dataset.sortType || "string";
           const rows = Array.from(tbody.rows);
@@ -128,6 +133,12 @@
             return 0;
           });
           rows.forEach(row => tbody.appendChild(row));
+        };
+        header.addEventListener("click", sort);
+        header.addEventListener("keydown", event => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          sort();
         });
       });
     });

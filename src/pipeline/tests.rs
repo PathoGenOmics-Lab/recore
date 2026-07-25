@@ -814,6 +814,9 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
     assert!(text.contains("mech-badge"));
     assert!(text.contains("candidatesTable"));
     assert!(text.contains("synteny"));
+    // Sortable headers must stay reachable and announced for keyboard/screen readers.
+    assert!(text.contains("aria-sort='none'"));
+    assert!(text.contains("scope='col'"));
     assert_no_remote_assets(&text);
 }
 

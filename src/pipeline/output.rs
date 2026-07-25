@@ -2325,13 +2325,22 @@ pub(super) fn write_html_report(
         html.push_str("<div class='table-wrap'>");
         html.push_str("<table id='candidatesTable' data-sortable>");
         html.push_str("<thead><tr>");
-        html.push_str("<th class='sortable' data-sort-type='string'>Cluster</th>");
-        html.push_str("<th class='sortable' data-sort-type='string'>Priority</th>");
-        html.push_str("<th class='sortable num' data-sort-type='number'>Score</th>");
-        html.push_str("<th class='sortable' data-sort-type='string'>Mechanism</th>");
-        html.push_str("<th class='sortable' data-sort-type='string'>Phylogeny</th>");
-        html.push_str("<th class='sortable' data-sort-type='string'>Support</th>");
-        html.push_str("<th>Recommended wording</th>");
+        for (label, sort_type, extra_class) in [
+            ("Cluster", "string", ""),
+            ("Priority", "string", ""),
+            ("Score", "number", " num"),
+            ("Mechanism", "string", ""),
+            ("Phylogeny", "string", ""),
+            ("Support", "string", ""),
+        ] {
+            write!(
+                html,
+                "<th scope='col' class='sortable{}' data-sort-type='{}' tabindex='0' role='columnheader' aria-sort='none' title='Sort by {}'>{}</th>",
+                extra_class, sort_type, label, label
+            )
+            .expect("write to String is infallible");
+        }
+        html.push_str("<th scope='col'>Recommended wording</th>");
         html.push_str("</tr></thead><tbody>");
         for row in top_candidates {
             let badge_class = priority_badge_class(&row.priority);
