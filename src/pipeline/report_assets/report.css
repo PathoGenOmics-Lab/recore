@@ -1587,11 +1587,6 @@ body.recore-dragging .tree-pane svg {
   stroke-opacity: 0.35;
 }
 
-.tree-scale {
-  font-size: 9px;
-  fill: var(--muted);
-}
-
 .tip-label {
   font-size: 10px;
   fill: var(--ink-soft);

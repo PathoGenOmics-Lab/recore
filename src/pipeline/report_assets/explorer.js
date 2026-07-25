@@ -637,7 +637,7 @@ function xForNode(node) {
   }
   return 14 + node.depth * (usable / Math.max(1, maxDepth));
 }
-function drawNode(node, parts, xScale) {
+function drawNode(node, parts) {
   const x = xForNode(node);
   const y = node.row * cellH + cellH / 2;
   if (node.children && node.children.length) {
@@ -648,7 +648,7 @@ function drawNode(node, parts, xScale) {
       const edgeStyle = treeEdgeStyle(child);
       parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge"${edgeStyle}>${branchTitle}</line>`);
       parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"${edgeStyle}/>`);
-      drawNode(child, parts, xScale);
+      drawNode(child, parts);
     });
   } else {
     const style = tipStyle(node.genome);
@@ -1260,8 +1260,16 @@ function renderLineageStrip() {
     lineageStripCtx.fillRect(0, r * cellH, LINEAGE_STRIP_W, Math.max(1, cellH));
   }
 }
+function treeCaption() {
+  const rootLabel = hasL8Tip(treeRoot) ? "L8-rooted" : "input-rooted";
+  return treeMode === "phylogram" && maxDistance > 0
+    ? `phylogram, ${rootLabel}, longest root-to-tip path ${formatBranchLength(maxDistance)}`
+    : `cladogram, ${rootLabel}, branch lengths ignored`;
+}
 function updateTopBarMeta() {
-  if (topTreeMeta) topTreeMeta.textContent = `${leafOrder.length} matched tips`;
+  if (topTreeMeta) {
+    topTreeMeta.textContent = `${leafOrder.length} matched tips · ${treeCaption()}`;
+  }
   if (topMatrixMeta) topMatrixMeta.textContent = `${visibleClusters.length} / ${data.clusters.length} clusters`;
   if (topSyntenyMeta) {
     const cluster = data.clusters[selected];
@@ -1272,16 +1280,9 @@ function updateTopBarMeta() {
   }
 }
 function renderTree() {
-  const xScale = Math.max(24, (treeWidth - 155) / Math.max(1, maxDepth));
   if (treeDirty) {
     const parts = [];
-    drawNode(treeRoot, parts, xScale);
-    const rootLabel = hasL8Tip(treeRoot) ? "L8-rooted" : "input-rooted";
-    if (treeMode === "phylogram" && maxDistance > 0) {
-      parts.push(`<text x="14" y="13" class="tree-scale">phylogram, ${rootLabel}, branch length max ${escapeHtml(formatBranchLength(maxDistance))}</text>`);
-    } else {
-      parts.push(`<text x="14" y="13" class="tree-scale">cladogram, ${rootLabel}, branch lengths ignored</text>`);
-    }
+    drawNode(treeRoot, parts);
     svg.setAttribute("width", String(treeWidth));
     svg.setAttribute("height", String(treeHeight));
     svg.setAttribute("viewBox", `0 0 ${treeWidth} ${treeHeight}`);
@@ -1486,6 +1487,24 @@ function referenceMechanismRow(cluster) {
   }
   return `<dt>Reference (audit)</dt><dd>${bits.join("<br>")}</dd>`;
 }
+const MIN_VIEWER_H = 240;
+const MAX_VIEWER_H = 920;
+const FIT_TARGET_H = 560;
+const FIT_TARGET_W = 720;
+// Small trees left most of the viewport empty because the panes always claimed
+// their maximum height. Size the viewer to whichever pane needs the most room,
+// capped so a 5000-tip tree still scrolls inside a sane window.
+function applyViewerHeight() {
+  if (!viewerBody) return;
+  const contentH = Math.max(treeHeight, leafOrder.length * cellH) + 8;
+  const syntenyH = syntenyHidden ? 0 : (syntenySvg ? syntenySvg.getBoundingClientRect().height + 46 : 0);
+  const viewportCap = Math.min(MAX_VIEWER_H, Math.round(window.innerHeight * 0.76));
+  const needed = Math.max(contentH, syntenyH);
+  const height = `${Math.round(Math.max(MIN_VIEWER_H, Math.min(viewportCap, needed)))}px`;
+  if (viewerBody.style.getPropertyValue("--viewer-h") !== height) {
+    viewerBody.style.setProperty("--viewer-h", height);
+  }
+}
 function render(scrollToSelected = false) {
   renderMatrix(scrollToSelected);
   renderColumnHeader();
@@ -1494,6 +1513,7 @@ function render(scrollToSelected = false) {
   renderLineageStrip();
   renderLineageLegend();
   updateTopBarMeta();
+  applyViewerHeight();
 }
 function scheduleRender(scrollToSelected = false) {
   if (scrollToSelected) {
@@ -1534,19 +1554,17 @@ maxDistance = 0;
 layout(treeRoot, 0, 0);
 computeGenomeStats();
 refreshVisibleClusters();
-if (leafOrder.length > 1500) {
-  labelToggle.checked = false;
-  sizeControl.value = "2";
-  rowHeightControl.value = "2";
-} else if (leafOrder.length > 800) {
-  labelToggle.checked = false;
-  sizeControl.value = "3";
-  rowHeightControl.value = "3";
-} else if (leafOrder.length > 300) {
-  labelToggle.checked = false;
-  sizeControl.value = "4";
-  rowHeightControl.value = "4";
-}
+// Open at a zoom that suits the run. A 16-genome tree at the old fixed 8px rows
+// was a thumbnail in a half-empty pane; a 3000-tip tree needed the opposite.
+(() => {
+  const tips = Math.max(1, leafOrder.length);
+  const cols = Math.max(1, visibleClusters.length);
+  const rowFit = Math.max(1, Math.min(18, Math.floor(FIT_TARGET_H / tips)));
+  const colFit = Math.max(1, Math.min(12, Math.floor(FIT_TARGET_W / cols)));
+  rowHeightControl.value = String(rowFit);
+  sizeControl.value = String(colFit);
+  labelToggle.checked = tips <= 500 && rowFit >= 4;
+})();
 populateOptions();
 if (layoutState.syntenyHiddenStored === false) {
   syntenyHidden = false;
@@ -1556,13 +1574,20 @@ applySyntenyVisibility();
 setupDragHandle(treeHandle, "tree");
 setupDragHandle(syntenyHandle, "synteny");
 if (typeof ResizeObserver !== "undefined") {
-  const ro = new ResizeObserver(() => {
+  // Width only: applyViewerHeight writes back to this element's height, so
+  // reacting to height changes would make the observer chase its own tail.
+  let lastWidth = 0;
+  const ro = new ResizeObserver(entries => {
+    const width = Math.round(entries[0]?.contentRect.width || 0);
+    if (width === lastWidth) return;
+    lastWidth = width;
     applyLayout();
     resetMatrixCache();
     render(false);
   });
   ro.observe(viewerBody);
 }
+window.addEventListener("resize", () => { applyViewerHeight(); });
 render(true);
 window.addEventListener("recore:theme-change", () => {
   refreshThemeColors();
