@@ -38,6 +38,10 @@ becoming presence calls.
 
     Build from source or take a tagged binary. Needs Rust and minimap2.
 
+-   :material-school: **[Tutorial](getting-started/tutorial.md)**
+
+    A full run on a generated dataset with known problems planted in it.
+
 -   :material-rocket-launch: **[Quick start](getting-started/quickstart.md)**
 
     One command for a publication-grade correction pass, and what to read first.

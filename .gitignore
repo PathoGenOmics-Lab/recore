@@ -20,6 +20,11 @@ Thumbs.db
 
 # Recore output
 recore_output/
+tutorial_data/
+tutorial_out/
+out_strict/
+out_balanced/
+out_sensitive/
 benchmarks/amap_performance_metrics.tsv
 
 

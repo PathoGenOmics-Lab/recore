@@ -3179,10 +3179,15 @@ function renderTreeScaleBar() {
     treeScaleBar.hidden = true;
     return;
   }
-  const pxPerUnit = treeUsableWidth() / maxDistance;
-  const step = niceStep(maxDistance / 4);
+  const usable = treeUsableWidth();
+  const pxPerUnit = usable / maxDistance;
+  // Aim the bar at about a third of the drawing width and then round to a nice
+  // number, rather than rounding a fixed fraction of the tree depth: with tip
+  // labels on, a 320px pane leaves 138px to draw in, and maxDistance/4 rounded
+  // down to a bar of 17px, one pixel under the old floor, so no bar at all.
+  const step = niceStep(maxDistance * 0.32);
   const width = step * pxPerUnit;
-  if (!(width >= 18) || !Number.isFinite(width)) {
+  if (!(width >= 14) || !Number.isFinite(width)) {
     treeScaleBar.hidden = true;
     return;
   }

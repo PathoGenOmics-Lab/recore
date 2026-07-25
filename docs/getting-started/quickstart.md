@@ -1,5 +1,8 @@
 # Quick start
 
+If you would rather see a full run on data with known answers before pointing
+Recore at your own, start with the [tutorial](tutorial.md).
+
 ## The run most people want
 
 A publication-grade correction pass, with FASTA assemblies and GFF annotations:

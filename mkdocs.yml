@@ -126,6 +126,7 @@ nav:
   - Home: index.md
   - Getting started:
       - getting-started/installation.md
+      - getting-started/tutorial.md
       - getting-started/quickstart.md
       - getting-started/inputs.md
   - User guide:
