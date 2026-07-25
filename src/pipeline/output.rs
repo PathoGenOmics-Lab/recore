@@ -1489,8 +1489,11 @@ const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
 const REPORT_CSS: &str = include_str!("report_assets/report.css");
 const REPORT_UI_JS: &str = include_str!("report_assets/report-ui.js");
 const EXPLORER_JS: &str = include_str!("report_assets/explorer.js");
-const EXPLORER_MAX_TIPS: usize = 5_000;
-const EXPLORER_MAX_CELLS: usize = 25_000_000;
+// The viewer draws only its visible window and ships the matrix in compact
+// per-cluster sets, so the ceiling is now the payload the browser has to parse
+// rather than anything about the rendering.
+const EXPLORER_MAX_TIPS: usize = 20_000;
+const EXPLORER_MAX_CELLS: usize = 1_200_000_000;
 const EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER: usize = 10;
 
 /// Runs in <head> so `data-theme` is set before the browser paints anything.
@@ -2047,7 +2050,10 @@ fn explorer_workspace_html(
     html.push_str(
         "<header class='pane-head'><span>Phylogeny</span><small id='topTreeMeta'></small></header>",
     );
-    html.push_str("<div class='tree-scroll' id='treeScroll'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas></div>");
+    // Tree, lineage strip and matrix all draw only their visible window onto a
+    // viewport-sized canvas; the spacers carry the virtual size so the browser
+    // still owns the scrollbars.
+    html.push_str("<div class='pane-viewport tree-viewport'><canvas id='treeCanvas' class='tree-canvas' role='img' aria-label='Matched phylogeny'></canvas><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas><div class='pane-scroll' id='treeScroll'><div class='pane-spacer' id='treeSpacer'></div></div></div>");
     html.push_str("<div class='zoom-rail'><label class='rail-label' for='rowHeight'>Rows</label><input id='rowHeight' type='range' min='1' max='18' value='8' aria-label='Row zoom'></div>");
     html.push_str("</section>");
 
@@ -2056,8 +2062,8 @@ fn explorer_workspace_html(
     // Matrix pane.
     html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
     html.push_str("<header class='pane-head'><span>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span></header>");
-    html.push_str("<div class='matrix-header' id='headerScroller'><canvas id='columnHeaderCanvas' class='column-head'></canvas></div>");
-    html.push_str("<div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
+    html.push_str("<div class='matrix-header'><canvas id='columnHeaderCanvas' class='column-head'></canvas><div class='pane-scroll header-scroll' id='headerScroller'><div class='pane-spacer' id='headerSpacer'></div></div></div>");
+    html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas'></canvas><div class='pane-scroll' id='matrixPane'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
     html.push_str("<div class='zoom-dock'><label for='cellSize'>Columns</label><input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8' aria-label='Column zoom'></div>");
     html.push_str("</section>");
 

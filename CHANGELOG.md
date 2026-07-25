@@ -93,6 +93,17 @@ and Recore uses semantic versioning.
 - README now documents the current v6 audit guarantees, input guardrails,
   multicopy-corrected matrix metadata, and evolutionary interpretation fields.
 
+### Changed
+
+- The HTML report is now a full-viewport workspace built around the phylogeny,
+  the corrected matrix and synteny, with the run summary, breakdowns, candidate
+  table and file list moved into a run-details drawer. Synteny is a full-width
+  band under the matrix, and the zoom controls sit on the axis they drive.
+- The embedded matrix ships as compact per-cluster state sets rather than one
+  character per cell, and each pane renders only its visible window, so the
+  viewer handles runs of 10,000 genomes by 30,000 clusters. The tip limit rises
+  from 5,000 to 20,000.
+
 ### Fixed
 
 - The HTML report no longer requests a remote webfont stylesheet, so it renders

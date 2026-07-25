@@ -352,7 +352,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("Cells: mechanism"));
     assert!(text.contains("clade_associated_gain"));
     assert!(text.contains("tipLabels"));
-    assert!(text.contains("rebuildBaseMatrix"));
+    assert!(text.contains("visibleColumnRange"));
+    assert!(text.contains("visibleRowRange"));
+    assert!(text.contains("matrixSpacer"));
     assert!(text.contains("phylogramMode"));
     assert!(text.contains("const tipX = 14 + usable"));
     assert!(!text.contains("clusterHeaderLabel"));

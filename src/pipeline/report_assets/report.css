@@ -1705,23 +1705,44 @@ body.app {
   border-right: 1px solid var(--soft-line);
 }
 
-.tree-scroll {
+/* Every pane draws its visible window onto a canvas the size of the viewport,
+   and a transparent scroller on top carries a spacer with the virtual size. The
+   canvas never moves, so scrolling cannot make it jitter, and nothing has to fit
+   inside the browser's 16384px canvas limit. */
+.pane-viewport {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  display: flex;
-  align-items: flex-start;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.tree-scroll svg {
+.pane-viewport > canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  flex: 1 1 auto;
-  min-width: 0;
+}
+
+.pane-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.pane-spacer {
+  width: 1px;
+  height: 1px;
+}
+
+.tree-canvas {
+  cursor: crosshair;
 }
 
 .lineage-strip {
-  display: block;
-  flex: 0 0 auto;
+  left: auto !important;
+  right: 0;
   width: 6px;
   image-rendering: pixelated;
 }
@@ -1732,23 +1753,31 @@ body.app {
 }
 
 .matrix-header {
+  position: relative;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--soft-line);
   background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.matrix-header > canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+.header-scroll {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
 }
 
-.matrix-header::-webkit-scrollbar {
+.header-scroll::-webkit-scrollbar {
   display: none;
 }
 
-.matrix-pane {
-  flex: 1 1 auto;
-  position: relative;
-  overflow: auto;
-  min-height: 0;
+.matrix-viewport {
   background: var(--bg-elev);
 }
 

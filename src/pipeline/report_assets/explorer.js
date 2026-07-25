@@ -127,13 +127,17 @@ const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
 const lineageLegend = document.getElementById("lineageLegend");
 const status = document.getElementById("matrixStatus");
-const svg = document.getElementById("treeSvg");
 const headerCanvas = document.getElementById("columnHeaderCanvas");
 const headerCtx = headerCanvas.getContext("2d");
 const canvas = document.getElementById("matrixCanvas");
+const matrixViewport = canvas ? canvas.parentElement : null;
+const matrixSpacer = document.getElementById("matrixSpacer");
+const headerSpacer = document.getElementById("headerSpacer");
+const treeCanvas = document.getElementById("treeCanvas");
+const treeCtx = treeCanvas ? treeCanvas.getContext("2d") : null;
+const treeViewport = treeCanvas ? treeCanvas.parentElement : null;
+const treeSpacer = document.getElementById("treeSpacer");
 const ctx = canvas.getContext("2d");
-const baseCanvas = document.createElement("canvas");
-const baseCtx = baseCanvas.getContext("2d");
 const matrixPane = document.getElementById("matrixPane");
 const treePane = document.getElementById("treePane");
 const treeScroll = document.getElementById("treeScroll");
@@ -198,9 +202,10 @@ const maxCanvasDim = 16384;
 const maxCanvasPixels = 90000000;
 let cellH = 12;
 let cellW = 8;
-let baseCellH = 0;
-let baseCellW = 0;
-let baseValid = false;
+let virtualW = 1;
+let virtualH = 1;
+// Cells may be fractional, but never thinner than this or they vanish.
+const MIN_CELL_PX = 0.35;
 let treeDirty = true;
 let renderQueued = false;
 let detailsKey = "";
@@ -724,23 +729,6 @@ function currentCellSize() {
 function currentRowHeight() {
   const value = Number(rowHeightControl.value || 8);
   return Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, value));
-}
-function updateCellGeometry() {
-  const rows = leafOrder.length;
-  const cols = visibleClusters.length;
-  const colSize = currentCellSize();
-  const maxWByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, cols)));
-  const maxHByDim = Math.max(1, Math.floor(maxCanvasDim / Math.max(1, rows)));
-  cellH = Math.min(currentRowHeight(), maxHByDim);
-  cellW = Math.min(Math.max(1, Math.round(colSize * 0.82)), maxWByDim);
-  const pixelBudget = rows * cols * cellH * cellW;
-  if (pixelBudget > maxCanvasPixels) {
-    const scale = Math.sqrt(maxCanvasPixels / pixelBudget);
-    cellH = Math.max(1, Math.floor(cellH * scale));
-    cellW = Math.max(1, Math.floor(cellW * scale));
-  }
-  treeHeight = Math.max(70, Math.ceil(rows * cellH));
-  return {rows, cols};
 }
 function clusterLabel(cluster) {
   return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
@@ -1419,25 +1407,6 @@ function setupDragHandle(handle, side) {
     event.preventDefault();
   });
 }
-function renderLineageStrip() {
-  if (!lineageStripCanvas || !lineageStripCtx) return;
-  const rows = leafOrder.length;
-  const height = Math.max(1, Math.ceil(rows * cellH));
-  sizeCanvas(
-    lineageStripCanvas,
-    lineageStripCtx,
-    LINEAGE_STRIP_W,
-    height,
-    canvasScale(LINEAGE_STRIP_W, height),
-  );
-  lineageStripCtx.clearRect(0, 0, LINEAGE_STRIP_W, height);
-  for (let r = 0; r < rows; r += 1) {
-    const genomeIdx = leafOrder[r];
-    const lineage = lineageOfGenomeName(data.genomes[genomeIdx] || "");
-    lineageStripCtx.fillStyle = lineageColor(lineage);
-    lineageStripCtx.fillRect(0, r * cellH, LINEAGE_STRIP_W, Math.max(1, cellH));
-  }
-}
 function treeCaption() {
   const rootLabel = hasL8Tip(treeRoot) ? "L8-rooted" : "input-rooted";
   return treeMode === "phylogram" && maxDistance > 0
@@ -1457,62 +1426,253 @@ function updateTopBarMeta() {
       : "select a cluster";
   }
 }
-function renderTree() {
-  if (treeDirty) {
-    const parts = [];
-    drawNode(treeRoot, parts);
-    svg.setAttribute("width", String(treeWidth));
-    svg.setAttribute("height", String(treeHeight));
-    svg.setAttribute("viewBox", `0 0 ${treeWidth} ${treeHeight}`);
-    svg.innerHTML = `<line id="treeHoverGuide" x1="0" y1="0" x2="${treeWidth}" y2="0" class="tree-row-guide" style="display:none"/>${parts.join("")}`;
-    treeDirty = false;
+function referenceMechanismRow(cluster) {
+  const referenceCell = (cluster.referenceCell || "").trim();
+  const targetGene = (cluster.targetReferenceGene || "").trim();
+  const targetCluster = (cluster.targetReferenceCluster || "").trim();
+  const eventClass = (cluster.referenceEventClass || "").trim();
+  const refState = (cluster.referenceState || "").trim();
+  const bits = [];
+  if (referenceCell) bits.push(`Reference gene(s): <strong>${escapeHtml(referenceCell)}</strong>`);
+  if (targetGene || targetCluster || eventClass) {
+    const source = [];
+    if (targetGene) source.push(`source gene <strong>${escapeHtml(targetGene)}</strong>`);
+    if (targetCluster) source.push(`source cluster <strong>${escapeHtml(targetCluster)}</strong>`);
+    if (eventClass) source.push(escapeHtml(eventClass));
+    bits.push(`Event source: ${source.join("; ")}`);
   }
-  const guide = document.getElementById("treeHoverGuide");
-  if (!guide) return;
-  if (hoverRow >= 0) {
-    const hy = hoverRow * cellH + cellH / 2;
-    guide.setAttribute("y1", String(hy));
-    guide.setAttribute("y2", String(hy));
-    guide.style.display = "block";
-  } else {
-    guide.style.display = "none";
+  if (refState) {
+    // referenceState is the single-letter cell code; spell it out rather than
+    // making the reader look up what "P" means.
+    const spelled = labels[refState] || refState;
+    bits.push(`State in reference: <strong>${escapeHtml(spelled)}</strong>`);
+  }
+  if (!bits.length) {
+    const mechanism = processKind(cluster);
+    const text = mechanism === "clean_insertion_or_acquisition_candidate"
+      ? "No reference equivalent detected; candidate de novo/reference-absent locus."
+      : "No reference equivalent detected by Recore.";
+    bits.push(text);
+  }
+  return `<dt>Reference (audit)</dt><dd>${bits.join("<br>")}</dd>`;
+}
+/* Canvases are laid out in CSS pixels but must be allocated at the device ratio,
+   or a HiDPI screen upscales a 1x bitmap and the cells come out soft. The cap
+   still applies, though the viewport-sized canvases are nowhere near it now. */
+function canvasScale(cssW, cssH) {
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const byDim = maxCanvasDim / Math.max(1, cssW, cssH);
+  const byArea = Math.sqrt(maxCanvasPixels / Math.max(1, cssW * cssH));
+  return Math.max(1, Math.min(dpr, byDim, byArea));
+}
+function sizeCanvas(target, context, cssW, cssH, scale) {
+  target.width = Math.max(1, Math.round(cssW * scale));
+  target.height = Math.max(1, Math.round(cssH * scale));
+  target.style.width = `${cssW}px`;
+  target.style.height = `${cssH}px`;
+  context.setTransform(scale, 0, 0, scale, 0, 0);
+}
+
+/* ---- Virtual geometry ----------------------------------------------------
+   The matrix is as large as clusters x genomes, which no canvas can hold: the
+   browser caps a 2D canvas at 16384px per dimension, so 30,000 columns cannot
+   fit even at one pixel each. Every pane therefore draws only its visible
+   window onto a viewport-sized canvas, and a spacer carries the virtual size so
+   the browser keeps owning the scrollbars. Cell sizes may be fractional; below
+   one pixel per cell the drawing collapses onto shared pixels, which is what
+   lets a 300 million cell matrix render at all. */
+function updateCellGeometry() {
+  const rows = leafOrder.length;
+  const cols = visibleClusters.length;
+  cellH = currentRowHeight();
+  cellW = Math.max(MIN_CELL_PX, currentCellSize() * 0.82);
+  virtualW = Math.max(1, Math.ceil(cols * cellW));
+  virtualH = Math.max(1, Math.ceil(rows * cellH));
+  treeHeight = virtualH;
+  if (matrixSpacer) {
+    matrixSpacer.style.width = `${virtualW}px`;
+    matrixSpacer.style.height = `${virtualH}px`;
+  }
+  if (headerSpacer) {
+    headerSpacer.style.width = `${virtualW}px`;
+    headerSpacer.style.height = "1px";
+  }
+  if (treeSpacer) {
+    treeSpacer.style.width = "1px";
+    treeSpacer.style.height = `${virtualH}px`;
+  }
+  return {rows, cols};
+}
+function matrixScrollLeft() {
+  return matrixPane ? matrixPane.scrollLeft : 0;
+}
+function matrixScrollTop() {
+  return matrixPane ? matrixPane.scrollTop : 0;
+}
+/** Half-open range of columns touching the visible window. */
+function visibleColumnRange(width) {
+  const left = matrixScrollLeft();
+  const first = Math.max(0, Math.floor(left / cellW));
+  const last = Math.min(visibleClusters.length, Math.ceil((left + width) / cellW) + 1);
+  return [first, last];
+}
+/** Half-open range of rows touching the visible window. */
+function visibleRowRange(height) {
+  const top = matrixScrollTop();
+  const first = Math.max(0, Math.floor(top / cellH));
+  const last = Math.min(leafOrder.length, Math.ceil((top + height) / cellH) + 1);
+  return [first, last];
+}
+function viewportSize(element) {
+  if (!element) return {w: 0, h: 0};
+  return {w: Math.max(1, element.clientWidth), h: Math.max(1, element.clientHeight)};
+}
+
+function renderMatrix(scrollToSelected) {
+  const {rows, cols} = updateCellGeometry();
+  if (scrollToSelected) {
+    const selectedCol = selectedVisibleColumn();
+    if (selectedCol >= 0 && matrixPane) {
+      const view = viewportSize(matrixViewport);
+      const x = selectedCol * cellW;
+      if (x < matrixPane.scrollLeft || x > matrixPane.scrollLeft + view.w - cellW) {
+        matrixPane.scrollLeft = Math.max(0, x - view.w / 2);
+      }
+    }
+  }
+  const view = viewportSize(matrixViewport);
+  const scale = canvasScale(view.w, view.h);
+  sizeCanvas(canvas, ctx, view.w, view.h, scale);
+  ctx.fillStyle = panelBg;
+  ctx.fillRect(0, 0, view.w, view.h);
+
+  const left = matrixScrollLeft();
+  const top = matrixScrollTop();
+  const [firstCol, lastCol] = visibleColumnRange(view.w);
+  const [firstRow, lastRow] = visibleRowRange(view.h);
+  // Cells never shrink below a hairline, so a dense matrix stays legible instead
+  // of fading out when several clusters share a pixel column.
+  const drawW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
+  const drawH = Math.max(1, cellH > 2 ? cellH - 1 : cellH);
+  const gutterRows = cellH >= 2;
+  const byProcess = matrixColorMode.value === "process";
+  const spanTop = firstRow * cellH - top;
+  const spanHeight = (lastRow - firstRow) * cellH;
+
+  for (let c = firstCol; c < lastCol; c += 1) {
+    const clusterIdx = originalClusterAtVisibleColumn(c);
+    if (clusterIdx < 0) continue;
+    const sets = clusterSets(clusterIdx);
+    const x = c * cellW - left;
+    const processFill = byProcess
+      ? processColor(processKind(data.clusters[clusterIdx]))
+      : null;
+    const fillWholeColumn = () => {
+      if (gutterRows) {
+        for (let r = firstRow; r < lastRow; r += 1) {
+          ctx.fillRect(x, r * cellH - top, drawW, drawH);
+        }
+      } else {
+        ctx.fillRect(x, spanTop, drawW, spanHeight);
+      }
+    };
+    for (let state = 0; state < 3; state += 1) {
+      const set = sets[state];
+      ctx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
+      if (set.kind === "all") {
+        fillWholeColumn();
+        continue;
+      }
+      if (set.kind === "complement") {
+        fillWholeColumn();
+        ctx.fillStyle = panelBg;
+        for (let i = 0; i < set.idx.length; i += 1) {
+          const row = rowOfGenome[set.idx[i]];
+          if (row >= firstRow && row < lastRow) {
+            ctx.fillRect(x, row * cellH - top, drawW, Math.max(1, cellH));
+          }
+        }
+        continue;
+      }
+      // Only the genomes inside the visible band are worth walking.
+      const idx = set.idx;
+      for (let i = 0; i < idx.length; i += 1) {
+        const row = rowOfGenome[idx[i]];
+        if (row >= firstRow && row < lastRow) {
+          ctx.fillRect(x, row * cellH - top, drawW, drawH);
+        }
+      }
+    }
+  }
+
+  const bandH = Math.max(0, Math.min(view.h, virtualH - top));
+  const selectedCol = selectedVisibleColumn();
+  if (selectedCol >= firstCol && selectedCol < lastCol && bandH > 0) {
+    const x = selectedCol * cellW - left;
+    ctx.fillStyle = "rgba(37,99,235,.13)";
+    ctx.fillRect(x, 0, Math.max(1, cellW), bandH);
+    ctx.strokeStyle = selectStroke;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, 0.5, Math.max(1, cellW - 1), bandH - 1);
+  }
+  if (hoverRow >= firstRow && hoverRow < lastRow) {
+    ctx.fillStyle = "rgba(245,158,11,.14)";
+    ctx.fillRect(0, hoverRow * cellH - top, Math.min(view.w, virtualW - left), Math.max(1, cellH));
+  }
+  if (hoverCol >= firstCol && hoverCol < lastCol && bandH > 0) {
+    ctx.fillStyle = "rgba(245,158,11,.10)";
+    ctx.fillRect(hoverCol * cellW - left, 0, Math.max(1, cellW), bandH);
+  }
+  if (rows === 0 || cols === 0) {
+    ctx.fillStyle = labelInk;
+    ctx.font = LABEL_FONT;
+    ctx.fillText("No clusters match the current filters.", 14, 22);
   }
 }
+
 function columnLabelBand() {
-  return cellW >= LABEL_MIN_CELL_W && visibleClusters.length <= 400 ? LABEL_BAND_H : 0;
+  return cellW >= LABEL_MIN_CELL_W && visibleClusters.length <= 4000 ? LABEL_BAND_H : 0;
 }
 function renderColumnHeader() {
   const cols = visibleClusters.length;
-  const selectedCol = selectedVisibleColumn();
   const band = columnLabelBand();
-  const cssW = Math.max(1, cols * cellW);
   const cssH = headerH + band;
-  sizeCanvas(headerCanvas, headerCtx, cssW, cssH, canvasScale(cssW, cssH));
-  headerCtx.clearRect(0, 0, cssW, cssH);
+  const view = viewportSize(headerScroller);
+  const width = Math.max(1, view.w);
+  sizeCanvas(headerCanvas, headerCtx, width, cssH, canvasScale(width, cssH));
+  const headerWrap = headerCanvas.parentElement;
+  if (headerWrap) headerWrap.style.height = `${cssH}px`;
   headerCtx.fillStyle = headerBg;
-  headerCtx.fillRect(0, 0, cssW, cssH);
-  if (matrixColorMode.value === "process") {
-    visibleClusters.forEach((clusterIdx, c) => {
-      headerCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
-      headerCtx.fillRect(c * cellW, band, Math.max(1, cellW), 7);
-    });
-  }
-  if (hoverCol >= 0) {
-    headerCtx.fillStyle = hoverColTint;
-    headerCtx.fillRect(hoverCol * cellW, 0, cellW, cssH);
-  }
-  if (selectedCol >= 0) {
-    headerCtx.fillStyle = selectColTint;
-    headerCtx.fillRect(selectedCol * cellW, 0, cellW, cssH);
-    headerCtx.strokeStyle = selectStroke;
-    headerCtx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), cssH - 1);
-  }
-  for (let c = 0; c < cols; c += 1) {
+  headerCtx.fillRect(0, 0, width, cssH);
+
+  const left = matrixScrollLeft();
+  const [firstCol, lastCol] = visibleColumnRange(width);
+  const selectedCol = selectedVisibleColumn();
+  const byProcess = matrixColorMode.value === "process";
+  const tickW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
+
+  for (let c = firstCol; c < lastCol; c += 1) {
     const clusterIdx = originalClusterAtVisibleColumn(c);
-    headerCtx.fillStyle = matrixColorMode.value === "process"
+    if (clusterIdx < 0) continue;
+    const x = c * cellW - left;
+    headerCtx.fillStyle = byProcess
       ? processColor(processKind(data.clusters[clusterIdx]))
       : gridStroke;
-    headerCtx.fillRect(c * cellW, cssH - 9, Math.max(1, cellW), 6);
+    headerCtx.fillRect(x, cssH - 9, tickW, 6);
+    if (byProcess && band) {
+      headerCtx.fillRect(x, band, tickW, 6);
+    }
+  }
+  if (hoverCol >= firstCol && hoverCol < lastCol) {
+    headerCtx.fillStyle = hoverColTint;
+    headerCtx.fillRect(hoverCol * cellW - left, 0, Math.max(1, cellW), cssH);
+  }
+  if (selectedCol >= firstCol && selectedCol < lastCol) {
+    const x = selectedCol * cellW - left;
+    headerCtx.fillStyle = selectColTint;
+    headerCtx.fillRect(x, 0, Math.max(1, cellW), cssH);
+    headerCtx.strokeStyle = selectStroke;
+    headerCtx.strokeRect(x + 0.5, 0.5, Math.max(1, cellW - 1), cssH - 1);
   }
   if (!band) return;
   headerCtx.save();
@@ -1521,12 +1681,12 @@ function renderColumnHeader() {
   // After rotate(-90deg) the local +x axis points up the screen, so left-aligned
   // text grows upward from the tick row and reads bottom to top.
   headerCtx.textAlign = "left";
-  for (let c = 0; c < cols; c += 1) {
+  for (let c = firstCol; c < lastCol; c += 1) {
     const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
     if (!cluster) continue;
     headerCtx.fillStyle = c === selectedCol ? selectStroke : labelInk;
     headerCtx.save();
-    headerCtx.translate(c * cellW + cellW / 2, band - 6);
+    headerCtx.translate(c * cellW - left + cellW / 2, band - 6);
     headerCtx.rotate(-Math.PI / 2);
     headerCtx.fillText(fitLabel(cluster.name, band - 12), 0, 0);
     headerCtx.restore();
@@ -1542,131 +1702,142 @@ function fitLabel(text, maxWidth) {
   }
   return "…";
 }
-/* Canvases are laid out in CSS pixels but were also allocated in CSS pixels, so on
-   any HiDPI screen the browser upscaled a 1x bitmap and the matrix came out soft.
-   Allocate at the device ratio instead, capped by the same dimension/area budget
-   that keeps very large matrices inside browser canvas limits. */
-function canvasScale(cssW, cssH) {
-  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-  const byDim = maxCanvasDim / Math.max(1, cssW, cssH);
-  const byArea = Math.sqrt(maxCanvasPixels / Math.max(1, cssW * cssH));
-  return Math.max(1, Math.min(dpr, byDim, byArea));
+
+/* The tree is a canvas rather than SVG: 10,000 tips is roughly 40,000 SVG nodes,
+   which the browser will not lay out at an interactive frame rate. Only the tips
+   inside the visible band are drawn, and internal edges are clipped to it. */
+function renderTree() {
+  if (!treeCanvas || !treeCtx) return;
+  const view = viewportSize(treeViewport);
+  const width = Math.max(1, view.w - LINEAGE_STRIP_W);
+  treeWidth = width;
+  sizeCanvas(treeCanvas, treeCtx, width, view.h, canvasScale(width, view.h));
+  treeCtx.fillStyle = panelBg;
+  treeCtx.fillRect(0, 0, width, view.h);
+
+  const top = matrixScrollTop();
+  const [firstRow, lastRow] = visibleRowRange(view.h);
+  const showLabels = labelToggle.checked && cellH >= 5 && leafOrder.length <= 4000;
+
+  treeCtx.lineWidth = 1;
+  treeCtx.strokeStyle = gridStroke;
+  drawTreeNode(treeRoot, top, firstRow, lastRow, view.h, showLabels);
+
+  if (hoverRow >= firstRow && hoverRow < lastRow) {
+    const y = hoverRow * cellH + cellH / 2 - top;
+    treeCtx.strokeStyle = "rgba(249,115,22,.55)";
+    treeCtx.beginPath();
+    treeCtx.moveTo(0, y);
+    treeCtx.lineTo(width, y);
+    treeCtx.stroke();
+  }
+  renderLineageStrip(view.h, top, firstRow, lastRow);
 }
-function sizeCanvas(target, context, cssW, cssH, scale) {
-  target.width = Math.max(1, Math.round(cssW * scale));
-  target.height = Math.max(1, Math.round(cssH * scale));
-  target.style.width = `${cssW}px`;
-  target.style.height = `${cssH}px`;
-  context.setTransform(scale, 0, 0, scale, 0, 0);
-}
-let matrixScale = 1;
-/* The matrix is drawn from the per-cluster state sets, not by walking the grid.
-   A grid walk costs clusters x genomes, which is 300 million cells at the scale
-   these runs reach; walking the sets costs the number of cells that actually
-   carry a state, and a core cluster collapses to a single filled rect. */
-function rebuildBaseMatrix() {
-  const {rows, cols} = updateCellGeometry();
-  const cssW = Math.max(1, cols * cellW);
-  const cssH = Math.max(1, Math.ceil(rows * cellH));
-  matrixScale = canvasScale(cssW, cssH);
-  baseCanvas.width = Math.max(1, Math.round(cssW * matrixScale));
-  baseCanvas.height = Math.max(1, Math.round(cssH * matrixScale));
-  baseCtx.setTransform(matrixScale, 0, 0, matrixScale, 0, 0);
-  baseCtx.clearRect(0, 0, cssW, cssH);
-  // Absent is the background, so absent cells are never drawn.
-  baseCtx.fillStyle = panelBg;
-  baseCtx.fillRect(0, 0, cssW, cssH);
-  const drawW = Math.max(1, cellW - 1);
-  const cellDrawH = cellH >= 2 ? Math.max(1, cellH - 1) : Math.max(0.2, cellH);
-  const byProcess = matrixColorMode.value === "process";
-  for (let c = 0; c < cols; c += 1) {
-    const clusterIdx = originalClusterAtVisibleColumn(c);
-    if (clusterIdx < 0) continue;
-    const sets = clusterSets(clusterIdx);
-    const x = c * cellW;
-    const processFill = byProcess
-      ? processColor(processKind(data.clusters[clusterIdx]))
-      : null;
-    // A column that covers every genome is one rect when rows are too short to
-    // show the gutter, and per-row rects when they are, so a core cluster reads
-    // the same as any other column instead of a solid unbroken bar.
-    const fillWholeColumn = () => {
-      if (cellH >= 2) {
-        for (let r = 0; r < rows; r += 1) {
-          baseCtx.fillRect(x, r * cellH, drawW, cellDrawH);
-        }
-      } else {
-        baseCtx.fillRect(x, 0, drawW, rows * cellH);
-      }
-    };
-    for (let state = 0; state < 3; state += 1) {
-      const set = sets[state];
-      baseCtx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
-      if (set.kind === "all") {
-        fillWholeColumn();
-        continue;
-      }
-      if (set.kind === "complement") {
-        fillWholeColumn();
-        baseCtx.fillStyle = panelBg;
-        for (let i = 0; i < set.idx.length; i += 1) {
-          const row = rowOfGenome[set.idx[i]];
-          if (row >= 0) baseCtx.fillRect(x, row * cellH, drawW, cellH);
-        }
-        continue;
-      }
-      for (let i = 0; i < set.idx.length; i += 1) {
-        const row = rowOfGenome[set.idx[i]];
-        if (row >= 0) baseCtx.fillRect(x, row * cellH, drawW, cellDrawH);
-      }
+function drawTreeNode(node, top, firstRow, lastRow, viewH, showLabels) {
+  const rowSpan = nodeRowSpan(node);
+  // Whole subtrees outside the band cost nothing.
+  if (rowSpan.last < firstRow || rowSpan.first > lastRow) return;
+  const x = xForNode(node);
+  const y = node.row * cellH + cellH / 2 - top;
+  if (node.children && node.children.length) {
+    for (const child of node.children) {
+      const childSpan = nodeRowSpan(child);
+      if (childSpan.last < firstRow || childSpan.first > lastRow) continue;
+      const cx = xForNode(child);
+      const cy = child.row * cellH + cellH / 2 - top;
+      treeCtx.strokeStyle = treeEdgeColor(child);
+      treeCtx.beginPath();
+      treeCtx.moveTo(x, cy);
+      treeCtx.lineTo(cx, cy);
+      treeCtx.moveTo(x, y);
+      treeCtx.lineTo(x, cy);
+      treeCtx.stroke();
+      drawTreeNode(child, top, firstRow, lastRow, viewH, showLabels);
     }
+    return;
   }
-  baseCellH = cellH;
-  baseCellW = cellW;
-  baseValid = true;
+  if (node.row < firstRow || node.row >= lastRow) return;
+  const style = tipStyle(node.genome);
+  const radius = Math.max(0.5, Math.min(4.5, cellH / 2 - 0.5));
+  treeCtx.fillStyle = style.fill;
+  treeCtx.beginPath();
+  treeCtx.arc(x, y, radius, 0, Math.PI * 2);
+  treeCtx.fill();
+  if (radius >= 1.5) {
+    treeCtx.strokeStyle = style.stroke;
+    treeCtx.lineWidth = 1;
+    treeCtx.stroke();
+  }
+  if (isSelectedSyntenyCarrier(node.genome)) {
+    treeCtx.strokeStyle = "#f97316";
+    treeCtx.lineWidth = 1.4;
+    treeCtx.beginPath();
+    treeCtx.arc(x, y, radius + Math.max(1.4, Math.min(3, cellH * 0.3)), 0, Math.PI * 2);
+    treeCtx.stroke();
+  }
+  if (showLabels) {
+    treeCtx.fillStyle = labelInk;
+    treeCtx.font = LABEL_FONT;
+    treeCtx.textBaseline = "middle";
+    treeCtx.textAlign = "left";
+    treeCtx.fillText(fitTipLabel(data.genomes[node.genome] || ""), x + radius + 4, y);
+  }
 }
-function renderMatrix(scrollToSelected) {
-  const {rows, cols} = updateCellGeometry();
-  const selectedCol = selectedVisibleColumn();
-  if (!baseValid || baseCellH !== cellH || baseCellW !== cellW) {
-    rebuildBaseMatrix();
+function fitTipLabel(text) {
+  const budget = Math.max(24, treeWidth - xForNode({depth: maxDepth, distance: maxDistance, children: []}) - 10);
+  const value = String(text);
+  if (treeCtx.measureText(value).width <= budget) return value;
+  for (let len = value.length - 1; len > 1; len -= 1) {
+    const candidate = `${value.slice(0, len)}…`;
+    if (treeCtx.measureText(candidate).width <= budget) return candidate;
   }
-  const cssW = Math.max(1, cols * cellW);
-  const cssH = Math.max(1, Math.ceil(rows * cellH));
-  sizeCanvas(canvas, ctx, cssW, cssH, matrixScale);
-  ctx.clearRect(0, 0, cssW, cssH);
-  ctx.drawImage(baseCanvas, 0, 0, cssW, cssH);
-  if (selectedCol >= 0) {
-    ctx.fillStyle = "rgba(37,99,235,.13)";
-    ctx.fillRect(selectedCol * cellW, 0, cellW, cssH);
+  return "…";
+}
+/** Row span covered by a subtree, memoised: used to skip offscreen branches. */
+function nodeRowSpan(node) {
+  if (node._span) return node._span;
+  if (!node.children || !node.children.length) {
+    node._span = {first: node.row, last: node.row};
+    return node._span;
   }
-  if (hoverRow >= 0 && hoverRow < rows) {
-    ctx.fillStyle = "rgba(245,158,11,.10)";
-    ctx.fillRect(0, hoverRow * cellH, cssW, Math.max(0.25, cellH));
+  let first = Infinity;
+  let last = -Infinity;
+  for (const child of node.children) {
+    const span = nodeRowSpan(child);
+    if (span.first < first) first = span.first;
+    if (span.last > last) last = span.last;
   }
-  if (hoverCol >= 0 && hoverCol < cols) {
-    ctx.fillStyle = "rgba(245,158,11,.08)";
-    ctx.fillRect(hoverCol * cellW, 0, cellW, cssH);
+  node._span = {first, last};
+  return node._span;
+}
+function treeEdgeColor(child) {
+  if (colorMode.value !== "lineage") return gridStroke;
+  const lineage = subtreeLineage(child);
+  if (!lineage || lineage === "mixed") return gridStroke;
+  return lineageColor(lineage);
+}
+function renderLineageStrip(viewH, top, firstRow, lastRow) {
+  if (!lineageStripCanvas || !lineageStripCtx) return;
+  sizeCanvas(
+    lineageStripCanvas,
+    lineageStripCtx,
+    LINEAGE_STRIP_W,
+    viewH,
+    canvasScale(LINEAGE_STRIP_W, viewH),
+  );
+  lineageStripCtx.fillStyle = panelBg;
+  lineageStripCtx.fillRect(0, 0, LINEAGE_STRIP_W, viewH);
+  for (let r = firstRow; r < lastRow; r += 1) {
+    const genomeIdx = leafOrder[r];
+    const lineage = lineageOfGenomeName(data.genomes[genomeIdx] || "");
+    lineageStripCtx.fillStyle = lineageColor(lineage);
+    lineageStripCtx.fillRect(0, r * cellH - top, LINEAGE_STRIP_W, Math.max(1, cellH));
   }
-  if (hoverCol >= 0) {
-    ctx.strokeStyle = "#b45309";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(hoverCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, cssH - 1));
-  }
-  if (hoverRow >= 0) {
-    ctx.strokeStyle = "#b45309";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(0.5, hoverRow * cellH + 0.5, Math.max(1, cssW - 1), Math.max(0.25, cellH - 0.1));
-  }
-  ctx.strokeStyle = selectStroke;
-  ctx.lineWidth = Math.max(1, Math.min(2, cellW));
-  if (selectedCol >= 0) {
-    ctx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, cssH - 1));
-  }
-  if (scrollToSelected && selectedCol >= 0) {
-    matrixPane.scrollLeft = Math.max(0, selectedCol * cellW - 80);
-    headerScroller.scrollLeft = matrixPane.scrollLeft;
-  }
+}
+
+/* The inspector reflects the selected cluster; keyed so it is not rebuilt on
+   every scroll frame. */
+function renderClusterDetails() {
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
     ? `${selected}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
@@ -1727,38 +1898,10 @@ function renderMatrix(scrollToSelected) {
     detailsKey = nextDetailsKey;
   }
 }
-function referenceMechanismRow(cluster) {
-  const referenceCell = (cluster.referenceCell || "").trim();
-  const targetGene = (cluster.targetReferenceGene || "").trim();
-  const targetCluster = (cluster.targetReferenceCluster || "").trim();
-  const eventClass = (cluster.referenceEventClass || "").trim();
-  const refState = (cluster.referenceState || "").trim();
-  const bits = [];
-  if (referenceCell) bits.push(`Reference gene(s): <strong>${escapeHtml(referenceCell)}</strong>`);
-  if (targetGene || targetCluster || eventClass) {
-    const source = [];
-    if (targetGene) source.push(`source gene <strong>${escapeHtml(targetGene)}</strong>`);
-    if (targetCluster) source.push(`source cluster <strong>${escapeHtml(targetCluster)}</strong>`);
-    if (eventClass) source.push(escapeHtml(eventClass));
-    bits.push(`Event source: ${source.join("; ")}`);
-  }
-  if (refState) {
-    // referenceState is the single-letter cell code; spell it out rather than
-    // making the reader look up what "P" means.
-    const spelled = labels[refState] || refState;
-    bits.push(`State in reference: <strong>${escapeHtml(spelled)}</strong>`);
-  }
-  if (!bits.length) {
-    const mechanism = processKind(cluster);
-    const text = mechanism === "clean_insertion_or_acquisition_candidate"
-      ? "No reference equivalent detected; candidate de novo/reference-absent locus."
-      : "No reference equivalent detected by Recore.";
-    bits.push(text);
-  }
-  return `<dt>Reference (audit)</dt><dd>${bits.join("<br>")}</dd>`;
-}
+
 function render(scrollToSelected = false) {
   renderMatrix(scrollToSelected);
+  renderClusterDetails();
   renderColumnHeader();
   renderSyntenyPanel();
   renderTree();
@@ -1793,7 +1936,6 @@ function setTreeMode(mode) {
   render(false);
 }
 function resetMatrixCache() {
-  baseValid = false;
   hoverCol = -1;
   treeDirty = true;
 }
@@ -2027,58 +2169,102 @@ function wheelZoom(event, forcedAxis = "") {
 }
 viewerBody.addEventListener("wheel", wheelZoom, {passive:false});
 if (treePane) treePane.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-svg.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
+if (treeScroll) treeScroll.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
 headerScroller.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
-headerCanvas.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
 matrixPane.addEventListener("wheel", wheelZoom, {passive:false});
-svg.addEventListener("mousemove", event => {
-  const rect = svg.getBoundingClientRect();
-  const r = Math.floor((event.clientY - rect.top) / cellH);
-  if (r < 0 || r >= leafOrder.length) return;
-  const genomeIdx = leafOrder[r];
-  const state = stateAt(selected, genomeIdx);
-  const cluster = data.clusters[selected];
-  const tip = tipStyle(genomeIdx);
-  const tipNode = findLeafByGenome(treeRoot, genomeIdx);
-  const branchInfo = tipNode
-    ? `; root distance ${formatBranchLength(tipNode.distance)}, terminal branch ${formatBranchLength(tipNode.length)}`
-    : "";
-  const detail = colorMode.value === "cluster" && cluster
-    ? `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}${branchInfo}`
-    : `${data.genomes[genomeIdx]}: ${tip.title}${branchInfo}`;
-  tooltip.style.display = "none";
-  setHover(r, -1, detail);
-});
-svg.addEventListener("mouseleave", () => {
-  setHover(-1, -1, defaultStatus);
-});
-headerCanvas.addEventListener("mousemove", event => {
-  const rect = headerCanvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  if (c < 0 || c >= visibleClusters.length) return;
-  const clusterIdx = originalClusterAtVisibleColumn(c);
-  const cluster = data.clusters[clusterIdx];
-  setHover(-1, c, `${cluster.name}: ${cluster.annotation || "No annotation provided"}`);
-});
-headerCanvas.addEventListener("mouseleave", () => {
-  setHover(-1, -1, defaultStatus);
-});
-headerCanvas.addEventListener("click", event => {
-  const rect = headerCanvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  if (c < 0 || c >= visibleClusters.length) return;
+
+/* The panes share one scroll origin: the matrix scroller is the source of truth,
+   the header follows it horizontally and the tree vertically. Before this the
+   tree and the matrix scrolled independently and drifted out of alignment. */
+let syncingScroll = false;
+function syncFromMatrix() {
+  if (syncingScroll) return;
+  syncingScroll = true;
+  if (headerScroller) headerScroller.scrollLeft = matrixPane.scrollLeft;
+  if (treeScroll) treeScroll.scrollTop = matrixPane.scrollTop;
+  syncingScroll = false;
+  scheduleRender(false);
+}
+matrixPane.addEventListener("scroll", syncFromMatrix, {passive: true});
+if (headerScroller) {
+  headerScroller.addEventListener("scroll", () => {
+    if (syncingScroll) return;
+    syncingScroll = true;
+    matrixPane.scrollLeft = headerScroller.scrollLeft;
+    syncingScroll = false;
+    scheduleRender(false);
+  }, {passive: true});
+}
+if (treeScroll) {
+  treeScroll.addEventListener("scroll", () => {
+    if (syncingScroll) return;
+    syncingScroll = true;
+    matrixPane.scrollTop = treeScroll.scrollTop;
+    syncingScroll = false;
+    scheduleRender(false);
+  }, {passive: true});
+}
+
+/** Row under the pointer, in matrix coordinates. */
+function rowAtPointer(event, element) {
+  const rect = element.getBoundingClientRect();
+  const r = Math.floor((event.clientY - rect.top + matrixScrollTop()) / cellH);
+  return r >= 0 && r < leafOrder.length ? r : -1;
+}
+/** Visible column under the pointer, in matrix coordinates. */
+function columnAtPointer(event, element) {
+  const rect = element.getBoundingClientRect();
+  const c = Math.floor((event.clientX - rect.left + matrixScrollLeft()) / cellW);
+  return c >= 0 && c < visibleClusters.length ? c : -1;
+}
+function selectVisibleColumn(c) {
+  if (c < 0) return;
   selected = originalClusterAtVisibleColumn(c);
   selectedSyntenyReference = false;
   search.value = "";
   populateOptions();
   treeDirty = true;
   render(true);
+}
+
+if (treeScroll) {
+  treeScroll.addEventListener("mousemove", event => {
+    const r = rowAtPointer(event, treeScroll);
+    if (r < 0) return;
+    const genomeIdx = leafOrder[r];
+    const state = stateAt(selected, genomeIdx);
+    const cluster = data.clusters[selected];
+    const tip = tipStyle(genomeIdx);
+    const tipNode = findLeafByGenome(treeRoot, genomeIdx);
+    const branchInfo = tipNode
+      ? `; root distance ${formatBranchLength(tipNode.distance)}, terminal branch ${formatBranchLength(tipNode.length)}`
+      : "";
+    const detail = colorMode.value === "cluster" && cluster
+      ? `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}${branchInfo}`
+      : `${data.genomes[genomeIdx]}: ${tip.title}${branchInfo}`;
+    tooltip.style.display = "none";
+    setHover(r, -1, detail);
+  });
+  treeScroll.addEventListener("mouseleave", () => setHover(-1, -1, defaultStatus));
+}
+
+headerScroller.addEventListener("mousemove", event => {
+  const c = columnAtPointer(event, headerScroller);
+  if (c < 0) return;
+  const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
+  if (!cluster) return;
+  setHover(-1, c, `${cluster.name}: ${cluster.annotation || "No annotation provided"}`);
 });
-canvas.addEventListener("mousemove", event => {
-  const rect = canvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  const r = Math.floor((event.clientY - rect.top) / cellH);
-  if (c < 0 || r < 0 || c >= visibleClusters.length || r >= leafOrder.length) return;
+headerScroller.addEventListener("mouseleave", () => setHover(-1, -1, defaultStatus));
+headerScroller.addEventListener("click", event => selectVisibleColumn(columnAtPointer(event, headerScroller)));
+
+matrixPane.addEventListener("mousemove", event => {
+  const c = columnAtPointer(event, matrixPane);
+  const r = rowAtPointer(event, matrixPane);
+  if (c < 0 || r < 0) {
+    tooltip.style.display = "none";
+    return;
+  }
   const clusterIdx = originalClusterAtVisibleColumn(c);
   const genomeIdx = leafOrder[r];
   const state = stateAt(clusterIdx, genomeIdx);
@@ -2087,23 +2273,13 @@ canvas.addEventListener("mousemove", event => {
   setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}; ${processLabel(mechanism)}`);
   const paneRect = matrixPane.getBoundingClientRect();
   tooltip.style.display = "block";
-  tooltip.style.left = `${event.clientX - paneRect.left + matrixPane.scrollLeft + 12}px`;
-  tooltip.style.top = `${event.clientY - paneRect.top + 12}px`;
+  tooltip.style.left = `${Math.min(event.clientX - paneRect.left + 14, paneRect.width - 300)}px`;
+  tooltip.style.top = `${event.clientY - paneRect.top + 14}px`;
   tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(processLabel(mechanism))}</span><br><span>${escapeHtml(cluster.annotation || "")}</span>`;
 });
-canvas.addEventListener("mouseleave", () => {
+matrixPane.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
   setHover(-1, -1, defaultStatus);
 });
-canvas.addEventListener("click", event => {
-  const rect = canvas.getBoundingClientRect();
-  const c = Math.floor((event.clientX - rect.left) / cellW);
-  if (c < 0 || c >= visibleClusters.length) return;
-  selected = originalClusterAtVisibleColumn(c);
-  selectedSyntenyReference = false;
-  search.value = "";
-  populateOptions();
-  treeDirty = true;
-  render(true);
-});
+matrixPane.addEventListener("click", event => selectVisibleColumn(columnAtPointer(event, matrixPane)));
 })();

@@ -238,7 +238,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("Tips: lineage"));
     assert!(html_report.contains("phylogramMode"));
     assert!(html_report.contains("referenceOnly"));
-    assert!(html_report.contains("rebuildBaseMatrix"));
+    assert!(html_report.contains("visibleColumnRange"));
     // The report has to stay openable from an offline results directory.
     for attr in ["href='http", "href=\"http", "src='http", "src=\"http"] {
         assert!(
