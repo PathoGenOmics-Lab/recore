@@ -1,3 +1,4 @@
+use super::cellcodec;
 use super::evolution::{PhyloNode, PhyloTree};
 use super::reference_audit::resolve_reference_genome;
 use super::*;
@@ -1759,24 +1760,40 @@ fn build_explorer_data_json(
     let mut states = Vec::new();
     let mut rendered_cluster_names = Vec::new();
     let mut first_cluster = true;
+    // Per-genome state totals, used for the tip-burden colour modes. Counting
+    // them here costs one pass we are already making; in the browser it would
+    // mean decoding every cluster before the first paint.
+    let mut genome_totals = vec![[0usize; 4]; pa.n_genomes()];
     for ci_val in 0..pa.n_clusters() {
         if clusters_to_skip.contains(&ci_val) {
             continue;
         }
         let ci = ClusterIdx(ci_val);
-        let mut row_states = String::with_capacity(pa.n_genomes());
+        // Collect the non-absent genomes per state instead of a dense row: the
+        // codec turns these into a few bytes each, where a dense row costs one
+        // character per genome for every cluster in the matrix.
+        let mut sets: [Vec<u32>; cellcodec::STATE_SETS] = Default::default();
         let mut present_after = 0usize;
         let mut reference_state = None;
-        for gi_val in 0..pa.n_genomes() {
+        for (gi_val, totals) in genome_totals.iter_mut().enumerate() {
             let gi = GenomeIdx(gi_val);
             let state = explorer_state_char(pa, ci, gi, rescue_map, &nsc_presence);
             if Some(gi) == reference_gi {
                 reference_state = Some(state);
             }
-            if state != 'A' {
+            let slot = match state {
+                'P' => Some(0),
+                'R' => Some(1),
+                'N' => Some(2),
+                _ => None,
+            };
+            if let Some(slot) = slot {
+                sets[slot].push(gi_val as u32);
                 present_after += 1;
+                totals[slot] += 1;
+            } else {
+                totals[3] += 1;
             }
-            row_states.push(state);
         }
         if !first_cluster {
             out.push(',');
@@ -1838,16 +1855,31 @@ fn build_explorer_data_json(
             )
             .expect("write to String is infallible");
         }
-        states.push(row_states);
+        states.push(cellcodec::base64(&cellcodec::encode_cluster(
+            &sets,
+            pa.n_genomes(),
+        )));
         rendered_cluster_names.push(cluster_name.to_string());
     }
 
-    out.push_str("],\"states\":[");
-    for (idx, state_row) in states.iter().enumerate() {
+    out.push_str("],\"cellEncoding\":\"recore.cells.v1\",\"cells\":[");
+    for (idx, row) in states.iter().enumerate() {
         if idx > 0 {
             out.push(',');
         }
-        out.push_str(&json_script_escape(state_row));
+        out.push_str(&json_script_escape(row));
+    }
+    out.push_str("],\"genomeStats\":[");
+    for (idx, totals) in genome_totals.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        write!(
+            out,
+            "[{},{},{},{}]",
+            totals[0], totals[1], totals[2], totals[3]
+        )
+        .expect("write to String is infallible");
     }
     out.push_str("],\"tree\":");
     out.push_str(&tree_json);

@@ -359,7 +359,12 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("referenceOnly"));
     assert!(text.contains("explorerFullscreen"));
     assert!(text.contains("\"referenceGenome\":null"));
-    assert!(text.contains("\"states\":[\"PA\",\"AP\"]"));
+    // Cells are the compact per-cluster encoding, not one character per genome.
+    // Two genomes fall inside a single byte, so both clusters use bitset mode:
+    // group_1 is present in genome 0 and group_2 in genome 1.
+    assert!(text.contains("\"cellEncoding\":\"recore.cells.v1\""));
+    assert!(text.contains("\"cells\":[\"AgEAAAAA\",\"AgIAAAAA\"]"));
+    assert!(text.contains("\"genomeStats\":[[1,0,0,1],[1,0,0,1]]"));
     assert!(text.contains("matrixCanvas"));
     // Canvases must be allocated at the device ratio, and wide columns must be named.
     assert!(text.contains("devicePixelRatio"));

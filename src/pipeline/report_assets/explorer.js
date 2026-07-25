@@ -200,15 +200,92 @@ let selectedSyntenyCarriers = new Set();
 let mechanismFilters = new Set();
 let treeRoot = data.tree;
 
+/* ---- Cell decoding -------------------------------------------------------
+   Cells arrive as one base64 blob per cluster holding the genome indices that
+   are not absent, split by state (see cellcodec.rs). Decoding every cluster up
+   front would rebuild the dense matrix we are trying to avoid, so rows are
+   decoded on demand and kept in a bounded cache: rendering only ever touches
+   the columns currently on screen. */
+const STATE_CODES = ["P", "R", "N", "A"];
+const CELL_CACHE_LIMIT = 4096;
+const cellCache = new Map();
+
+function decodeBase64(text) {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+function decodeClusterRow(encoded, nGenomes) {
+  const row = new Uint8Array(nGenomes).fill(3);
+  if (!encoded) return row;
+  const bytes = decodeBase64(encoded);
+  let pos = 0;
+  const readVarint = () => {
+    let value = 0;
+    let shift = 0;
+    for (;;) {
+      const byte = bytes[pos];
+      pos += 1;
+      value += (byte & 0x7f) * Math.pow(2, shift);
+      if ((byte & 0x80) === 0) return value;
+      shift += 7;
+    }
+  };
+  for (let state = 0; state < 3; state += 1) {
+    const mode = bytes[pos];
+    pos += 1;
+    if (mode === 0 || mode === 1) {
+      const count = readVarint();
+      const indices = new Int32Array(count);
+      let previous = 0;
+      for (let i = 0; i < count; i += 1) {
+        previous += readVarint();
+        indices[i] = previous;
+      }
+      if (mode === 0) {
+        for (let i = 0; i < count; i += 1) row[indices[i]] = state;
+      } else {
+        const absent = new Uint8Array(nGenomes);
+        for (let i = 0; i < count; i += 1) absent[indices[i]] = 1;
+        for (let g = 0; g < nGenomes; g += 1) if (!absent[g]) row[g] = state;
+      }
+    } else if (mode === 2) {
+      const len = Math.ceil(nGenomes / 8);
+      for (let g = 0; g < nGenomes; g += 1) {
+        if (bytes[pos + (g >> 3)] & (1 << (g & 7))) row[g] = state;
+      }
+      pos += len;
+    } else {
+      return row;
+    }
+  }
+  return row;
+}
+function clusterRow(clusterIdx) {
+  const cached = cellCache.get(clusterIdx);
+  if (cached) {
+    // Refresh recency so the working set survives a pan across the matrix.
+    cellCache.delete(clusterIdx);
+    cellCache.set(clusterIdx, cached);
+    return cached;
+  }
+  const row = decodeClusterRow(data.cells[clusterIdx], data.genomes.length);
+  cellCache.set(clusterIdx, row);
+  if (cellCache.size > CELL_CACHE_LIMIT) {
+    cellCache.delete(cellCache.keys().next().value);
+  }
+  return row;
+}
 function stateAt(clusterIdx, genomeIdx) {
-  return (data.states[clusterIdx] && data.states[clusterIdx][genomeIdx]) || "A";
+  const row = clusterRow(clusterIdx);
+  return STATE_CODES[row ? row[genomeIdx] : 3] || "A";
 }
 function countsForCluster(clusterIdx) {
   const counts = {P:0, R:0, N:0, A:0};
-  const row = data.states[clusterIdx] || "";
+  const row = clusterRow(clusterIdx);
   for (let i = 0; i < data.genomes.length; i += 1) {
-    const state = row[i] || "A";
-    counts[state] = (counts[state] || 0) + 1;
+    counts[STATE_CODES[row[i]]] += 1;
   }
   return counts;
 }
@@ -269,12 +346,11 @@ function originalClusterAtVisibleColumn(col) {
   return visibleClusters[col] ?? -1;
 }
 function computeGenomeStats() {
-  genomeStats = data.genomes.map(() => ({P:0, R:0, N:0, A:0}));
-  data.states.forEach(row => {
-    for (let gi = 0; gi < data.genomes.length; gi += 1) {
-      const state = row[gi] || "A";
-      genomeStats[gi][state] = (genomeStats[gi][state] || 0) + 1;
-    }
+  // Totals come precomputed from the writer: deriving them here would mean
+  // decoding every cluster before the first paint.
+  genomeStats = data.genomes.map((_, gi) => {
+    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0];
+    return {P: totals[0], R: totals[1], N: totals[2], A: totals[3]};
   });
   maxGenomeStats = genomeStats.reduce((acc, s) => ({
     R: Math.max(acc.R, s.R),
