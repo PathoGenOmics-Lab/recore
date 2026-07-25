@@ -122,6 +122,7 @@ const cladogramButton = document.getElementById("cladogramMode");
 const explorerSection = document.getElementById("explorer");
 const inspectorPane = document.getElementById("inspectorPane");
 const mechanismFilterButton = document.getElementById("mechanismFilter");
+const exportButton = document.getElementById("exportView");
 const info = document.getElementById("clusterInfo");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
@@ -2349,4 +2350,108 @@ matrixPane.addEventListener("mouseleave", () => {
   setHover(-1, -1, defaultStatus);
 });
 matrixPane.addEventListener("click", event => selectVisibleColumn(columnAtPointer(event, matrixPane)));
+
+/* ---- Print and export ----------------------------------------------------
+   Canvases are bitmaps sized to the on-screen viewport, so printing without
+   redrawing them clips the panes to whatever the screen happened to be. Redraw
+   once the print layout is in place, and again when it is torn down. */
+window.addEventListener("beforeprint", () => {
+  applyLayout();
+  resetMatrixCache();
+  syntenyKey = "";
+  render(false);
+});
+window.addEventListener("afterprint", () => {
+  applyLayout();
+  resetMatrixCache();
+  syntenyKey = "";
+  render(false);
+});
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+/* Compose the panes as drawn into one bitmap at 2x. The report's job is to end
+   up in a manuscript, and screenshotting a browser window is not a figure
+   pipeline. */
+function exportViewPng() {
+  const scale = 2;
+  const gap = 8;
+  const treeBodyW = treeCanvas ? treeCanvas.clientWidth : 0;
+  const treeW = treeBodyW + LINEAGE_STRIP_W;
+  const headTop = headerCanvas ? headerCanvas.clientHeight : 0;
+  const matrixW = canvas ? canvas.clientWidth : 0;
+  const bodyH = canvas ? canvas.clientHeight : 0;
+  const width = treeW + gap + matrixW;
+  const height = headTop + bodyH;
+  if (width < 2 || height < 2) return;
+  const out = document.createElement("canvas");
+  out.width = Math.round(width * scale);
+  out.height = Math.round(height * scale);
+  const octx = out.getContext("2d");
+  octx.setTransform(scale, 0, 0, scale, 0, 0);
+  octx.fillStyle = panelBg;
+  octx.fillRect(0, 0, width, height);
+  // A canvas with a zero dimension throws from drawImage, and any pane can be
+  // collapsed by the user or by a narrow window.
+  const paste = (source, x, y, w, h) => {
+    if (!source || !source.width || !source.height || w < 1 || h < 1) return;
+    octx.drawImage(source, x, y, w, h);
+  };
+  paste(headerCanvas, treeW + gap, 0, matrixW, headTop);
+  paste(treeCanvas, 0, headTop, treeBodyW, bodyH);
+  paste(lineageStripCanvas, treeBodyW, headTop, LINEAGE_STRIP_W, bodyH);
+  paste(canvas, treeW + gap, headTop, matrixW, bodyH);
+  out.toBlob(blob => {
+    if (blob) downloadBlob(blob, "recore_matrix.png");
+  }, "image/png");
+}
+/* Synteny is already vector, so export it as vector: gene arrows have to stay
+   crisp at print resolution. */
+function exportSyntenySvg() {
+  if (!syntenySvg || syntenyHidden) return false;
+  const clone = syntenySvg.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  // Inline the rules the drawing relies on, or it opens unstyled outside the page.
+  const rules = [];
+  for (const sheet of document.styleSheets) {
+    let cssRules = null;
+    try {
+      cssRules = sheet.cssRules;
+    } catch (_e) {
+      continue;
+    }
+    for (const rule of cssRules || []) {
+      const selector = rule.selectorText || "";
+      if (selector.includes("synteny") || selector.startsWith(":root")) {
+        rules.push(rule.cssText);
+      }
+    }
+  }
+  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = rules.join("\n");
+  clone.insertBefore(style, clone.firstChild);
+  const blob = new Blob([new XMLSerializer().serializeToString(clone)], {
+    type: "image/svg+xml",
+  });
+  downloadBlob(blob, "recore_synteny.svg");
+  return true;
+}
+if (exportButton) {
+  exportButton.addEventListener("click", () => {
+    exportViewPng();
+    const svg = exportSyntenySvg();
+    status.textContent = svg
+      ? "Exported recore_matrix.png and recore_synteny.svg."
+      : "Exported recore_matrix.png.";
+  });
+}
+
 })();

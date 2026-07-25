@@ -2117,8 +2117,7 @@ body.app {
 
 @media print {
   /* Reports get printed and pasted into supplementary material, so force the
-     light palette even if the reader is in dark mode. Without this a dark-theme
-     reader prints a solid black page. */
+     light palette even if the reader is in dark mode. */
   :root,
   :root[data-theme="dark"],
   :root[data-theme="light"] {
@@ -2143,64 +2142,112 @@ body.app {
     --shadow-3: none;
   }
 
-  /* Bars, swatches and matrix cells carry the meaning here, and browsers drop
+  /* Bars, swatches and matrix cells carry the meaning, and browsers drop
      backgrounds when printing unless told otherwise. */
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  body {
+  /* The shell pins itself to the viewport and hides its overflow, which on
+     paper meant one page showing a clipped sliver of the workspace. Release it
+     so the panes print at their drawn size and the drawer prints as a document. */
+  body.app {
+    height: auto;
+    min-height: 0;
+    display: block;
+    overflow: visible;
     background: #ffffff;
     font-size: 11pt;
   }
 
-  main {
-    max-width: none;
-    padding: 0;
-    gap: 16px;
+  .toolbar,
+  .topbar-actions,
+  .zoom-dock,
+  .zoom-rail,
+  .zoom-inline,
+  .split-handle,
+  .drawer-scrim,
+  .process-legend,
+  .statusbar,
+  .drawer-head .icon-btn {
+    display: none !important;
   }
 
-  /* Paper is narrower than a desktop window. Stack the banner instead of letting
-     the meta column wrap and leave a page-tall void beside the title. */
-  .banner-inner {
-    max-width: none;
-    padding: 0 0 12px;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .banner-brand,
-  .banner-tagline {
-    width: 100%;
-    max-width: none;
-  }
-
-  .banner-meta {
-    flex-direction: row;
-    align-items: baseline;
+  .topbar {
+    height: auto;
+    border-bottom: 2px solid var(--line-strong);
+    padding: 0 0 10px;
+    flex-wrap: wrap;
     gap: 12px;
   }
 
+  .run-chips {
+    display: flex !important;
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+
+  .workspace,
+  .workspace.synteny-hidden {
+    display: block;
+    grid-template-rows: none;
+    break-inside: avoid;
+  }
+
+  .panes-wrap,
+  .panes {
+    display: flex;
+    min-height: 0;
+  }
+
+  /* Canvases are bitmaps at their on-screen size; give the panes that height so
+     nothing is clipped, and let the synteny band follow on the next block. */
+  /* Definite pane heights for paper; the renderer redraws its canvases to match
+     from the beforeprint handler. Headless --print-to-pdf never fires that event
+     and has no prior screen layout, so it prints whatever size the canvases
+     already had. Cmd+P from a browser window is the path that matters, and it
+     reflows correctly. */
+  .pane-viewport {
+    /* flex-basis, not just height: the panes are flex items, so a bare height is
+       shrunk straight back to whatever the container had. */
+    flex: 0 0 380px;
+    overflow: hidden;
+    height: 380px;
+  }
+
+  .synteny-pane {
+    height: auto;
+    max-height: 380px;
+  }
+
+  /* The drawer holds the run summary, breakdowns and tables. On screen it slides
+     over the workspace; on paper it is the rest of the document. */
+  .drawer {
+    position: static;
+    width: auto;
+    transform: none;
+    box-shadow: none;
+    border: 0;
+    display: block;
+    break-before: page;
+  }
+
+  .drawer-body {
+    overflow: visible;
+    padding: 0;
+    display: block;
+  }
+
+  .drawer-section {
+    break-inside: avoid;
+    margin-bottom: 16px;
+  }
+
   .stat-grid,
-  .headline-grid,
   .section-grid,
   .files {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .executive {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .nav-bar,
-  .banner-actions,
-  .toolbar,
-  .viewer-controls,
-  .split-handle,
-  .matrix-status {
-    display: none !important;
   }
 
   .panel,
@@ -2213,23 +2260,12 @@ body.app {
     break-inside: avoid;
   }
 
-  section[id] {
-    break-inside: auto;
-  }
-
-  h2 {
+  h2,
+  h3 {
     break-after: avoid;
   }
 
   thead {
     display: table-header-group;
-  }
-
-  /* The viewer scrolls on screen; on paper print whatever fits on one page
-     rather than clipping it to the on-screen pane height. */
-  .viewer-body {
-    height: auto !important;
-    max-height: 620px;
-    overflow: hidden;
   }
 }

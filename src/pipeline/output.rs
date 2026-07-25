@@ -2220,6 +2220,7 @@ pub(super) fn write_html_report(
     html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
     html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label'>Dark</span>");
     html.push_str("</button>");
+    html.push_str("<button id='exportView' type='button' class='ghost-btn' title='Download the current view as PNG, and the synteny panel as SVG when it is open'>Export</button>");
     html.push_str(
         "<button id='explorerFullscreen' type='button' class='ghost-btn'>Fullscreen</button>",
     );
