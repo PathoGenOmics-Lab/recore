@@ -2018,7 +2018,6 @@ fn explorer_workspace_html(
         "<input id='clusterSearch' type='search' placeholder='Search cluster or annotation'>",
     );
     html.push_str("<select id='clusterSelect' aria-label='Selected gene cluster'></select>");
-    html.push_str("<span id='clusterInfo' class='muted num'></span>");
     html.push_str("</div>");
     html.push_str("<div class='tool-group'>");
     html.push_str("<input id='genomeSearch' type='search' placeholder='Find genome' aria-label='Find genome by name'>");
@@ -2054,24 +2053,22 @@ fn explorer_workspace_html(
     // Tree pane.
     html.push_str("<section class='pane tree-pane' id='treePane' aria-label='Phylogeny'>");
     html.push_str(
-        "<header class='pane-head'><span>Phylogeny</span><small id='topTreeMeta'></small></header>",
+        "<header class='pane-head'><span>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='1' max='18' value='8' aria-label='Row zoom' title='Row zoom'></span></header>",
     );
     // Tree, lineage strip and matrix all draw only their visible window onto a
     // viewport-sized canvas; the spacers carry the virtual size so the browser
     // still owns the scrollbars.
     html.push_str("<div class='tree-head-spacer' id='treeHeadSpacer' aria-hidden='true'></div>");
     html.push_str("<div class='pane-viewport tree-viewport'><canvas id='treeCanvas' class='tree-canvas' role='img' aria-label='Matched phylogeny'></canvas><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas><div class='pane-scroll' id='treeScroll'><div class='pane-spacer' id='treeSpacer'></div></div></div>");
-    html.push_str("<div class='zoom-rail'><label class='rail-label' for='rowHeight'>Rows</label><input id='rowHeight' type='range' min='1' max='18' value='8' aria-label='Row zoom'></div>");
     html.push_str("</section>");
 
     html.push_str("<div class='split-handle tree-handle' id='treeHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize phylogeny pane' title='Drag to resize'></div>");
 
     // Matrix pane.
     html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
-    html.push_str("<header class='pane-head'><span>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span></header>");
+    html.push_str("<header class='pane-head'><span>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span><span class='head-zoom'><label for='cellSize'>Columns</label><input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8' aria-label='Column zoom'></span></header>");
     html.push_str("<div class='matrix-header'><canvas id='columnHeaderCanvas' class='column-head'></canvas><div class='pane-scroll header-scroll' id='headerScroller'><div class='pane-spacer' id='headerSpacer'></div></div></div>");
     html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas'></canvas><div class='pane-scroll' id='matrixPane'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
-    html.push_str("<div class='zoom-dock'><label for='cellSize'>Columns</label><input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8' aria-label='Column zoom'></div>");
     html.push_str("</section>");
 
     html.push_str("<div class='split-handle inspector-handle' id='inspectorHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize inspector' title='Drag to resize'></div>");
@@ -2247,7 +2244,7 @@ pub(super) fn write_html_report(
     .expect("write to String is infallible");
     html.push_str("<button id='openDetails' type='button' class='ghost-btn' aria-expanded='false' aria-controls='runDetails'>Run details</button>");
     html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
-    html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label'>Dark</span>");
+    html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label sr-only'>Dark</span>");
     html.push_str("</button>");
     html.push_str("<button id='exportView' type='button' class='ghost-btn' title='Download the current view as PNG, and the synteny panel as SVG when it is open'>Export</button>");
     html.push_str(

@@ -126,7 +126,6 @@ const explorerSection = document.getElementById("explorer");
 const inspectorPane = document.getElementById("inspectorPane");
 const mechanismFilterButton = document.getElementById("mechanismFilter");
 const exportButton = document.getElementById("exportView");
-const info = document.getElementById("clusterInfo");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
 const lineageLegend = document.getElementById("lineageLegend");
@@ -1524,7 +1523,11 @@ function treeCaption() {
 }
 function updateTopBarMeta() {
   if (topTreeMeta) {
-    topTreeMeta.textContent = `${leafOrder.length} matched tips · ${treeCaption()}`;
+    // Short in the header, full text on hover: the caption is the first thing
+    // that should give way when the pane narrows.
+    const mode = treeMode === "phylogram" && maxDistance > 0 ? "phylogram" : "cladogram";
+    topTreeMeta.textContent = `${leafOrder.length} tips · ${mode}`;
+    topTreeMeta.title = `${leafOrder.length} matched tips · ${treeCaption()}`;
   }
   if (topMatrixMeta) topMatrixMeta.textContent = `${visibleClusters.length} / ${data.clusters.length} clusters`;
   if (topSyntenyMeta) {
@@ -1966,7 +1969,6 @@ function renderClusterDetails() {
     const mechanismLabel = processLabel(mechanism);
     const mechanismDescription = processDescription(mechanism);
     const mechanismColor = processColor(mechanism);
-    info.textContent = `${cluster.present}/${data.genomes.length} genomes (${Math.round(cluster.prevalence * 1000) / 10}%)`;
     const prevalencePct = `${Math.round(cluster.prevalence * 1000) / 10}%`;
     const refRow = referenceMechanismRow(cluster);
     const supportRow = cluster.support
@@ -2010,7 +2012,6 @@ function renderClusterDetails() {
     renderProcessLegend();
     detailsKey = nextDetailsKey;
   } else if (nextDetailsKey !== detailsKey) {
-    info.textContent = "";
     details.innerHTML = "";
     processLegend.innerHTML = "";
     detailsKey = nextDetailsKey;
