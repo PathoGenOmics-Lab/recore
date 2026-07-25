@@ -829,32 +829,6 @@ function currentRowHeight() {
 function clusterLabel(cluster) {
   return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
 }
-function referenceInterpretation(cluster) {
-  const referenceCell = (cluster.referenceCell || "").trim();
-  const targetGene = (cluster.targetReferenceGene || "").trim();
-  const targetCluster = (cluster.targetReferenceCluster || "").trim();
-  const eventClass = (cluster.referenceEventClass || "").trim();
-  const parts = [];
-  if (referenceCell) {
-    parts.push(`<span>reference gene(s): ${escapeHtml(referenceCell)}</span>`);
-  }
-  if (targetGene || targetCluster || eventClass) {
-    const sourceBits = [];
-    if (targetGene) sourceBits.push(`source gene ${targetGene}`);
-    if (targetCluster) sourceBits.push(`source cluster ${targetCluster}`);
-    if (eventClass) sourceBits.push(eventClass);
-    parts.push(`<span>reference-derived/event source: ${escapeHtml(sourceBits.join("; "))}</span>`);
-  }
-  if (!parts.length) {
-    const mechanism = processKind(cluster);
-    const text = mechanism === "clean_insertion_or_acquisition_candidate"
-      ? "no reference equivalent detected; candidate de novo/reference-absent locus"
-      : "no reference equivalent detected by Recore";
-    parts.push(`<span>${escapeHtml(text)}</span>`);
-  }
-  const state = cluster.referenceState ? `reference state ${cluster.referenceState}` : "reference state not assessed";
-  return `<div class="reference-meta"><strong>Reference equivalent</strong>${parts.join("")}<span>${escapeHtml(state)}</span></div>`;
-}
 /** Horizontal room the branches actually get, once labels are accounted for. */
 function treeUsableWidth() {
   const labelPad = labelToggle.checked && leafOrder.length <= 1500 ? 150 : 24;
@@ -2208,12 +2182,12 @@ function renderClusterDetails() {
       <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
       <p class="process-wording">${escapeHtml(mechanismDescription)}</p>
       <dl class="cluster-dl">
+        ${refRow}
         ${supportRow}
         ${phyloRow}
         ${detailRow}
         ${wordingRow}
       </dl>
-      ${refRow}
     `;
     renderProcessLegend();
     detailsKey = nextDetailsKey;

@@ -970,15 +970,6 @@ td a {
 
 .process-note,
 .process-meta,
-.reference-meta {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  color: var(--ink-soft);
-  font-size: 13px;
-}
-
 .process-chip {
   display: inline-flex;
   align-items: center;
@@ -2818,30 +2809,6 @@ input.switch:focus-visible {
   margin: 5px 0 0;
   font-size: 12.5px;
   line-height: 1.5;
-}
-
-/* The reference audit is a paragraph, not a row of chips: side by side its
-   three clauses ran together into one unreadable line. */
-.inspector .reference-meta {
-  display: block;
-  margin-top: var(--space-4);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.inspector .reference-meta strong {
-  display: block;
-  margin-bottom: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--faint);
-}
-
-.inspector .reference-meta span {
-  display: block;
-  color: var(--ink-soft);
 }
 
 .inspector .cluster-details {

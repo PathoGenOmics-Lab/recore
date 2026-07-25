@@ -356,7 +356,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("Click mechanism cards to add/remove"));
     assert!(text.contains("referenceCell"));
     assert!(text.contains("targetReferenceGene"));
-    assert!(text.contains("Reference equivalent"));
+    assert!(text.contains("Reference (audit)"));
     assert!(text.contains("value='lineage'"));
     assert!(text.contains("#C94434"));
     assert!(text.contains("Colour tips by"));
@@ -368,6 +368,8 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("matrixSpacer"));
     assert!(text.contains("phylogramMode"));
     assert!(text.contains("const tipX = 14 + usable"));
+    // Both the branch layout and the scale bar measure against this.
+    assert!(text.contains("function treeUsableWidth"));
     assert!(!text.contains("clusterHeaderLabel"));
     assert!(text.contains("referenceOnly"));
     assert!(text.contains("explorerFullscreen"));
