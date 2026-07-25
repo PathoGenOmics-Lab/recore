@@ -1465,8 +1465,9 @@ body.app > .statusbar { grid-row: 4; }
   flex: 0 0 auto;
 }
 
-/* Cropped to the wordmark and stripped of its plate, so the mark uses the box it
-   is given instead of the two thirds of it the export happened to fill. */
+/* Cropped to the wordmark and stripped of its full-bleed plate, so the mark uses
+   the box it is given instead of the two thirds of it the export happened to
+   fill. */
 .topbar-logo {
   width: 118px;
   aspect-ratio: 1717 / 810;
@@ -1480,10 +1481,17 @@ body.app > .statusbar { grid-row: 4; }
   display: block;
 }
 
-/* The mark is drawn in teal-to-indigo; the darkest end of that ramp disappears
-   against a near-black panel, so lift the whole thing rather than recolour it. */
+/* The mark is inlined rather than linked, so dark mode can reach inside it.
+   Two problems there: the counters of the e and the o are painted white, so on a
+   near-black panel they read as blobs rather than as holes, and the darkest end
+   of the teal-to-indigo ramp disappears. Repaint the white to the panel colour
+   and lift the rest. A plate would fix the first and cost the mark its size. */
+:root[data-theme="dark"] .topbar-logo svg [fill="rgb(255,255,255)"] {
+  fill: var(--bg-elev);
+}
+
 :root[data-theme="dark"] .topbar-logo svg {
-  filter: brightness(1.6) saturate(1.05);
+  filter: brightness(1.35) saturate(1.05);
 }
 
 .brand-rule {
