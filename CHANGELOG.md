@@ -120,7 +120,13 @@ and Recore uses semantic versioning.
   layout is kept instead of collapsing to the narrow-screen layout on paper.
 - Bar breakdowns report each row's share of the panel total, so a full-width bar
   is no longer ambiguous between "most clusters" and "one of twelve".
+- Mouse-wheel column zoom in the embedded viewer no longer snaps the zoom back
+  down when it is above the old ceiling.
 - `cargo fmt --check` and `cargo clippy -D warnings` pass again.
+- CI installs minimap2 and fails when it is missing, so the end-to-end test
+  actually runs instead of skipping silently. Its assertions were updated to the
+  current adaptive-guard behaviour: only evidence accepted into the binary matrix
+  reaches a corrected GFF, and audit-only evidence stays out of it.
 - Dataset self-benchmark reports `precision_proxy=NA` when no negative controls
   are sampled instead of implying perfect precision.
 - Run comparison now includes cells present in only one run, so cluster/genome

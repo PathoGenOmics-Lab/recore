@@ -26,6 +26,13 @@ fn minimap2_available() -> bool {
 #[test]
 fn test_e2e_mini_pipeline() {
     if !minimap2_available() {
+        // Skipping keeps the suite usable on a machine without minimap2, but a
+        // silent skip in CI means this test has never actually run there. CI sets
+        // RECORE_REQUIRE_MINIMAP2 so a missing dependency fails loudly instead.
+        assert!(
+            std::env::var_os("RECORE_REQUIRE_MINIMAP2").is_none(),
+            "RECORE_REQUIRE_MINIMAP2 is set but minimap2 is not in PATH"
+        );
         eprintln!("SKIPPED: minimap2 not in PATH");
         return;
     }
@@ -120,10 +127,20 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(output_dir.join("summary.txt").exists());
     assert!(output_dir.join("run_manifest.json").exists());
     assert!(output_dir.join("recore_report.html").exists());
+    // gC in s3 is the only evidence accepted into the binary matrix, so it is the
+    // only genome that gets a corrected GFF. gB clears --min-coverage at 80.9% but
+    // not the adaptive floor for a short, rare cluster, so it stays audit-only.
     assert!(output_dir
         .join("corrected_gff")
-        .join("s2.recore.gff3")
+        .join("s3.recore.gff3")
         .exists());
+    assert!(
+        !output_dir
+            .join("corrected_gff")
+            .join("s2.recore.gff3")
+            .exists(),
+        "s2 has only audit-only evidence, so it must not get a corrected GFF"
+    );
 
     // ── Verify rescue report ──
     let report = fs::read_to_string(output_dir.join("rescue_report.tsv")).unwrap();
@@ -151,11 +168,18 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     let csv_lines: Vec<&str> = csv_content.lines().collect();
     assert_eq!(csv_lines.len(), 4, "header + 3 clusters");
 
-    // Check that rescued cells contain "RESCUED:"
+    // The whole point of the design: accepted evidence reaches the binary matrix,
+    // guarded evidence does not, and both stay visible in the multistate matrix.
+    let gc_row = csv_lines.iter().find(|l| l.starts_with("gC")).unwrap();
+    assert!(
+        gc_row.contains("RESCUED:"),
+        "gC/s3 clears the adaptive floor and should be corrected: {}",
+        gc_row
+    );
     let gb_row = csv_lines.iter().find(|l| l.starts_with("gB")).unwrap();
     assert!(
-        gb_row.contains("RESCUED:"),
-        "gB row should have RESCUED cells: {}",
+        !gb_row.contains("RESCUED:"),
+        "gB is below the adaptive coverage floor and must stay audit-only: {}",
         gb_row
     );
 
@@ -163,6 +187,27 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
         fs::read_to_string(output_dir.join("gene_presence_absence_recore_states.csv")).unwrap();
     assert!(state_content.contains("PRESENT_INPUT"));
     assert!(state_content.contains("SEQUENCE_ONLY"));
+
+    // ... and the audit table has to say why gB was held back.
+    let evidence = fs::read_to_string(output_dir.join("orthology_evidence.tsv")).unwrap();
+    // gene_cluster is not the first column here, so match the field rather than
+    // the line prefix.
+    let gb_evidence: Vec<&str> = evidence
+        .lines()
+        .skip(1)
+        .filter(|line| line.split('\t').any(|field| field == "gB"))
+        .collect();
+    assert_eq!(gb_evidence.len(), 2, "gB has evidence rows for s2 and s3");
+    for row in &gb_evidence {
+        assert!(
+            row.contains("audit_only_quality"),
+            "gB evidence should be audit-only: {row}"
+        );
+        assert!(
+            row.contains("adaptive_sequence_below_floor"),
+            "gB should carry the adaptive-floor risk flag: {row}"
+        );
+    }
 
     // ── Verify summary ──
     let summary = fs::read_to_string(output_dir.join("summary.txt")).unwrap();
@@ -188,16 +233,28 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("lineageLegend"));
     assert!(html_report.contains("data-mechanism"));
     assert!(html_report.contains("targetReferenceGene"));
-    assert!(html_report.contains("Color tips by lineage"));
+    assert!(html_report.contains("Tips: by lineage"));
     assert!(html_report.contains("phylogramMode"));
     assert!(html_report.contains("referenceOnly"));
     assert!(html_report.contains("rebuildBaseMatrix"));
+    // The report has to stay openable from an offline results directory.
+    for attr in ["href='http", "href=\"http", "src='http", "src=\"http"] {
+        assert!(
+            !html_report.contains(attr),
+            "report references a remote asset via {attr}"
+        );
+    }
 
     // ── Verify corrected GFF ──
     let gff_content =
-        fs::read_to_string(output_dir.join("corrected_gff").join("s2.recore.gff3")).unwrap();
+        fs::read_to_string(output_dir.join("corrected_gff").join("s3.recore.gff3")).unwrap();
+    assert!(gff_content.contains("##gff-version 3"));
     assert!(gff_content.contains("Recore\tCDS"));
-    assert!(gff_content.contains("gene_cluster=gB"));
+    assert!(gff_content.contains("gene_cluster=gC"));
+    assert!(
+        !gff_content.contains("gene_cluster=gB"),
+        "audit-only evidence must not be appended to a corrected GFF"
+    );
 
     // ── Verify report is sorted (reproducibility) ──
     let data_lines: Vec<&str> = lines[1..].to_vec();
