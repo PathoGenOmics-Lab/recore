@@ -236,7 +236,6 @@ let virtualW = 1;
 let virtualH = 1;
 // Cells may be fractional, but never thinner than this or they vanish.
 const MIN_CELL_PX = 0.35;
-let treeDirty = true;
 let renderQueued = false;
 let detailsKey = "";
 let syntenyKey = "";
@@ -815,7 +814,6 @@ function stepCluster(delta) {
   selectedSyntenyReference = false;
   syntenyKey = "";
   populateOptions();
-  treeDirty = true;
   render(true);
 }
 function currentCellSize() {
@@ -1119,7 +1117,6 @@ function renderSyntenyPanel() {
     : "none";
   if (nextKey === syntenyKey) return;
   syntenyKey = nextKey;
-  treeDirty = true;
 
   if (!cluster) {
     selectedSyntenyCarriers = new Set();
@@ -1493,7 +1490,6 @@ function applySyntenyVisibility() {
     renderSyntenyPanel();
   } else {
     selectedSyntenyCarriers = new Set();
-    treeDirty = true;
   }
 }
 /* Three resizable seams: tree|matrix and matrix|inspector move horizontally,
@@ -1545,7 +1541,6 @@ function setupDragHandle(handle, side) {
     if (handle.hasPointerCapture && handle.hasPointerCapture(event.pointerId)) {
       handle.releasePointerCapture(event.pointerId);
     }
-    treeDirty = true;
     resetMatrixCache();
     syntenyKey = "";
     render(false);
@@ -1571,7 +1566,6 @@ function setupDragHandle(handle, side) {
     capture();
     applyDelta((event.key === keys[1] ? 1 : -1) * step);
     persistLayout();
-    treeDirty = true;
     resetMatrixCache();
     syntenyKey = "";
     render(false);
@@ -1982,7 +1976,6 @@ function applyRoot(mode) {
   maxDistance = 0;
   layout(treeRoot, 0, 0);
   buildRowOfGenome();
-  treeDirty = true;
   resetMatrixCache();
   syntenyKey = "";
 }
@@ -2232,12 +2225,10 @@ function setTreeMode(mode) {
   treeMode = mode;
   phylogramButton.classList.toggle("active", mode === "phylogram");
   cladogramButton.classList.toggle("active", mode === "cladogram");
-  treeDirty = true;
   render(false);
 }
 function resetMatrixCache() {
   hoverCol = -1;
-  treeDirty = true;
 }
 refreshThemeColors();
 const defaultRootMode = hasL8Tip(data.tree) ? "l8" : "input";
@@ -2359,8 +2350,8 @@ document.addEventListener("pointerdown", event => {
   setPaneMenu(null, false);
 });
 
-colorMode.addEventListener("change", () => { treeDirty = true; render(false); });
-labelToggle.addEventListener("change", () => { treeDirty = true; render(false); });
+colorMode.addEventListener("change", () => render(false));
+labelToggle.addEventListener("change", () => render(false));
 phylogramButton.addEventListener("click", () => setTreeMode("phylogram"));
 cladogramButton.addEventListener("click", () => setTreeMode("cladogram"));
 referenceToggle.addEventListener("change", () => {
@@ -2397,7 +2388,6 @@ syntenySvg.addEventListener("click", event => {
   if (referenceRow) {
     selectedSyntenyReference = true;
     syntenyKey = "";
-    treeDirty = true;
     render(false);
     return;
   }
@@ -2406,7 +2396,6 @@ syntenySvg.addEventListener("click", event => {
   selectedSyntenyBlock = Number(row.getAttribute("data-block-index") || 0);
   selectedSyntenyReference = false;
   syntenyKey = "";
-  treeDirty = true;
   render(false);
 });
 syntenySvg.addEventListener("mouseover", event => {
@@ -2495,8 +2484,6 @@ if (columnOrder) {
     render(true);
   });
 }
-matrixPane.addEventListener("scroll", () => { headerScroller.scrollLeft = matrixPane.scrollLeft; });
-headerScroller.addEventListener("scroll", () => { matrixPane.scrollLeft = headerScroller.scrollLeft; });
 function adjustRange(control, delta, min, max) {
   const value = Number(control.value || min);
   const next = Math.max(min, Math.min(max, value + delta));
@@ -2574,7 +2561,6 @@ function selectVisibleColumn(c) {
   selected = originalClusterAtVisibleColumn(c);
   selectedSyntenyReference = false;
   populateOptions();
-  treeDirty = true;
   render(true);
 }
 
@@ -2857,7 +2843,6 @@ function scrollToGenome(genomeIdx) {
   matrixPane.scrollTop = Math.max(0, row * cellH - view.h / 2);
   if (treeScroll) treeScroll.scrollTop = matrixPane.scrollTop;
   highlightedRows = new Set([row]);
-  treeDirty = true;
   render(false);
   status.textContent = `${data.genomes[genomeIdx]}: tip ${row + 1} of ${leafOrder.length}`;
 }

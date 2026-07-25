@@ -211,6 +211,11 @@ and Recore uses semantic versioning.
   and script rather than by the markup they claimed to test, so they could not
   fail. They are anchored on emitted markup now.
 - `icon()` leaked a `String` per call to satisfy a `&'static str` signature.
+- The matrix and its column header each carried two scroll listeners: an early
+  unguarded pair that bounced `scrollLeft` between the two elements, and the
+  guarded pair that actually keeps them in step. The unguarded pair is gone.
+- `treeDirty` was assigned in fourteen places and read in none. It was the
+  cache-invalidation flag of the renderer that preceded the virtual one.
 - Documentation: the output-files page still described the pre-rewrite synteny
   layout and a `summary.txt` without four of the lines the writer always emits;
   the contributing page listed a benchmark command CI does not run; the
