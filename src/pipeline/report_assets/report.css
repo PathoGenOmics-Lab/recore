@@ -1,4 +1,4 @@
-/* Recore HTML report — Linear/Notion aesthetic.
+/* Recore HTML report: Linear/Notion aesthetic.
    Off-white background, airy white surfaces, soft indigo accent,
    sentence-case typography, hairlines instead of heavy borders. */
 
@@ -1138,7 +1138,7 @@ td a {
   font-size: 13px;
 }
 
-/* ===== Cluster details — clean dl ===== */
+/* ===== Cluster details: clean dl ===== */
 .cluster-details {
   margin-top: var(--space-4);
   background: var(--bg-subtle);
