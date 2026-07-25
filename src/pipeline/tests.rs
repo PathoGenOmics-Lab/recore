@@ -770,7 +770,10 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
     args.matrix_policy = MatrixPolicy::Balanced;
 
     let stats = SummaryStats {
-        core_before: 8,
+        // Must come from the matrix itself. A hardcoded value made the sample
+        // report claim the core shrank after correction, which cannot happen:
+        // Recore only ever adds presence.
+        core_before: pa.core_size(),
         total_gaps: 64,
         filtered_gaps: 58,
         skipped_by_prevalence: 6,

@@ -1460,14 +1460,15 @@ fn count_items_html(
     let mut rows: Vec<_> = counts.iter().collect();
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
     for (label, value) in rows {
-        let pct = (*value as f64 / total as f64 * 100.0).clamp(1.5, 100.0);
+        let share = *value as f64 / total as f64 * 100.0;
         write!(
             html,
-            "<div class='bar-row'><div class='bar-label'><span>{}</span><strong class='num'>{}</strong></div><div class='track'><div class='bar {}' style='width:{:.1}%'></div></div></div>",
+            "<div class='bar-row'><div class='bar-label'><span>{}</span><strong class='num'>{} <small>{:.1}%</small></strong></div><div class='track'><div class='bar {}' style='width:{:.1}%'></div></div></div>",
             html_escape(label),
             format_count(*value),
+            share,
             bar_kind,
-            pct
+            share.clamp(1.5, 100.0)
         )
         .expect("write to String is infallible");
     }
@@ -2278,13 +2279,18 @@ pub(super) fn write_html_report(
             .max()
             .unwrap_or(1)
             .max(1);
+        // Bars are scaled to the most frequent mechanism so the ranking is readable
+        // even in a long tail, and each row prints its share of all clusters so the
+        // reader still sees the real magnitude behind a full-width bar.
+        let total: usize = mechanisms.values().copied().sum::<usize>().max(1);
         html.push_str("<div class='mech-bars'>");
         for (label, value) in mechanism_rows.into_iter().take(12) {
             let pct = (*value as f64 / max as f64 * 100.0).clamp(1.5, 100.0);
+            let share = *value as f64 / total as f64 * 100.0;
             let color = mechanism_color(label);
             write!(
                 html,
-                "<div class='mech-row'><div class='mech-name'><span class='swatch' style='background:{}'></span><span title='{}'>{}</span></div><div class='mech-bar-wrap'><div class='track'><div class='bar' style='width:{:.1}%;background:linear-gradient(90deg,{},{})'></div></div></div><div class='mech-count num'>{}</div></div>",
+                "<div class='mech-row'><div class='mech-name'><span class='swatch' style='background:{}'></span><span title='{}'>{}</span></div><div class='mech-bar-wrap'><div class='track'><div class='bar' style='width:{:.1}%;background:linear-gradient(90deg,{},{})'></div></div></div><div class='mech-count num'>{} <small>{:.1}%</small></div></div>",
                 color,
                 html_escape(label),
                 html_escape(&pretty_label(label)),
@@ -2292,6 +2298,7 @@ pub(super) fn write_html_report(
                 color,
                 color,
                 format_count(*value),
+                share,
             )
             .expect("write to String is infallible");
         }
