@@ -1,4 +1,4 @@
-# Output Files
+# Output files
 
 All output files are written to the directory specified by `-o` (default: `recore_output/`).
 
@@ -14,14 +14,14 @@ Primary output. One row per rescued gene. Tab-separated.
 |--------|------|-------------|
 | `gene_cluster` | string | Panaroo cluster name (from CSV `Gene` column) |
 | `genome` | string | Genome name (matches CSV column header and FASTA filename stem) |
-| `rescue_type` | string | See [rescue types](rescue_types.md) |
-| `identity` | float | % nucleotide identity of the best hit (0–100) |
-| `coverage` | float | % of reference sequence covered by hit(s) (0–100) |
+| `rescue_type` | string | See [rescue types](../how-it-works/rescue-types.md) |
+| `identity` | float | % nucleotide identity of the best hit (0-100) |
+| `coverage` | float | % of reference sequence covered by hit(s) (0-100) |
 | `contig` | string | Contig name in the genome FASTA |
 | `start` | int | Start coordinate, **1-based** |
 | `end` | int | End coordinate, 1-based inclusive |
 | `strand` | char | `+` or `-` |
-| `confidence` | float | Combined quality score (0–1.2+); see [algorithm](algorithm.md#confidence-score) |
+| `confidence` | float | Combined quality score (0-1.2+); see [algorithm](../how-it-works/algorithm.md#confidence-adjustment) |
 | `synteny` | string | `PASS` or empty (not assessed). `FAIL` rows are written to `synteny_rejected_report.tsv` when `--synteny` is enabled |
 | `synteny_score` | float | Best adaptive context score across 1-to-5-neighbour windows; blank when not assessed |
 | `synteny_support_n` | int | Number of compatible reference contexts supporting the best synteny assessment |
@@ -453,7 +453,7 @@ Nucleotide similarity clustering:
 
 ### Interpreting core genome changes
 
-- **Core +7**: 7 clusters that were missing from at least one genome are now found in all — true core genes that Panaroo had incorrectly excluded.
+- **Core +7**: 7 clusters that were missing from at least one genome are now found in all: true core genes that Panaroo had incorrectly excluded.
 - **Soft-core -5**: 5 clusters that appeared to be soft-core were actually redundant with other clusters (merged by NSC). The true soft-core is slightly smaller.
 
 ---

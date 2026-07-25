@@ -1486,6 +1486,7 @@ fn file_link_html(path: &str, description: &str) -> String {
 }
 
 const RECORE_REPO_URL: &str = "https://github.com/PathoGenOmics-Lab/recore";
+const RECORE_DOCS_URL: &str = "https://pathogenomics-lab.github.io/recore/";
 const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
 const REPORT_CSS: &str = include_str!("report_assets/report.css");
 const REPORT_UI_JS: &str = include_str!("report_assets/report-ui.js");
@@ -2338,8 +2339,8 @@ pub(super) fn write_html_report(
     .expect("write to String is infallible");
     write!(
         html,
-        "<a class='icon-btn' data-tip='Documentation' aria-label='Documentation' href='{}/tree/main/docs' target='_blank' rel='noopener'>{}</a>",
-        RECORE_REPO_URL,
+        "<a class='icon-btn' data-tip='Documentation' aria-label='Documentation' href='{}' target='_blank' rel='noopener'>{}</a>",
+        RECORE_DOCS_URL,
         icon("book")
     )
     .expect("write to String is infallible");
