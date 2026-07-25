@@ -880,9 +880,9 @@ td a {
 .cluster-head {
   display: flex;
   align-items: baseline;
-  gap: var(--space-4);
+  gap: var(--space-3);
   flex-wrap: wrap;
-  margin-bottom: var(--space-5);
+  margin-bottom: 0;
 }
 
 .cluster-head h3 {
@@ -1507,6 +1507,8 @@ body.app > .statusbar { grid-row: 4; }
   font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ink);
 }
 
@@ -1518,7 +1520,7 @@ body.app > .statusbar { grid-row: 4; }
   align-items: center;
   gap: var(--space-2);
   flex: 1 1 260px;
-  min-width: 0;
+  min-width: 208px;
   max-width: 390px;
 }
 
@@ -1567,15 +1569,22 @@ body.app > .statusbar { grid-row: 4; }
   flex: 1 1 auto;
 }
 
+/* The name is the answer and the annotation is the courtesy, so the annotation
+   gives up its width first. */
 .omnibox-name {
+  flex: 0 0 auto;
+  max-width: 60%;
   font-size: 13px;
   font-weight: 600;
   color: var(--ink);
   font-family: var(--font-mono);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .omnibox-note {
+  flex: 1 1 0;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
@@ -1653,9 +1662,10 @@ kbd {
   overflow: hidden;
 }
 
-/* Never let the chrome push the page wider than the window: the workspace owns
-   the viewport, and a horizontal page scrollbar would move all of it. */
-.topbar > * {
+/* The readout and the brand are what give way; the find field keeps a floor so
+   the current cluster name is always readable. */
+.run-readout,
+.topbar-brand {
   min-width: 0;
 }
 
@@ -1704,6 +1714,11 @@ kbd {
    readout entirely. What is dropped is always still in the details drawer. */
 @media (max-width: 1560px) {
   .readout:nth-child(7) { display: none; }
+}
+
+/* The annotation is a courtesy preview; the cluster name is the answer. */
+@media (max-width: 1400px) {
+  .omnibox-note { display: none; }
 }
 
 @media (max-width: 1440px) {
@@ -2364,14 +2379,46 @@ input.switch:focus-visible {
   flex: 0 0 auto;
 }
 
-/* ===== Genome card ===== */
-.genome-stats {
-  display: grid;
-  gap: 3px;
-  margin: var(--space-2) 0 var(--space-3);
+/* ===== Inspector cards =====
+   Both tabs speak the same language: a bar for the share, then the four states
+   as rows, then the metadata. A wall of label/value pairs reads like a dump. */
+.card-title {
+  margin-top: var(--space-4);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
 }
 
-.genome-stat {
+.prevalence-bar {
+  height: 6px;
+  margin-top: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: 1px solid var(--soft-line);
+  overflow: hidden;
+}
+
+.prevalence-bar i {
+  display: block;
+  height: 100%;
+  background: var(--present);
+}
+
+.cluster-details .prevalence {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.count-rows {
+  display: grid;
+  gap: 3px;
+  margin-top: var(--space-2);
+}
+
+.count-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2379,12 +2426,12 @@ input.switch:focus-visible {
   color: var(--ink-soft);
 }
 
-.genome-stat .sw {
+.count-row .sw {
   margin: 0;
   flex: 0 0 auto;
 }
 
-.genome-stat-name {
+.count-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -2392,12 +2439,12 @@ input.switch:focus-visible {
   white-space: nowrap;
 }
 
-.genome-stat b {
+.count-row b {
   font-weight: 600;
   color: var(--ink);
 }
 
-.genome-stat small {
+.count-row small {
   min-width: 44px;
   text-align: right;
   color: var(--faint);
@@ -2743,6 +2790,50 @@ input.switch:focus-visible {
 
 .inspector .cluster-head h3 {
   font-size: 15px;
+}
+
+.inspector .cluster-head .annotation {
+  font-size: 13px;
+  min-width: 0;
+  flex-basis: 100%;
+}
+
+.inspector .cluster-dl {
+  margin-top: var(--space-3);
+}
+
+.inspector .process-chip {
+  margin-top: var(--space-2);
+}
+
+.inspector .process-wording {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* The reference audit is a paragraph, not a row of chips: side by side its
+   three clauses ran together into one unreadable line. */
+.inspector .reference-meta {
+  display: block;
+  margin-top: var(--space-4);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.inspector .reference-meta strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.inspector .reference-meta span {
+  display: block;
+  color: var(--ink-soft);
 }
 
 .inspector .cluster-details {

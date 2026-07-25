@@ -2148,6 +2148,21 @@ function renderLineageStrip(viewH, top, firstRow, lastRow) {
   }
 }
 
+/** One labelled count with its share, used by both inspector tabs. */
+function countRow(label, value, total, key) {
+  const share = total ? `${(value / total * 100).toFixed(1)}%` : "0%";
+  return `<div class="count-row"><span class="sw ${key}"></span>` +
+    `<span class="count-name">${escapeHtml(label)}</span>` +
+    `<b class="num">${value.toLocaleString()}</b><small class="num">${share}</small></div>`;
+}
+
+/** Prevalence as a bar, because "16 / 16" and "3 / 16" should not look alike. */
+function prevalenceBar(present, total, pct) {
+  const width = total ? Math.max(1, Math.round(present / total * 100)) : 0;
+  return `<div class="prevalence-bar"><i style="width:${width}%"></i></div>` +
+    `<p class="prevalence num">${present.toLocaleString()} / ${total.toLocaleString()} genomes &middot; ${pct}</p>`;
+}
+
 /* The inspector reflects the selected cluster; keyed so it is not rebuilt on
    every scroll frame. */
 function renderClusterDetails() {
@@ -2175,31 +2190,30 @@ function renderClusterDetails() {
     const wordingRow = cluster.wording
       ? `<dt>Recommended wording</dt><dd><span class="process-wording">${escapeHtml(cluster.wording)}</span></dd>`
       : "";
+    const total = Math.max(1, data.genomes.length);
     details.innerHTML = `
       <div class="cluster-head">
         <h3>${escapeHtml(cluster.name)}</h3>
         <p class="annotation">${escapeHtml(cluster.annotation || "No annotation provided")}</p>
-        <span class="prevalence num">${cluster.present} / ${data.genomes.length} genomes &middot; ${prevalencePct}</span>
       </div>
+      ${prevalenceBar(cluster.present, total, prevalencePct)}
+      <div class="card-title">Evidence in ${total.toLocaleString()} genomes</div>
+      <div class="count-rows">
+        ${countRow("present in input", counts.P, total, "p")}
+        ${countRow("rescued by Recore", counts.R, total, "r")}
+        ${countRow("supported by NSC", counts.N, total, "n")}
+        ${countRow("absent", counts.A, total, "a")}
+      </div>
+      <div class="card-title">Mechanism</div>
+      <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
+      <p class="process-wording">${escapeHtml(mechanismDescription)}</p>
       <dl class="cluster-dl">
-        <dt>Evidence states</dt>
-        <dd><div class="state-counts">
-          <span class="state-chip input"><strong>${counts.P}</strong> input</span>
-          <span class="state-chip rescued"><strong>${counts.R}</strong> rescued</span>
-          <span class="state-chip nsc"><strong>${counts.N}</strong> NSC</span>
-          <span class="state-chip absent"><strong>${counts.A}</strong> absent</span>
-        </div></dd>
-        <dt>Mechanism</dt>
-        <dd>
-          <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
-          <div class="process-wording" style="margin-top:4px">${escapeHtml(mechanismDescription)}</div>
-        </dd>
-        ${refRow}
         ${supportRow}
         ${phyloRow}
         ${detailRow}
         ${wordingRow}
       </dl>
+      ${refRow}
     `;
     renderProcessLegend();
     detailsKey = nextDetailsKey;
@@ -2821,9 +2835,6 @@ function renderGenomeDetails() {
   const cluster = data.clusters[selected];
   const row = rowOfGenome[selectedGenome];
   const isReference = data.referenceGenome && data.referenceGenome.index === selectedGenome;
-  const share = value => assessed ? `${(value / assessed * 100).toFixed(1)}%` : "0%";
-  const bar = (label, value, key) =>
-    `<div class="genome-stat"><span class="sw ${key}"></span><span class="genome-stat-name">${escapeHtml(label)}</span><b class="num">${value.toLocaleString()}</b><small class="num">${share(value)}</small></div>`;
   genomeDetails.innerHTML = `
     <div class="cluster-head">
       <h3>${escapeHtml(name)}</h3>
@@ -2833,13 +2844,13 @@ function renderGenomeDetails() {
     <dl class="cluster-dl">
       <dt>In the selected cluster</dt>
       <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong></dd>
-      <dt>Cluster content</dt>
     </dl>
-    <div class="genome-stats">
-      ${bar("present in input", totals.P, "p")}
-      ${bar("rescued by Recore", totals.R, "r")}
-      ${bar("supported by NSC", totals.N, "n")}
-      ${bar("absent", totals.A, "a")}
+    <div class="card-title">Cluster content across ${assessed.toLocaleString()} clusters</div>
+    <div class="count-rows">
+      ${countRow("present in input", totals.P, assessed, "p")}
+      ${countRow("rescued by Recore", totals.R, assessed, "r")}
+      ${countRow("supported by NSC", totals.N, assessed, "n")}
+      ${countRow("absent", totals.A, assessed, "a")}
     </div>
     <dl class="cluster-dl">
       <dt>Position on the tree</dt>
