@@ -368,6 +368,21 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("fitLabel"));
 }
 
+/// One row of the sample synteny table:
+/// (cluster, representative genome, contig, start, length, carrier genomes,
+/// carrier fraction, interpretation, variant index).
+type SampleSyntenyBlock = (
+    &'static str,
+    &'static str,
+    &'static str,
+    u64,
+    u64,
+    u64,
+    f64,
+    &'static str,
+    usize,
+);
+
 #[test]
 fn rich_sample_report_renders_full_explorer() {
     // Builds a realistic MTBC-style toy dataset (16 genomes spanning 12 lineages,
@@ -378,14 +393,22 @@ fn rich_sample_report_renders_full_explorer() {
     let out = tempfile::tempdir().unwrap();
 
     let genomes: Vec<String> = vec![
-        "L4_AS00146", "L4_AS00150", "L4_AS00200",
-        "L2_AS00021", "L2_AS00060",
+        "L4_AS00146",
+        "L4_AS00150",
+        "L4_AS00200",
+        "L2_AS00021",
+        "L2_AS00060",
         "L3_AS00094",
-        "L1_AS00033", "L1_AS00100",
-        "L5_AS00161", "L6_AS00352",
-        "L7_AS00044", "L8_AS00022",
-        "A1_AS00349", "A2_AS00357",
-        "A4_AS00245", "A4_AS00248",
+        "L1_AS00033",
+        "L1_AS00100",
+        "L5_AS00161",
+        "L6_AS00352",
+        "L7_AS00044",
+        "L8_AS00022",
+        "A1_AS00349",
+        "A2_AS00357",
+        "A4_AS00245",
+        "A4_AS00248",
     ]
     .into_iter()
     .map(String::from)
@@ -394,62 +417,202 @@ fn rich_sample_report_renders_full_explorer() {
     let gi = |name: &str| -> usize { genomes.iter().position(|g| g == name).unwrap() };
 
     let cluster_specs: Vec<(&str, &str, Vec<&str>)> = vec![
-        ("group_001", "dnaA chromosomal replication initiator", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
-            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
-        ]),
-        ("group_002", "PE_PGRS33 lineage-restricted surface protein", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-        ]),
-        ("group_003", "plcA phospholipase C (RD5 locus)", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
-            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357",
-        ]),
-        ("group_004", "Rv2820c hypothetical (IS6110 hotspot)", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
-            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
-        ]),
-        ("group_005", "pks15-1 polyketide synthase (degraded)", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033",
-        ]),
-        ("group_006", "RD1 / esxA virulence (lost in BCG-like ref)", vec![
-            "L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
-            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
-        ]),
-        ("group_007", "rpsL ribosomal S12 (duplicated)", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
-            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
-        ]),
-        ("group_007b", "rpsL paralog (NSC-merged)", vec![
-            "L4_AS00146","L4_AS00150","L1_AS00033","A4_AS00245",
-        ]),
-        ("group_008", "mmpL5 efflux pump (split/fragmented)", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L8_AS00022",
-        ]),
-        ("group_009", "TB7.7 antigen partial copy", vec![
-            "A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
-        ]),
-        ("group_010", "Rv0095c translocated paralog", vec![
-            "L4_AS00146","L2_AS00021","L3_AS00094","L1_AS00033",
-        ]),
-        ("group_011", "katG start-variant annotation", vec![
-            "L4_AS00146","L4_AS00150","L4_AS00200","L2_AS00021","L2_AS00060",
-            "L3_AS00094","L1_AS00033","L1_AS00100","L5_AS00161","L6_AS00352",
-            "L7_AS00044","L8_AS00022","A1_AS00349","A2_AS00357","A4_AS00245","A4_AS00248",
-        ]),
-        ("group_012", "Rv1986 patchy lineage-specific accessory", vec![
-            "L4_AS00146","L2_AS00060","L3_AS00094","L7_AS00044","A4_AS00248",
-        ]),
+        (
+            "group_001",
+            "dnaA chromosomal replication initiator",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L5_AS00161",
+                "L6_AS00352",
+                "L7_AS00044",
+                "L8_AS00022",
+                "A1_AS00349",
+                "A2_AS00357",
+                "A4_AS00245",
+                "A4_AS00248",
+            ],
+        ),
+        (
+            "group_002",
+            "PE_PGRS33 lineage-restricted surface protein",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+            ],
+        ),
+        (
+            "group_003",
+            "plcA phospholipase C (RD5 locus)",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L5_AS00161",
+                "L6_AS00352",
+                "L7_AS00044",
+                "L8_AS00022",
+                "A1_AS00349",
+                "A2_AS00357",
+            ],
+        ),
+        (
+            "group_004",
+            "Rv2820c hypothetical (IS6110 hotspot)",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L5_AS00161",
+                "L6_AS00352",
+                "L7_AS00044",
+                "L8_AS00022",
+                "A1_AS00349",
+                "A2_AS00357",
+                "A4_AS00245",
+                "A4_AS00248",
+            ],
+        ),
+        (
+            "group_005",
+            "pks15-1 polyketide synthase (degraded)",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+            ],
+        ),
+        (
+            "group_006",
+            "RD1 / esxA virulence (lost in BCG-like ref)",
+            vec![
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L5_AS00161",
+                "L6_AS00352",
+                "L7_AS00044",
+                "L8_AS00022",
+                "A1_AS00349",
+                "A2_AS00357",
+                "A4_AS00245",
+                "A4_AS00248",
+            ],
+        ),
+        (
+            "group_007",
+            "rpsL ribosomal S12 (duplicated)",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L5_AS00161",
+                "L6_AS00352",
+                "L7_AS00044",
+                "L8_AS00022",
+                "A1_AS00349",
+                "A2_AS00357",
+                "A4_AS00245",
+                "A4_AS00248",
+            ],
+        ),
+        (
+            "group_007b",
+            "rpsL paralog (NSC-merged)",
+            vec!["L4_AS00146", "L4_AS00150", "L1_AS00033", "A4_AS00245"],
+        ),
+        (
+            "group_008",
+            "mmpL5 efflux pump (split/fragmented)",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L8_AS00022",
+            ],
+        ),
+        (
+            "group_009",
+            "TB7.7 antigen partial copy",
+            vec!["A1_AS00349", "A2_AS00357", "A4_AS00245", "A4_AS00248"],
+        ),
+        (
+            "group_010",
+            "Rv0095c translocated paralog",
+            vec!["L4_AS00146", "L2_AS00021", "L3_AS00094", "L1_AS00033"],
+        ),
+        (
+            "group_011",
+            "katG start-variant annotation",
+            vec![
+                "L4_AS00146",
+                "L4_AS00150",
+                "L4_AS00200",
+                "L2_AS00021",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L1_AS00033",
+                "L1_AS00100",
+                "L5_AS00161",
+                "L6_AS00352",
+                "L7_AS00044",
+                "L8_AS00022",
+                "A1_AS00349",
+                "A2_AS00357",
+                "A4_AS00245",
+                "A4_AS00248",
+            ],
+        ),
+        (
+            "group_012",
+            "Rv1986 patchy lineage-specific accessory",
+            vec![
+                "L4_AS00146",
+                "L2_AS00060",
+                "L3_AS00094",
+                "L7_AS00044",
+                "A4_AS00248",
+            ],
+        ),
     ];
 
-    let cluster_names: Vec<String> = cluster_specs.iter().map(|(n, _, _)| (*n).to_string()).collect();
+    let cluster_names: Vec<String> = cluster_specs
+        .iter()
+        .map(|(n, _, _)| (*n).to_string())
+        .collect();
     let mut matrix: Vec<Vec<String>> = vec![vec![String::new(); n_g]; cluster_specs.len()];
     for (ci, (_name, _ann, present_names)) in cluster_specs.iter().enumerate() {
         for genome_name in present_names {
@@ -461,7 +624,13 @@ fn rich_sample_report_renders_full_explorer() {
     let pa = PresenceAbsence::new_for_test(cluster_names.clone(), genomes.clone(), matrix);
 
     // Rescue events for a few cells that would otherwise be absent.
-    let mk_rescue = |cluster: usize, genome: usize, rtype: RescueType, contig: &str, start: u64, end: u64| -> RescueEvent {
+    let mk_rescue = |cluster: usize,
+                     genome: usize,
+                     rtype: RescueType,
+                     contig: &str,
+                     start: u64,
+                     end: u64|
+     -> RescueEvent {
         RescueEvent {
             cluster_idx: ClusterIdx(cluster),
             genome_idx: GenomeIdx(genome),
@@ -487,7 +656,8 @@ fn rich_sample_report_renders_full_explorer() {
         }
     };
 
-    let rescues = vec![
+    #[rustfmt::skip]
+    let rescues = [
         mk_rescue(3, gi("L2_AS00021"), RescueType::Dropped, "AS00021", 819_540, 820_660),
         mk_rescue(3, gi("L2_AS00060"), RescueType::Dropped, "AS00060", 821_010, 822_130),
         mk_rescue(4, gi("L1_AS00033"), RescueType::MissingCds, "AS00033", 3_120_440, 3_121_310),
@@ -528,16 +698,35 @@ fn rich_sample_report_renders_full_explorer() {
         branch_length: Some(bl),
         children,
     };
-    let l4 = clade(0.001, vec![leaf("L4_AS00146"), leaf("L4_AS00150"), leaf("L4_AS00200")]);
+    let l4 = clade(
+        0.001,
+        vec![leaf("L4_AS00146"), leaf("L4_AS00150"), leaf("L4_AS00200")],
+    );
     let l2 = clade(0.001, vec![leaf("L2_AS00021"), leaf("L2_AS00060")]);
     let l3 = leaf("L3_AS00094");
     let l1 = clade(0.0012, vec![leaf("L1_AS00033"), leaf("L1_AS00100")]);
-    let modern = clade(0.002, vec![
-        clade(0.001, vec![l4, l2]),
-        clade(0.0015, vec![l3, l1]),
-    ]);
-    let africanum = clade(0.002, vec![leaf("L5_AS00161"), leaf("L6_AS00352"), leaf("L7_AS00044"), leaf("L8_AS00022")]);
-    let animals = clade(0.0035, vec![leaf("A2_AS00357"), leaf("A4_AS00245"), leaf("A4_AS00248"), leaf("A1_AS00349")]);
+    let modern = clade(
+        0.002,
+        vec![clade(0.001, vec![l4, l2]), clade(0.0015, vec![l3, l1])],
+    );
+    let africanum = clade(
+        0.002,
+        vec![
+            leaf("L5_AS00161"),
+            leaf("L6_AS00352"),
+            leaf("L7_AS00044"),
+            leaf("L8_AS00022"),
+        ],
+    );
+    let animals = clade(
+        0.0035,
+        vec![
+            leaf("A2_AS00357"),
+            leaf("A4_AS00245"),
+            leaf("A4_AS00248"),
+            leaf("A1_AS00349"),
+        ],
+    );
     let ancient = clade(0.003, vec![africanum, animals]);
     let tree = PhyloTree {
         root: PhyloNode {
@@ -609,18 +798,90 @@ correct_presence\thigh_confidence\n",
         "gene_cluster\treference_genome\treference_absence_class\tfinal_publication_status\treference_status\tmatrix_action\tevidence_state\tevidence_strength\tpublication_confidence\trecommended_wording\trescue_decision\trescue_type\trejection_reason\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tsynteny\tannotation_match\tannotation_cluster\tfragment_note\n",
     );
     let ref_specs: Vec<(&str, &str, &str, &str, &str)> = vec![
-        ("group_001", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_002", "reference_absent_partial", "reference_absent_clean", "absent_in_reference", "ABSENT"),
-        ("group_003", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_004", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_005", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_006", "reference_absent_clean", "reference_absent_in_lineage", "absent_in_reference", "ABSENT"),
-        ("group_007", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_008", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_009", "reference_like_partial", "reference_like_ambiguous", "audit_only_quality", "PARTIAL_HOMOLOGY"),
-        ("group_010", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_011", "reference_like_or_present", "reference_matrix_present", "already_present", "STRICT_PRESENT"),
-        ("group_012", "reference_absent_partial", "reference_absent_clean", "absent_in_reference", "ABSENT"),
+        (
+            "group_001",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_002",
+            "reference_absent_partial",
+            "reference_absent_clean",
+            "absent_in_reference",
+            "ABSENT",
+        ),
+        (
+            "group_003",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_004",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_005",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_006",
+            "reference_absent_clean",
+            "reference_absent_in_lineage",
+            "absent_in_reference",
+            "ABSENT",
+        ),
+        (
+            "group_007",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_008",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_009",
+            "reference_like_partial",
+            "reference_like_ambiguous",
+            "audit_only_quality",
+            "PARTIAL_HOMOLOGY",
+        ),
+        (
+            "group_010",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_011",
+            "reference_like_or_present",
+            "reference_matrix_present",
+            "already_present",
+            "STRICT_PRESENT",
+        ),
+        (
+            "group_012",
+            "reference_absent_partial",
+            "reference_absent_clean",
+            "absent_in_reference",
+            "ABSENT",
+        ),
     ];
     for (cluster, class, status, action, state) in &ref_specs {
         ref_audit.push_str(&format!(
@@ -643,63 +904,168 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
     let synteny_header = "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes\tcarrier_genomes\trepresentative_genome\trepresentative_gene\trepresentative_contig\trepresentative_start\trepresentative_end\trepresentative_strand\trepresentative_length_bp\trepresentative_block_genes\treference_block_genes\n";
     let mut syn = String::from(synteny_header);
     // helper to build a representative gene block string of 5 upstream + target + 5 downstream
-    let block_genes = |target: &str, target_genome: &str, start: u64, len: u64, variant: usize| -> String {
-        // Each neighbour cluster carries its own Rv number so block signatures
-        // differ between variants (signatures are computed from gene_id, so the
-        // dedup would collapse rows otherwise). Variants share several neighbours
-        // for inter-row connection lines, but swap a few at the edges/middle to
-        // show divergence.
-        let upstream: Vec<(&str, u32)> = match variant {
-            0 => vec![("group_101", 1200), ("group_102", 1201), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
-            1 => vec![("group_201", 2200), ("group_102", 1201), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
-            2 => vec![("group_101", 1200), ("group_102", 1201), ("group_211", 2110), ("group_104", 1203), ("group_105", 1204)],
-            3 => vec![("group_201", 2200), ("group_212", 2120), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
-            _ => vec![("group_101", 1200), ("group_102", 1201), ("group_103", 1202), ("group_104", 1203), ("group_105", 1204)],
+    let block_genes =
+        |target: &str, target_genome: &str, start: u64, len: u64, variant: usize| -> String {
+            // Each neighbour cluster carries its own Rv number so block signatures
+            // differ between variants (signatures are computed from gene_id, so the
+            // dedup would collapse rows otherwise). Variants share several neighbours
+            // for inter-row connection lines, but swap a few at the edges/middle to
+            // show divergence.
+            let upstream: Vec<(&str, u32)> = match variant {
+                0 => vec![
+                    ("group_101", 1200),
+                    ("group_102", 1201),
+                    ("group_103", 1202),
+                    ("group_104", 1203),
+                    ("group_105", 1204),
+                ],
+                1 => vec![
+                    ("group_201", 2200),
+                    ("group_102", 1201),
+                    ("group_103", 1202),
+                    ("group_104", 1203),
+                    ("group_105", 1204),
+                ],
+                2 => vec![
+                    ("group_101", 1200),
+                    ("group_102", 1201),
+                    ("group_211", 2110),
+                    ("group_104", 1203),
+                    ("group_105", 1204),
+                ],
+                3 => vec![
+                    ("group_201", 2200),
+                    ("group_212", 2120),
+                    ("group_103", 1202),
+                    ("group_104", 1203),
+                    ("group_105", 1204),
+                ],
+                _ => vec![
+                    ("group_101", 1200),
+                    ("group_102", 1201),
+                    ("group_103", 1202),
+                    ("group_104", 1203),
+                    ("group_105", 1204),
+                ],
+            };
+            let downstream: Vec<(&str, u32)> = match variant {
+                0 => vec![
+                    ("group_106", 1305),
+                    ("group_107", 1306),
+                    ("group_108", 1307),
+                    ("group_109", 1308),
+                    ("group_110", 1309),
+                ],
+                1 => vec![
+                    ("group_106", 1305),
+                    ("group_107", 1306),
+                    ("group_108", 1307),
+                    ("group_109", 1308),
+                    ("group_220", 2200),
+                ],
+                2 => vec![
+                    ("group_106", 1305),
+                    ("group_107", 1306),
+                    ("group_108", 1307),
+                    ("group_220", 2200),
+                    ("group_110", 1309),
+                ],
+                3 => vec![
+                    ("group_106", 1305),
+                    ("group_221", 2210),
+                    ("group_222", 2220),
+                    ("group_109", 1308),
+                    ("group_110", 1309),
+                ],
+                _ => vec![
+                    ("group_106", 1305),
+                    ("group_107", 1306),
+                    ("group_108", 1307),
+                    ("group_109", 1308),
+                    ("group_110", 1309),
+                ],
+            };
+            let mut parts: Vec<String> = Vec::new();
+            let pos = start.saturating_sub(6 * 900);
+            for (i, (name, rv)) in upstream.iter().enumerate() {
+                let g_start = pos + (i as u64) * 900;
+                let g_end = g_start + 720;
+                parts.push(format!(
+                    "{},Rv{:04},+,{},{},{},{}",
+                    name, rv, target_genome, g_start, g_end, 720
+                ));
+            }
+            parts.push(format!(
+                "{},Rv{:04},+,{},{},{},{}",
+                target,
+                1300,
+                target_genome,
+                start,
+                start + len,
+                len
+            ));
+            for (i, (name, rv)) in downstream.iter().enumerate() {
+                let g_start = start + len + 200 + (i as u64) * 900;
+                let g_end = g_start + 720;
+                parts.push(format!(
+                    "{},Rv{:04},+,{},{},{},{}",
+                    name, rv, target_genome, g_start, g_end, 720
+                ));
+            }
+            parts.join(";")
         };
-        let downstream: Vec<(&str, u32)> = match variant {
-            0 => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_109", 1308), ("group_110", 1309)],
-            1 => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_109", 1308), ("group_220", 2200)],
-            2 => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_220", 2200), ("group_110", 1309)],
-            3 => vec![("group_106", 1305), ("group_221", 2210), ("group_222", 2220), ("group_109", 1308), ("group_110", 1309)],
-            _ => vec![("group_106", 1305), ("group_107", 1306), ("group_108", 1307), ("group_109", 1308), ("group_110", 1309)],
-        };
-        let mut parts: Vec<String> = Vec::new();
-        let pos = start.saturating_sub(6 * 900);
-        for (i, (name, rv)) in upstream.iter().enumerate() {
-            let g_start = pos + (i as u64) * 900;
-            let g_end = g_start + 720;
-            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, rv, target_genome, g_start, g_end, 720));
-        }
-        parts.push(format!("{},Rv{:04},+,{},{},{},{}", target, 1300, target_genome, start, start + len, len));
-        for (i, (name, rv)) in downstream.iter().enumerate() {
-            let g_start = start + len + 200 + (i as u64) * 900;
-            let g_end = g_start + 720;
-            parts.push(format!("{},Rv{:04},+,{},{},{},{}", name, rv, target_genome, g_start, g_end, 720));
-        }
-        parts.join(";")
-    };
     let reference_block_genes = |target: &str| -> String {
-        let upstream_names = ["group_101","group_102","group_103","group_104","group_105"];
-        let downstream_names = ["group_106","group_107","group_108","group_109","group_110"];
+        let upstream_names = [
+            "group_101",
+            "group_102",
+            "group_103",
+            "group_104",
+            "group_105",
+        ];
+        let downstream_names = [
+            "group_106",
+            "group_107",
+            "group_108",
+            "group_109",
+            "group_110",
+        ];
         let mut parts: Vec<String> = Vec::new();
         let pos = 1_500_000u64;
         for (i, name) in upstream_names.iter().enumerate() {
             let g_start = pos + (i as u64) * 900;
             let g_end = g_start + 720;
-            parts.push(format!("{},Rv{:04},+,AS00146,{},{},{}", name, 1200 + i, g_start, g_end, 720));
+            parts.push(format!(
+                "{},Rv{:04},+,AS00146,{},{},{}",
+                name,
+                1200 + i,
+                g_start,
+                g_end,
+                720
+            ));
         }
-        parts.push(format!("{},Rv{:04},+,AS00146,{},{},{}", target, 1300, 1_504_500, 1_505_700, 1200));
+        parts.push(format!(
+            "{},Rv{:04},+,AS00146,{},{},{}",
+            target, 1300, 1_504_500, 1_505_700, 1200
+        ));
         for (i, name) in downstream_names.iter().enumerate() {
             let g_start = 1_506_000 + (i as u64) * 900;
             let g_end = g_start + 720;
-            parts.push(format!("{},Rv{:04},+,AS00146,{},{},{}", name, 1310 + i, g_start, g_end, 720));
+            parts.push(format!(
+                "{},Rv{:04},+,AS00146,{},{},{}",
+                name,
+                1310 + i,
+                g_start,
+                g_end,
+                720
+            ));
         }
         parts.join(";")
     };
+    #[rustfmt::skip]
     // Extended block table: several clusters get 3-4 alternative synteny blocks
     // so the connection lines between rows are clearly visible and the panel is
-    // worth interacting with. Tuple = (cluster, rep_genome, rep_contig, start, len, n_genomes, fraction, interp, variant).
-    let syn_blocks: Vec<(&str, &str, &str, u64, u64, u64, f64, &str, usize)> = vec![
+    // worth interacting with.
+    let syn_blocks: Vec<SampleSyntenyBlock> = vec![
         ("group_001", "L4_AS00146", "AS00146", 1_504_500, 1_500, 16, 1.000, "dominant_block",                          0),
         ("group_002", "L4_AS00146", "AS00146",   801_200,   980,  3, 0.600, "dominant_block_minor_alternatives",       0),
         ("group_002", "L2_AS00021", "AS00021",   812_440,   980,  2, 0.400, "alternative_synteny_block",               1),
@@ -738,13 +1104,10 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         let carriers_list = cluster_specs
             .iter()
             .find(|(c, _, _)| c == cluster)
-            .map(|(_, _, names)| names.iter().copied().collect::<Vec<_>>())
+            .map(|(_, _, names)| names.to_vec())
             .unwrap_or_default()
             .join(";");
-        let example = format!(
-            "{}:{}_{}",
-            rep_genome, cluster, rep_genome
-        );
+        let example = format!("{}:{}_{}", rep_genome, cluster, rep_genome);
         syn.push_str(&format!(
             "{cluster}\t{rank}\t{n}\t{frac:.3}\tgroup_105|group_104|group_103|group_102|group_101\tgroup_106|group_107|group_108|group_109|group_110\t{interp}\t{example}\t{carriers_list}\t{rep_genome}\t{cluster}_{rep_genome}\t{rep_contig}\t{start}\t{end}\t+\t{len}\t{rep_block}\t{ref_block}\n",
             end = start + len,
@@ -797,7 +1160,16 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         nsc_merged_genes: 1,
     };
 
-    write_html_report(&args, &pa, &stats, &rescue_map, &Some(nsc), Some(&tree), out.path()).unwrap();
+    write_html_report(
+        &args,
+        &pa,
+        &stats,
+        &rescue_map,
+        &Some(nsc),
+        Some(&tree),
+        out.path(),
+    )
+    .unwrap();
 
     if let Some(dump) = std::env::var_os("RECORE_SAMPLE_DUMP") {
         let dest = std::path::PathBuf::from(dump);

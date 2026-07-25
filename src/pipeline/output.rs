@@ -1971,9 +1971,7 @@ fn phylo_matrix_explorer_html(
     };
 
     let mut html = String::new();
-    html.push_str(
-        "<section id='explorer' class='panel explorer'>",
-    );
+    html.push_str("<section id='explorer' class='panel explorer'>");
     html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or pick a cluster to recolor tree tips. Matrix rows follow the matched tree-tip order.</p></div><div class='legend' aria-label='Cell legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
     html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect' aria-label='Cluster selector'></select><span id='clusterInfo' class='muted num'></span></div>");
     html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><div class='ctrl-group'><span class='ctrl-label'>Color</span><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Tips: by selected cluster</option><option value='lineage'>Tips: by lineage</option><option value='process'>Tips: by selected process</option><option value='rescue'>Tips: by rescue burden</option><option value='absence'>Tips: by absence burden</option><option value='correction'>Tips: by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix: by evidence state</option><option value='process'>Matrix: by evolutionary process</option></select></div><div class='ctrl-group'><span class='ctrl-label'>Tree</span><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label></div><div class='ctrl-group'><span class='ctrl-label'>Zoom</span><label class='scale-control'>Column <input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8'></label><label class='scale-control'>Row <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Synteny <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label></div><div class='ctrl-group ctrl-group-right'><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen</button></div></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-layout synteny-hidden'><div class='viewer-top-bar'><div class='top-label top-tree' id='topTree'><span>Phylogeny</span><small id='topTreeMeta'>matched tips</small></div><div class='top-label top-matrix'><span>Corrected matrix by gene cluster</span><small id='topMatrixMeta'></small></div><div class='top-label top-synteny synteny-control'><span>Unique syntenies</span><small id='topSyntenyMeta'>select a cluster</small></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><div class='tree-scroll' id='treeScroll'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas></div></div><div class='split-handle tree-handle' id='treeHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize tree pane' title='Drag to resize'></div><div class='matrix-region'><div class='matrix-header' id='headerScroller'><canvas id='columnHeaderCanvas' class='column-head'></canvas></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div><div class='split-handle synteny-handle synteny-control' id='syntenyHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize synteny pane' title='Drag to resize'></div><aside class='synteny-pane' id='syntenyPanel'><div class='synteny-head'><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><div class='synteny-scroll'><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></div></aside></div></div><div id='matrixStatus' class='matrix-status muted'>Wheel = zoom column; Shift + wheel = zoom row. Drag the gray handles between panes to resize them.</div>");
@@ -2152,7 +2150,10 @@ pub(super) fn write_html_report(
     write!(
         html,
         "<div class='headline'><span>Correction rate</span><strong>{}</strong></div>",
-        html_escape(&format_percent(matrix_corrected_total, stats.searchable_gaps))
+        html_escape(&format_percent(
+            matrix_corrected_total,
+            stats.searchable_gaps
+        ))
     )
     .expect("write to String is infallible");
     write!(
@@ -2170,7 +2171,11 @@ pub(super) fn write_html_report(
     write!(
         html,
         "<div class='headline violet'><span>Review mode</span><strong>{}</strong></div>",
-        if phylo_tree.is_some() { "tree-linked" } else { "table-only" }
+        if phylo_tree.is_some() {
+            "tree-linked"
+        } else {
+            "table-only"
+        }
     )
     .expect("write to String is infallible");
     html.push_str("</div></div></section>");
@@ -2179,8 +2184,18 @@ pub(super) fn write_html_report(
     html.push_str("<div class='panel-head'><div><h2>Run statistics</h2><small>Headline counts behind the executive summary.</small></div></div>");
     html.push_str("<div class='stat-grid'>");
     for (label, value, sub, accent) in [
-        ("Clusters", format_count(pa.n_clusters()), "input matrix", "accent"),
-        ("Genomes", format_count(pa.n_genomes()), "input matrix", "accent"),
+        (
+            "Clusters",
+            format_count(pa.n_clusters()),
+            "input matrix",
+            "accent",
+        ),
+        (
+            "Genomes",
+            format_count(pa.n_genomes()),
+            "input matrix",
+            "accent",
+        ),
         (
             "Searchable gaps",
             format_count(stats.searchable_gaps),
@@ -2319,12 +2334,8 @@ pub(super) fn write_html_report(
             "<select id='candidatesPriority' aria-label='Filter by priority'><option value=''>All priorities</option>",
         );
         for prio in &priority_set {
-            write!(
-                html,
-                "<option value='{0}'>{0}</option>",
-                html_escape(prio)
-            )
-            .expect("write to String is infallible");
+            write!(html, "<option value='{0}'>{0}</option>", html_escape(prio))
+                .expect("write to String is infallible");
         }
         html.push_str("</select>");
         html.push_str("<span id='candidatesCount' class='count num'></span>");
