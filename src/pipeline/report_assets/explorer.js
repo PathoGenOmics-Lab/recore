@@ -362,7 +362,7 @@ function renderProcessLegend() {
   const items = visibleProcessCounts().map(([mechanism, row]) => {
     const active = mechanism === selectedMechanism ? " active" : "";
     const filtered = mechanismFilters.has(mechanism) ? " filtered" : "";
-    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${row.clusters} clusters; ${row.present} present cells. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
+    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${plural(row.clusters, "cluster")}; ${plural(row.present, "present cell")}. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
   }).join("");
   processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
 }
@@ -680,6 +680,9 @@ function formatBranchLength(value) {
   if (n === 0) return "0";
   if (Math.abs(n) < 0.001) return n.toExponential(2);
   return n.toPrecision(4);
+}
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
@@ -1539,7 +1542,12 @@ function referenceMechanismRow(cluster) {
     if (eventClass) source.push(escapeHtml(eventClass));
     bits.push(`Event source: ${source.join("; ")}`);
   }
-  if (refState) bits.push(`State: <strong>${escapeHtml(refState)}</strong>`);
+  if (refState) {
+    // referenceState is the single-letter cell code; spell it out rather than
+    // making the reader look up what "P" means.
+    const spelled = labels[refState] || refState;
+    bits.push(`State in reference: <strong>${escapeHtml(spelled)}</strong>`);
+  }
   if (!bits.length) {
     const mechanism = processKind(cluster);
     const text = mechanism === "clean_insertion_or_acquisition_candidate"

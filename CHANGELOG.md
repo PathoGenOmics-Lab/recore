@@ -110,6 +110,17 @@ and Recore uses semantic versioning.
   cluster counts, sizes its panes to the data instead of always reserving the
   maximum height, and labels matrix columns with the cluster name when the
   columns are wide enough.
+- Showing the synteny panel no longer stretches the whole report to the width of
+  the synteny drawing and gives the page a horizontal scrollbar.
+- Candidate table headers are keyboard-operable and report `aria-sort`, section
+  anchors clear the sticky navigation bar, and transitions honour
+  `prefers-reduced-motion`.
+- The report prints correctly: the light palette is forced regardless of the
+  selected theme, bar and matrix colours survive printing, and the desktop
+  layout is kept instead of collapsing to the narrow-screen layout on paper.
+- Bar breakdowns report each row's share of the panel total, so a full-width bar
+  is no longer ambiguous between "most clusters" and "one of twelve".
+- `cargo fmt --check` and `cargo clippy -D warnings` pass again.
 - Dataset self-benchmark reports `precision_proxy=NA` when no negative controls
   are sampled instead of implying perfect precision.
 - Run comparison now includes cells present in only one run, so cluster/genome
