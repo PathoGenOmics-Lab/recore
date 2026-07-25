@@ -2006,8 +2006,15 @@ pub(super) fn write_html_report(
     html.push_str("<!doctype html><html lang='en' data-theme='light'><head><meta charset='utf-8'>");
     html.push_str("<meta name='viewport' content='width=device-width,initial-scale=1'>");
     html.push_str("<title>Recore run report</title>");
-    html.push_str("<link rel='preconnect' href='https://rsms.me/'>");
-    html.push_str("<link rel='stylesheet' href='https://rsms.me/inter/inter.css'>");
+    write!(
+        html,
+        "<meta name='generator' content='Recore v{}'>",
+        html_escape(env!("CARGO_PKG_VERSION"))
+    )
+    .expect("write to String is infallible");
+    html.push_str("<meta name='description' content='Recore audit of a corrected pangenome presence/absence matrix.'>");
+    // The report has to open from a results directory with no network, so every
+    // asset is inlined and the font stack falls back to what the system has.
     html.push_str("<style>");
     html.push_str(REPORT_CSS);
     html.push_str("</style></head><body>");

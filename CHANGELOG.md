@@ -95,6 +95,9 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- The HTML report no longer requests a remote webfont stylesheet, so it renders
+  identically on offline and air-gapped machines and makes no network request
+  when opened.
 - Dataset self-benchmark reports `precision_proxy=NA` when no negative controls
   are sampled instead of implying perfect precision.
 - Run comparison now includes cells present in only one run, so cluster/genome

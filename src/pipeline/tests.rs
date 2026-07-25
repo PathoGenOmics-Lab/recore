@@ -192,6 +192,22 @@ fn html_report_summarizes_run_outputs() {
     assert!(text.contains("Orthology actions"));
     assert!(text.contains("Add --tree"));
     assert!(text.contains("gene_presence_absence_recore.csv"));
+    assert_no_remote_assets(&text);
+}
+
+/// The report is opened from result directories on offline machines, so it must
+/// not pull stylesheets, fonts, scripts, or images over the network.
+fn assert_no_remote_assets(html: &str) {
+    for attr in ["href='http", "href=\"http", "src='http", "src=\"http"] {
+        assert!(
+            !html.contains(attr),
+            "report references a remote asset via {attr}"
+        );
+    }
+    assert!(
+        !html.contains("@import"),
+        "report pulls a stylesheet with @import"
+    );
 }
 
 #[test]
@@ -793,6 +809,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
     assert!(text.contains("mech-badge"));
     assert!(text.contains("candidatesTable"));
     assert!(text.contains("synteny"));
+    assert_no_remote_assets(&text);
 }
 
 #[test]
