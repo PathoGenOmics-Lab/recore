@@ -1248,10 +1248,13 @@ function renderLineageStrip() {
   if (!lineageStripCanvas || !lineageStripCtx) return;
   const rows = leafOrder.length;
   const height = Math.max(1, Math.ceil(rows * cellH));
-  lineageStripCanvas.width = LINEAGE_STRIP_W;
-  lineageStripCanvas.height = height;
-  lineageStripCanvas.style.width = `${LINEAGE_STRIP_W}px`;
-  lineageStripCanvas.style.height = `${height}px`;
+  sizeCanvas(
+    lineageStripCanvas,
+    lineageStripCtx,
+    LINEAGE_STRIP_W,
+    height,
+    canvasScale(LINEAGE_STRIP_W, height),
+  );
   lineageStripCtx.clearRect(0, 0, LINEAGE_STRIP_W, height);
   for (let r = 0; r < rows; r += 1) {
     const genomeIdx = leafOrder[r];
@@ -1303,13 +1306,11 @@ function renderTree() {
 function renderColumnHeader() {
   const cols = visibleClusters.length;
   const selectedCol = selectedVisibleColumn();
-  headerCanvas.width = Math.max(1, cols * cellW);
-  headerCanvas.height = headerH;
-  headerCanvas.style.width = `${headerCanvas.width}px`;
-  headerCanvas.style.height = `${headerH}px`;
-  headerCtx.clearRect(0, 0, headerCanvas.width, headerCanvas.height);
+  const cssW = Math.max(1, cols * cellW);
+  sizeCanvas(headerCanvas, headerCtx, cssW, headerH, canvasScale(cssW, headerH));
+  headerCtx.clearRect(0, 0, cssW, headerH);
   headerCtx.fillStyle = headerBg;
-  headerCtx.fillRect(0, 0, headerCanvas.width, headerH);
+  headerCtx.fillRect(0, 0, cssW, headerH);
   if (matrixColorMode.value === "process") {
     visibleClusters.forEach((clusterIdx, c) => {
       headerCtx.fillStyle = processColor(processKind(data.clusters[clusterIdx]));
@@ -1334,13 +1335,35 @@ function renderColumnHeader() {
     headerCtx.fillRect(c * cellW, headerH - 9, Math.max(1, cellW), 6);
   }
 }
+/* Canvases are laid out in CSS pixels but were also allocated in CSS pixels, so on
+   any HiDPI screen the browser upscaled a 1x bitmap and the matrix came out soft.
+   Allocate at the device ratio instead, capped by the same dimension/area budget
+   that keeps very large matrices inside browser canvas limits. */
+function canvasScale(cssW, cssH) {
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const byDim = maxCanvasDim / Math.max(1, cssW, cssH);
+  const byArea = Math.sqrt(maxCanvasPixels / Math.max(1, cssW * cssH));
+  return Math.max(1, Math.min(dpr, byDim, byArea));
+}
+function sizeCanvas(target, context, cssW, cssH, scale) {
+  target.width = Math.max(1, Math.round(cssW * scale));
+  target.height = Math.max(1, Math.round(cssH * scale));
+  target.style.width = `${cssW}px`;
+  target.style.height = `${cssH}px`;
+  context.setTransform(scale, 0, 0, scale, 0, 0);
+}
+let matrixScale = 1;
 function rebuildBaseMatrix() {
   const {rows, cols} = updateCellGeometry();
-  baseCanvas.width = Math.max(1, cols * cellW);
-  baseCanvas.height = Math.max(1, Math.ceil(rows * cellH));
-  baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+  const cssW = Math.max(1, cols * cellW);
+  const cssH = Math.max(1, Math.ceil(rows * cellH));
+  matrixScale = canvasScale(cssW, cssH);
+  baseCanvas.width = Math.max(1, Math.round(cssW * matrixScale));
+  baseCanvas.height = Math.max(1, Math.round(cssH * matrixScale));
+  baseCtx.setTransform(matrixScale, 0, 0, matrixScale, 0, 0);
+  baseCtx.clearRect(0, 0, cssW, cssH);
   baseCtx.fillStyle = panelBg;
-  baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
+  baseCtx.fillRect(0, 0, cssW, cssH);
   for (let r = 0; r < rows; r += 1) {
     const genomeIdx = leafOrder[r];
     for (let c = 0; c < cols; c += 1) {
@@ -1365,38 +1388,37 @@ function renderMatrix(scrollToSelected) {
   if (!baseValid || baseCellH !== cellH || baseCellW !== cellW) {
     rebuildBaseMatrix();
   }
-  canvas.width = baseCanvas.width;
-  canvas.height = baseCanvas.height;
-  canvas.style.width = `${canvas.width}px`;
-  canvas.style.height = `${canvas.height}px`;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(baseCanvas, 0, 0);
+  const cssW = Math.max(1, cols * cellW);
+  const cssH = Math.max(1, Math.ceil(rows * cellH));
+  sizeCanvas(canvas, ctx, cssW, cssH, matrixScale);
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.drawImage(baseCanvas, 0, 0, cssW, cssH);
   if (selectedCol >= 0) {
     ctx.fillStyle = "rgba(37,99,235,.13)";
-    ctx.fillRect(selectedCol * cellW, 0, cellW, canvas.height);
+    ctx.fillRect(selectedCol * cellW, 0, cellW, cssH);
   }
   if (hoverRow >= 0 && hoverRow < rows) {
     ctx.fillStyle = "rgba(245,158,11,.10)";
-    ctx.fillRect(0, hoverRow * cellH, canvas.width, Math.max(0.25, cellH));
+    ctx.fillRect(0, hoverRow * cellH, cssW, Math.max(0.25, cellH));
   }
   if (hoverCol >= 0 && hoverCol < cols) {
     ctx.fillStyle = "rgba(245,158,11,.08)";
-    ctx.fillRect(hoverCol * cellW, 0, cellW, canvas.height);
+    ctx.fillRect(hoverCol * cellW, 0, cellW, cssH);
   }
   if (hoverCol >= 0) {
     ctx.strokeStyle = "#b45309";
     ctx.lineWidth = 1;
-    ctx.strokeRect(hoverCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, canvas.height - 1));
+    ctx.strokeRect(hoverCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, cssH - 1));
   }
   if (hoverRow >= 0) {
     ctx.strokeStyle = "#b45309";
     ctx.lineWidth = 1;
-    ctx.strokeRect(0.5, hoverRow * cellH + 0.5, Math.max(1, canvas.width - 1), Math.max(0.25, cellH - 0.1));
+    ctx.strokeRect(0.5, hoverRow * cellH + 0.5, Math.max(1, cssW - 1), Math.max(0.25, cellH - 0.1));
   }
   ctx.strokeStyle = selectStroke;
   ctx.lineWidth = Math.max(1, Math.min(2, cellW));
   if (selectedCol >= 0) {
-    ctx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, canvas.height - 1));
+    ctx.strokeRect(selectedCol * cellW + 0.5, 0.5, Math.max(1, cellW - 1), Math.max(1, cssH - 1));
   }
   if (scrollToSelected && selectedCol >= 0) {
     matrixPane.scrollLeft = Math.max(0, selectedCol * cellW - 80);
@@ -1587,7 +1609,18 @@ if (typeof ResizeObserver !== "undefined") {
   });
   ro.observe(viewerBody);
 }
-window.addEventListener("resize", () => { applyViewerHeight(); });
+let lastPixelRatio = window.devicePixelRatio || 1;
+window.addEventListener("resize", () => {
+  const ratio = window.devicePixelRatio || 1;
+  if (ratio !== lastPixelRatio) {
+    // Moved to a screen with a different density, or the page was zoomed.
+    lastPixelRatio = ratio;
+    resetMatrixCache();
+    render(false);
+    return;
+  }
+  applyViewerHeight();
+});
 render(true);
 window.addEventListener("recore:theme-change", () => {
   refreshThemeColors();

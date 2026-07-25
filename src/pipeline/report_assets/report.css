@@ -1481,7 +1481,8 @@ td a {
 .matrix-pane canvas {
   display: block;
   cursor: crosshair;
-  image-rendering: pixelated;
+  /* Drawn at the device pixel ratio, so there is nothing to resample. */
+  image-rendering: auto;
 }
 
 .synteny-pane {
