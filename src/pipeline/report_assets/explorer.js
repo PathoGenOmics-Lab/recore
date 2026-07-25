@@ -3099,6 +3099,7 @@ function setSheetOpen(open) {
 if (shortcutsButton) shortcutsButton.addEventListener("click", () => setSheetOpen(shortcutSheet.hidden));
 const sheetScrim = document.getElementById("sheetScrim");
 if (sheetScrim) sheetScrim.addEventListener("click", () => setSheetOpen(false));
+document.getElementById("closeShortcuts")?.addEventListener("click", () => setSheetOpen(false));
 
 function typingInField(target) {
   if (!target) return false;

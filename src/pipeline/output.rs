@@ -2395,7 +2395,12 @@ pub(super) fn write_html_report(
     html.push_str("</div></div>");
 
     // ---- Shortcut sheet.
-    html.push_str("<div id='shortcutSheet' class='sheet' hidden><div class='sheet-scrim' id='sheetScrim'></div><div class='sheet-box' role='dialog' aria-modal='true' aria-labelledby='sheetTitle'><h2 id='sheetTitle'>Keyboard shortcuts</h2><div class='sheet-grid'>");
+    write!(
+        html,
+        "<div id='shortcutSheet' class='sheet' hidden><div class='sheet-scrim' id='sheetScrim'></div><div class='sheet-box' role='dialog' aria-modal='true' aria-labelledby='sheetTitle'><div class='sheet-head'><h2 id='sheetTitle'>Keyboard shortcuts</h2><button id='closeShortcuts' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close shortcuts'>{}</button></div><div class='sheet-grid'>",
+        icon("close")
+    )
+    .expect("write to String is infallible");
     for (keys, action) in [
         ("\u{2318}K / Ctrl K", "Find a cluster or genome"),
         ("/", "Find a cluster or genome"),
@@ -2440,7 +2445,12 @@ pub(super) fn write_html_report(
     ));
 
     // ---- Run details drawer: everything that used to push the viewer off screen.
-    html.push_str("<aside id='runDetails' class='drawer' aria-hidden='true'><div class='drawer-head'><h2>Run details</h2><button id='closeDetails' type='button' class='icon-btn' aria-label='Close run details'>&times;</button></div><div class='drawer-body'>");
+    write!(
+        html,
+        "<aside id='runDetails' class='drawer' aria-hidden='true'><div class='drawer-head'><h2>Run details</h2><button id='closeDetails' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close run details'>{}</button></div><div class='drawer-body'>",
+        icon("close")
+    )
+    .expect("write to String is infallible");
 
     write!(
         html,
