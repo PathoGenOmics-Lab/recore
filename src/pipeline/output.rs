@@ -1491,6 +1491,38 @@ const EXPLORER_MAX_TIPS: usize = 5_000;
 const EXPLORER_MAX_CELLS: usize = 25_000_000;
 const EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER: usize = 10;
 
+/// Remove `name="..."` from the opening tag of an inline SVG.
+fn strip_svg_attribute(tag: &str, name: &str) -> String {
+    let needle = format!("{name}=\"");
+    let Some(start) = tag.find(&needle) else {
+        return tag.to_string();
+    };
+    let value_start = start + needle.len();
+    let Some(offset) = tag[value_start..].find('"') else {
+        return tag.to_string();
+    };
+    let mut out = String::with_capacity(tag.len());
+    out.push_str(&tag[..start]);
+    out.push_str(tag[value_start + offset + 1..].trim_start());
+    out.trim_end().to_string()
+}
+
+/// The exported logo carries a fixed pixel size and `preserveAspectRatio="none"`,
+/// which lets any CSS box stretch it out of shape. Drop those so the inlined copy
+/// scales from its viewBox and keeps its proportions wherever it is placed.
+fn report_logo_svg() -> String {
+    let Some(tag_end) = REPORT_LOGO.find('>') else {
+        return REPORT_LOGO.to_string();
+    };
+    let (tag, rest) = REPORT_LOGO.split_at(tag_end);
+    let mut opening = tag.to_string();
+    for attr in ["width", "height", "preserveAspectRatio", "style"] {
+        opening = strip_svg_attribute(&opening, attr);
+    }
+    opening.push_str(" preserveAspectRatio=\"xMidYMid meet\" focusable=\"false\"");
+    format!("{opening}{rest}")
+}
+
 fn mechanism_color(name: &str) -> &'static str {
     match name {
         "clade_associated_gain" | "clean_insertion_or_acquisition_candidate" => "#079455",
@@ -2021,7 +2053,7 @@ pub(super) fn write_html_report(
 
     html.push_str("<div class='banner'><div class='banner-inner'><div class='banner-brand'>");
     html.push_str("<div class='banner-logo' aria-hidden='true'>");
-    html.push_str(REPORT_LOGO);
+    html.push_str(&report_logo_svg());
     html.push_str("</div><div>");
     html.push_str("<div class='kicker'>Recore audit report</div>");
     html.push_str("<h1>Corrected pangenome matrix review</h1>");

@@ -230,22 +230,25 @@ code {
 
 .banner-brand {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-4);
   min-width: 0;
   flex: 1 1 480px;
 }
 
+/* The logo artwork is a 16:9 wordmark on an opaque white plate, so the tile keeps
+   that ratio and stays white in both themes instead of stretching into a square. */
 .banner-logo {
-  width: 40px;
-  height: 40px;
+  width: 76px;
+  aspect-ratio: 2048 / 1153;
   flex: 0 0 auto;
-  border-radius: var(--radius-md);
-  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
 }
 
 .banner-logo svg {
