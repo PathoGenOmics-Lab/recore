@@ -156,7 +156,12 @@ const MIN_TREE_W = 180;
 const MIN_MATRIX_W = 220;
 const MIN_SYNTENY_W = 260;
 const LINEAGE_STRIP_W = 6;
+// Single source for the zoom bounds. The sliders, currentCellSize/currentRowHeight
+// and the wheel handler must agree, or the wheel snaps the value into its own range.
+const MIN_COL_ZOOM = 0.25;
 const MAX_COL_ZOOM = 44;
+const MIN_ROW_ZOOM = 1;
+const MAX_ROW_ZOOM = 18;
 // Column names are only worth drawing once a cell is wide enough to carry a
 // rotated label without the text of neighbouring columns touching.
 const LABEL_MIN_CELL_W = 9;
@@ -581,11 +586,11 @@ function populateOptions() {
 }
 function currentCellSize() {
   const value = Number(sizeControl.value || 8);
-  return Math.max(0.25, Math.min(MAX_COL_ZOOM, value));
+  return Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, value));
 }
 function currentRowHeight() {
   const value = Number(rowHeightControl.value || 8);
-  return Math.max(1, Math.min(18, value));
+  return Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, value));
 }
 function updateCellGeometry() {
   const rows = leafOrder.length;
@@ -1634,9 +1639,9 @@ function fitZoomToData() {
   const matrixW = bodyW > 0
     ? Math.max(220, bodyW - layoutState.treeW - (syntenyHidden ? 0 : (bodyW * layoutState.syntenyPct) / 100) - 24)
     : FIT_TARGET_W;
-  const rowFit = Math.max(1, Math.min(18, Math.floor(FIT_TARGET_H / tips)));
+  const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(FIT_TARGET_H / tips)));
   // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
-  const colFit = Math.max(1, Math.min(MAX_COL_ZOOM, Math.floor((matrixW / cols) / 0.82)));
+  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW / cols) / 0.82)));
   rowHeightControl.value = String(rowFit);
   sizeControl.value = String(colFit);
   labelToggle.checked = tips <= 500 && rowFit >= 4;
@@ -1818,8 +1823,8 @@ function wheelZoom(event, forcedAxis = "") {
   event.stopPropagation();
   const delta = event.deltaY < 0 ? 1 : -1;
   const changed = columnZoom
-    ? adjustRange(sizeControl, delta, 0.25, 18)
-    : adjustRange(rowHeightControl, delta, 1, 18);
+    ? adjustRange(sizeControl, delta, MIN_COL_ZOOM, MAX_COL_ZOOM)
+    : adjustRange(rowHeightControl, delta, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
   if (changed) {
     resetMatrixCache();
     render(false);
