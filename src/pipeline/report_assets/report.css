@@ -143,6 +143,10 @@ main {
   margin: 0 auto;
   padding: var(--space-8) var(--space-6) var(--space-12);
   display: grid;
+  /* minmax(0, 1fr) rather than the implicit auto track: an auto track takes its
+     minimum from the item's min-content, so the wide synteny SVG used to push the
+     whole page out to ~3000px and give the report a horizontal scrollbar. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-6);
 }
 
@@ -1498,6 +1502,7 @@ td a {
 
 .synteny-scroll {
   flex: 1 1 auto;
+  min-width: 0;
   overflow: auto;
   background: var(--bg-elev);
 }
