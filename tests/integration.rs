@@ -222,8 +222,10 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     let html_report = fs::read_to_string(output_dir.join("recore_report.html")).unwrap();
     assert!(html_report.contains("<title>Recore run report</title>"));
     assert!(html_report.contains("Orthology actions"));
+    assert!(html_report.contains("Run details"));
+    assert!(html_report.contains("Unique syntenies"));
     assert!(html_report.contains("Top candidate clusters"));
-    assert!(html_report.contains("Phylogeny and corrected matrix explorer"));
+    assert!(html_report.contains("Corrected matrix"));
     assert!(html_report.contains("window.recoreExplorerData"));
     assert!(html_report.contains("columnHeaderCanvas"));
     assert!(html_report.contains("tipColorMode"));
@@ -233,7 +235,7 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("lineageLegend"));
     assert!(html_report.contains("data-mechanism"));
     assert!(html_report.contains("targetReferenceGene"));
-    assert!(html_report.contains("Tips: by lineage"));
+    assert!(html_report.contains("Tips: lineage"));
     assert!(html_report.contains("phylogramMode"));
     assert!(html_report.contains("referenceOnly"));
     assert!(html_report.contains("rebuildBaseMatrix"));

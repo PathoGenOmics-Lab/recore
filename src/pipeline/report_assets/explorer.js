@@ -120,6 +120,8 @@ const fullscreenButton = document.getElementById("explorerFullscreen");
 const phylogramButton = document.getElementById("phylogramMode");
 const cladogramButton = document.getElementById("cladogramMode");
 const explorerSection = document.getElementById("explorer");
+const inspectorPane = document.getElementById("inspectorPane");
+const mechanismFilterButton = document.getElementById("mechanismFilter");
 const info = document.getElementById("clusterInfo");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
@@ -149,12 +151,15 @@ const tooltip = document.getElementById("matrixTooltip");
 const syntenyPanel = document.getElementById("syntenyPanel");
 const syntenySummary = document.getElementById("syntenySummary");
 const syntenySvg = document.getElementById("syntenySvg");
-const LAYOUT_KEY = "recore.explorer.layout.v1";
+const LAYOUT_KEY = "recore.explorer.layout.v2";
 const DEFAULT_TREE_W = 320;
-const DEFAULT_SYNTENY_W_PCT = 38;
+const DEFAULT_SYNTENY_H = 300;
 const MIN_TREE_W = 180;
 const MIN_MATRIX_W = 220;
-const MIN_SYNTENY_W = 260;
+const MIN_SYNTENY_H = 140;
+const MAX_SYNTENY_FRACTION = 0.72;
+const DEFAULT_INSPECTOR_W = 320;
+const MIN_INSPECTOR_W = 220;
 const LINEAGE_STRIP_W = 6;
 // Single source for the zoom bounds. The sliders, currentCellSize/currentRowHeight
 // and the wheel handler must agree, or the wheel snaps the value into its own range.
@@ -162,12 +167,15 @@ const MIN_COL_ZOOM = 0.25;
 const MAX_COL_ZOOM = 44;
 const MIN_ROW_ZOOM = 1;
 const MAX_ROW_ZOOM = 18;
+// Target pixel span used to pick the opening zoom from the run size.
+const FIT_TARGET_H = 560;
+const FIT_TARGET_W = 720;
 // Column names are only worth drawing once a cell is wide enough to carry a
 // rotated label without the text of neighbouring columns touching.
 const LABEL_MIN_CELL_W = 9;
 const LABEL_BAND_H = 82;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-const defaultStatus = "Wheel over tree zooms Y; wheel over the column header zooms columns. In the matrix body, Ctrl/Option + wheel zooms Y and Shift + wheel zooms columns.";
+const defaultStatus = "Hover a cell for genome, cluster and evidence state. Wheel over the column header zooms columns, over the tree zooms rows. Drag the seams between panes to resize.";
 let selected = 0;
 let hoverRow = -1;
 let hoverCol = -1;
@@ -1213,15 +1221,22 @@ function renderSyntenyPanel() {
   syntenySvg.setAttribute("height", String(height));
   syntenySvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   syntenySvg.innerHTML = parts.join("");
-
-  // Scroll the SVG so the target column of the first block is visible.
-  const firstLayout = rowLayouts[0] || [];
-  const firstTarget = firstLayout.find(item => item.gene.target);
-  if (firstTarget && scrollContainer) {
-    const targetX = firstTarget.x + firstTarget.width / 2;
-    scrollContainer.scrollLeft = Math.max(0, targetX - scrollContainer.clientWidth / 2);
+  // Each row opens on its meta column: rank, carriers, representative genome and
+  // coordinates. Centring the focal gene, which is what a narrow side panel had
+  // to do, pushes that column off the left edge now the band is full width, so
+  // only scroll when the focal gene would otherwise be out of view.
+  if (scrollContainer) {
+    scrollContainer.scrollLeft = 0;
+    scrollContainer.scrollTop = 0;
+    const firstTarget = (rowLayouts[0] || []).find(item => item.gene.target);
+    if (firstTarget) {
+      const targetRight = firstTarget.x + firstTarget.width;
+      const visible = scrollContainer.clientWidth;
+      if (visible > 0 && targetRight > visible) {
+        scrollContainer.scrollLeft = Math.max(0, targetRight - visible + 80);
+      }
+    }
   }
-  if (scrollContainer) scrollContainer.scrollTop = 0;
 }
 function formatCoord(value) {
   const n = Number(value);
@@ -1241,7 +1256,8 @@ function persistLayout() {
   try {
     const payload = {
       treeW: Math.round(layoutState.treeW),
-      syntenyPct: Math.round(layoutState.syntenyPct * 10) / 10,
+      syntenyH: Math.round(layoutState.syntenyH),
+      inspectorW: Math.round(layoutState.inspectorW),
       syntenyHidden,
     };
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(payload));
@@ -1253,53 +1269,66 @@ const layoutState = (() => {
   const stored = loadLayout() || {};
   return {
     treeW: Number.isFinite(stored.treeW) ? Math.max(MIN_TREE_W, stored.treeW) : DEFAULT_TREE_W,
-    syntenyPct: Number.isFinite(stored.syntenyPct)
-      ? Math.min(70, Math.max(20, stored.syntenyPct))
-      : DEFAULT_SYNTENY_W_PCT,
+    syntenyH: Number.isFinite(stored.syntenyH)
+      ? Math.max(MIN_SYNTENY_H, stored.syntenyH)
+      : DEFAULT_SYNTENY_H,
+    inspectorW: Number.isFinite(stored.inspectorW)
+      ? Math.max(MIN_INSPECTOR_W, stored.inspectorW)
+      : DEFAULT_INSPECTOR_W,
     syntenyHiddenStored: stored.syntenyHidden,
   };
 })();
 function applyLayout() {
-  if (!viewerSplit || !viewerBody) return;
+  if (!viewerSplit || !viewerBody || !explorerSection) return;
+  // Below this the shell has not been laid out yet, and reacting would shrink
+  // the panes to their minimums and persist that.
   const bodyW = viewerBody.clientWidth || 0;
+  const measured = bodyW >= MIN_TREE_W + MIN_MATRIX_W;
   let treeW = layoutState.treeW;
-  let syntenyPct = layoutState.syntenyPct;
-  if (bodyW > 0) {
-    const availableForMatrix = bodyW - treeW - (syntenyHidden ? 0 : (bodyW * syntenyPct) / 100) - 12;
+  let inspectorW = layoutState.inspectorW;
+  const inspectorShown = !!inspectorPane && getComputedStyle(inspectorPane).display !== "none";
+  if (measured) {
+    // The matrix keeps its floor; the tree and the inspector give way first.
+    const used = treeW + (inspectorShown ? inspectorW : 0) + 12;
+    const availableForMatrix = bodyW - used;
     if (availableForMatrix < MIN_MATRIX_W) {
-      const overshoot = MIN_MATRIX_W - availableForMatrix;
+      let overshoot = MIN_MATRIX_W - availableForMatrix;
       const shrinkTree = Math.min(treeW - MIN_TREE_W, overshoot * 0.5);
       treeW = Math.max(MIN_TREE_W, treeW - shrinkTree);
-      const remaining = overshoot - shrinkTree;
-      if (!syntenyHidden && remaining > 0) {
-        const syntenyW = (bodyW * syntenyPct) / 100 - remaining;
-        const minPct = (MIN_SYNTENY_W / bodyW) * 100;
-        syntenyPct = Math.max(minPct, (syntenyW / bodyW) * 100);
+      overshoot -= shrinkTree;
+      if (inspectorShown && overshoot > 0) {
+        inspectorW = Math.max(MIN_INSPECTOR_W, inspectorW - overshoot);
       }
     }
     layoutState.treeW = treeW;
-    layoutState.syntenyPct = syntenyPct;
+    layoutState.inspectorW = inspectorW;
   }
+  // Synteny is a horizontal band now, so its size is a height bounded by the
+  // workspace: gene arrows need the full width, not a slice of it.
+  const workspaceH = explorerSection.clientHeight || 0;
+  let syntenyH = layoutState.syntenyH;
+  if (workspaceH > 0) {
+    syntenyH = Math.max(
+      MIN_SYNTENY_H,
+      Math.min(syntenyH, Math.round(workspaceH * MAX_SYNTENY_FRACTION)),
+    );
+    layoutState.syntenyH = syntenyH;
+  }
+  explorerSection.style.setProperty("--synteny-h", `${Math.round(syntenyH)}px`);
   viewerBody.style.setProperty("--tree-w", `${treeW}px`);
-  viewerBody.style.setProperty("--synteny-w", `${syntenyPct.toFixed(2)}%`);
-  if (viewerSplit) {
-    viewerSplit.style.setProperty("--tree-w", `${treeW}px`);
-    viewerSplit.style.setProperty("--synteny-w", `${syntenyPct.toFixed(2)}%`);
-  }
-  document.querySelectorAll(".synteny-control").forEach(control => {
-    control.style.display = syntenyHidden ? "none" : "";
-  });
-  treeWidth = Math.max(180, Math.round(treeW) - LINEAGE_STRIP_W - 4);
+  viewerBody.style.setProperty("--inspector-w", `${inspectorW}px`);
+  viewerSplit.style.setProperty("--tree-w", `${treeW}px`);
+  viewerSplit.style.setProperty("--inspector-w", `${inspectorW}px`);
+  treeWidth = Math.max(160, Math.round(treeW) - LINEAGE_STRIP_W - 4);
 }
 function applyViewerSplit() {
   applyLayout();
 }
 function applySyntenyVisibility() {
-  if (!viewerBody || !syntenyToggle) return;
-  viewerBody.classList.toggle("synteny-hidden", syntenyHidden);
-  if (viewerSplit) viewerSplit.classList.toggle("synteny-hidden", syntenyHidden);
+  if (!explorerSection || !syntenyToggle) return;
+  explorerSection.classList.toggle("synteny-hidden", syntenyHidden);
   syntenyToggle.classList.toggle("active", !syntenyHidden);
-  syntenyToggle.textContent = syntenyHidden ? "Show syntenies" : "Hide syntenies";
+  syntenyToggle.textContent = syntenyHidden ? "Show synteny" : "Hide synteny";
   syntenyToggle.setAttribute("aria-pressed", syntenyHidden ? "false" : "true");
   applyLayout();
   persistLayout();
@@ -1311,26 +1340,42 @@ function applySyntenyVisibility() {
     treeDirty = true;
   }
 }
+/* Three resizable seams: tree|matrix and matrix|inspector move horizontally,
+   matrix|synteny moves vertically. */
 function setupDragHandle(handle, side) {
   if (!handle) return;
-  let startX = 0;
+  const vertical = side === "synteny";
+  let start = 0;
   let startTreeW = 0;
-  let startSyntenyW = 0;
+  let startInspectorW = 0;
+  let startSyntenyH = 0;
   let bodyW = 0;
   let active = false;
-  const onMove = event => {
-    if (!active) return;
-    const dx = event.clientX - startX;
+  const applyDelta = delta => {
     if (side === "tree") {
-      const maxTree = Math.max(MIN_TREE_W, bodyW - MIN_MATRIX_W - (syntenyHidden ? 0 : startSyntenyW) - 12);
-      layoutState.treeW = Math.max(MIN_TREE_W, Math.min(maxTree, startTreeW + dx));
+      const maxTree = Math.max(MIN_TREE_W, bodyW - MIN_MATRIX_W - startInspectorW - 12);
+      layoutState.treeW = Math.max(MIN_TREE_W, Math.min(maxTree, startTreeW + delta));
+    } else if (side === "inspector") {
+      const maxInspector = Math.max(MIN_INSPECTOR_W, bodyW - MIN_MATRIX_W - layoutState.treeW - 12);
+      layoutState.inspectorW = Math.max(
+        MIN_INSPECTOR_W,
+        Math.min(maxInspector, startInspectorW - delta),
+      );
     } else {
-      const newSynW = Math.max(MIN_SYNTENY_W, startSyntenyW - dx);
-      const minPct = (MIN_SYNTENY_W / bodyW) * 100;
-      const maxPct = Math.max(minPct, ((bodyW - layoutState.treeW - MIN_MATRIX_W - 12) / bodyW) * 100);
-      layoutState.syntenyPct = Math.min(maxPct, Math.max(minPct, (newSynW / bodyW) * 100));
+      // Dragging up grows the synteny band, so the delta is inverted.
+      layoutState.syntenyH = Math.max(MIN_SYNTENY_H, startSyntenyH - delta);
     }
     applyLayout();
+  };
+  const capture = () => {
+    bodyW = viewerBody ? viewerBody.clientWidth || 0 : 0;
+    startTreeW = layoutState.treeW;
+    startInspectorW = layoutState.inspectorW;
+    startSyntenyH = layoutState.syntenyH;
+  };
+  const onMove = event => {
+    if (!active) return;
+    applyDelta((vertical ? event.clientY : event.clientX) - start);
     scheduleRender(false);
   };
   const onUp = event => {
@@ -1344,16 +1389,14 @@ function setupDragHandle(handle, side) {
     }
     treeDirty = true;
     resetMatrixCache();
+    syntenyKey = "";
     render(false);
   };
   handle.addEventListener("pointerdown", event => {
     if (event.button !== 0) return;
-    bodyW = viewerBody.clientWidth || 0;
-    if (bodyW <= 0) return;
+    capture();
     active = true;
-    startX = event.clientX;
-    startTreeW = layoutState.treeW;
-    startSyntenyW = (bodyW * layoutState.syntenyPct) / 100;
+    start = vertical ? event.clientY : event.clientX;
     handle.classList.add("dragging");
     document.body.classList.add("recore-dragging");
     try { handle.setPointerCapture(event.pointerId); } catch (_e) {}
@@ -1363,26 +1406,17 @@ function setupDragHandle(handle, side) {
   handle.addEventListener("pointerup", onUp);
   handle.addEventListener("pointercancel", onUp);
   handle.addEventListener("keydown", event => {
+    const keys = vertical ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
+    if (!keys.includes(event.key)) return;
     const step = event.shiftKey ? 32 : 12;
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      bodyW = viewerBody.clientWidth || 0;
-      const dx = (event.key === "ArrowRight" ? 1 : -1) * step;
-      if (side === "tree") {
-        const maxTree = Math.max(MIN_TREE_W, bodyW - MIN_MATRIX_W - (syntenyHidden ? 0 : (bodyW * layoutState.syntenyPct) / 100) - 12);
-        layoutState.treeW = Math.max(MIN_TREE_W, Math.min(maxTree, layoutState.treeW + dx));
-      } else {
-        const newSynW = ((bodyW * layoutState.syntenyPct) / 100) - dx;
-        const minPct = (MIN_SYNTENY_W / bodyW) * 100;
-        const maxPct = Math.max(minPct, ((bodyW - layoutState.treeW - MIN_MATRIX_W - 12) / bodyW) * 100);
-        layoutState.syntenyPct = Math.min(maxPct, Math.max(minPct, (newSynW / bodyW) * 100));
-      }
-      applyLayout();
-      persistLayout();
-      treeDirty = true;
-      resetMatrixCache();
-      render(false);
-      event.preventDefault();
-    }
+    capture();
+    applyDelta((event.key === keys[1] ? 1 : -1) * step);
+    persistLayout();
+    treeDirty = true;
+    resetMatrixCache();
+    syntenyKey = "";
+    render(false);
+    event.preventDefault();
   });
 }
 function renderLineageStrip() {
@@ -1723,24 +1757,6 @@ function referenceMechanismRow(cluster) {
   }
   return `<dt>Reference (audit)</dt><dd>${bits.join("<br>")}</dd>`;
 }
-const MIN_VIEWER_H = 240;
-const MAX_VIEWER_H = 920;
-const FIT_TARGET_H = 560;
-const FIT_TARGET_W = 720;
-// Small trees left most of the viewport empty because the panes always claimed
-// their maximum height. Size the viewer to whichever pane needs the most room,
-// capped so a 5000-tip tree still scrolls inside a sane window.
-function applyViewerHeight() {
-  if (!viewerBody) return;
-  const contentH = Math.max(treeHeight, leafOrder.length * cellH) + 8;
-  const syntenyH = syntenyHidden ? 0 : (syntenySvg ? syntenySvg.getBoundingClientRect().height + 46 : 0);
-  const viewportCap = Math.min(MAX_VIEWER_H, Math.round(window.innerHeight * 0.76));
-  const needed = Math.max(contentH, syntenyH);
-  const height = `${Math.round(Math.max(MIN_VIEWER_H, Math.min(viewportCap, needed)))}px`;
-  if (viewerBody.style.getPropertyValue("--viewer-h") !== height) {
-    viewerBody.style.setProperty("--viewer-h", height);
-  }
-}
 function render(scrollToSelected = false) {
   renderMatrix(scrollToSelected);
   renderColumnHeader();
@@ -1749,7 +1765,6 @@ function render(scrollToSelected = false) {
   renderLineageStrip();
   renderLineageLegend();
   updateTopBarMeta();
-  applyViewerHeight();
 }
 function scheduleRender(scrollToSelected = false) {
   if (scrollToSelected) {
@@ -1799,7 +1814,7 @@ function fitZoomToData() {
   const cols = Math.max(1, visibleClusters.length);
   const bodyW = viewerBody ? viewerBody.clientWidth : 0;
   const matrixW = bodyW > 0
-    ? Math.max(220, bodyW - layoutState.treeW - (syntenyHidden ? 0 : (bodyW * layoutState.syntenyPct) / 100) - 24)
+    ? Math.max(220, bodyW - layoutState.treeW - layoutState.inspectorW - 24)
     : FIT_TARGET_W;
   const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(FIT_TARGET_H / tips)));
   // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
@@ -1816,10 +1831,9 @@ applyLayout();
 applySyntenyVisibility();
 fitZoomToData();
 setupDragHandle(treeHandle, "tree");
+setupDragHandle(document.getElementById("inspectorHandle"), "inspector");
 setupDragHandle(syntenyHandle, "synteny");
 if (typeof ResizeObserver !== "undefined") {
-  // Width only: applyViewerHeight writes back to this element's height, so
-  // reacting to height changes would make the observer chase its own tail.
   let lastWidth = 0;
   const ro = new ResizeObserver(entries => {
     const width = Math.round(entries[0]?.contentRect.width || 0);
@@ -1837,18 +1851,37 @@ window.addEventListener("resize", () => {
   if (ratio !== lastPixelRatio) {
     // Moved to a screen with a different density, or the page was zoomed.
     lastPixelRatio = ratio;
-    resetMatrixCache();
-    render(false);
-    return;
   }
-  applyViewerHeight();
+  applyLayout();
+  resetMatrixCache();
+  syntenyKey = "";
+  render(false);
 });
+status.textContent = defaultStatus;
 render(true);
 window.addEventListener("recore:theme-change", () => {
   refreshThemeColors();
   resetMatrixCache();
   render(false);
 });
+// The mechanism list is a column filter, so it opens on demand over the
+// workspace rather than sitting between the toolbar and the matrix.
+if (mechanismFilterButton && processLegend) {
+  const setLegendOpen = open => {
+    processLegend.hidden = !open;
+    mechanismFilterButton.setAttribute("aria-expanded", String(open));
+    mechanismFilterButton.classList.toggle("active", open || mechanismFilters.size > 0);
+  };
+  mechanismFilterButton.addEventListener("click", () => setLegendOpen(processLegend.hidden));
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !processLegend.hidden) setLegendOpen(false);
+  });
+  document.addEventListener("pointerdown", event => {
+    if (processLegend.hidden) return;
+    if (processLegend.contains(event.target) || mechanismFilterButton.contains(event.target)) return;
+    setLegendOpen(false);
+  });
+}
 search.addEventListener("input", () => { populateOptions(); treeDirty = true; render(true); });
 select.addEventListener("change", () => { selected = Number(select.value || 0); selectedSyntenyBlock = 0; selectedSyntenyReference = false; syntenyKey = ""; treeDirty = true; render(true); });
 colorMode.addEventListener("change", () => { treeDirty = true; render(false); });

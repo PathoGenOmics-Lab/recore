@@ -10,7 +10,8 @@
     if (button) {
       const isDark = mode === "dark";
       button.setAttribute("aria-pressed", String(isDark));
-      button.querySelector(".label").textContent = isDark ? "Light mode" : "Dark mode";
+      const label = button.querySelector(".label");
+      if (label) label.textContent = isDark ? "Light" : "Dark";
     }
     window.dispatchEvent(new CustomEvent("recore:theme-change", {detail: {mode}}));
   }
@@ -28,7 +29,54 @@
     setupNavObserver();
     setupCandidatesTable();
     setupSortableTables();
+    setupDrawer();
   });
+
+  /* The run summary, breakdowns, candidate table and file list are reference
+     material, not the thing you came to look at, so they slide over the
+     workspace instead of standing between the toolbar and the data. */
+  function setupDrawer() {
+    const drawer = document.getElementById("runDetails");
+    const scrim = document.getElementById("drawerScrim");
+    const open = document.getElementById("openDetails");
+    const close = document.getElementById("closeDetails");
+    if (!drawer || !open) return;
+
+    const setOpen = isOpen => {
+      drawer.classList.toggle("open", isOpen);
+      drawer.setAttribute("aria-hidden", String(!isOpen));
+      open.setAttribute("aria-expanded", String(isOpen));
+      if (scrim) scrim.hidden = !isOpen;
+      if (isOpen) {
+        (close || drawer).focus?.();
+      } else {
+        open.focus();
+      }
+    };
+
+    open.addEventListener("click", () => setOpen(!drawer.classList.contains("open")));
+    if (close) close.addEventListener("click", () => setOpen(false));
+    if (scrim) scrim.addEventListener("click", () => setOpen(false));
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && drawer.classList.contains("open")) setOpen(false);
+    });
+
+    // Picking a candidate should take you to it in the matrix, not just close.
+    const table = document.getElementById("candidatesTable");
+    if (table) {
+      table.addEventListener("click", event => {
+        const row = event.target.closest("tr[data-cluster]");
+        if (!row) return;
+        const select = document.getElementById("clusterSelect");
+        if (select && [...select.options].some(o => o.textContent.startsWith(row.dataset.cluster))) {
+          const match = [...select.options].find(o => o.textContent.startsWith(row.dataset.cluster));
+          select.value = match.value;
+          select.dispatchEvent(new Event("change"));
+          setOpen(false);
+        }
+      });
+    }
+  }
 
   function setupNavObserver() {
     const links = Array.from(document.querySelectorAll(".nav-bar a[data-target]"));

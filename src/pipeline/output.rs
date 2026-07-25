@@ -1946,7 +1946,9 @@ fn explorer_unavailable_html(reason: &str) -> String {
     )
 }
 
-fn phylo_matrix_explorer_html(
+/// The workspace is the report: phylogeny, matrix and synteny fill the viewport
+/// and everything else lives in the run-details drawer.
+fn explorer_workspace_html(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     nsc_result: &Option<nscluster::NsClusterResult>,
@@ -1957,19 +1959,20 @@ fn phylo_matrix_explorer_html(
 ) -> String {
     let Some(tree) = phylo_tree else {
         return explorer_unavailable_html(
-            "Add --tree to include an interactive phylogeny plus matrix explorer in this report.",
+            "Add --tree to open the phylogeny, matrix and synteny workspace. Without a tree the run details drawer still carries every number and table.",
         );
     };
     let matched_tips = matched_phylo_tips(&tree.root);
     if matched_tips == 0 {
         return explorer_unavailable_html(
-            "The supplied tree has no tips matching matrix genomes, so the explorer was not embedded.",
+            "The supplied tree has no tips matching matrix genomes, so the workspace was not embedded.",
         );
     }
     if matched_tips > EXPLORER_MAX_TIPS {
         return explorer_unavailable_html(&format!(
-            "The tree has {} matched tips. The interactive explorer is embedded only up to {} tips to keep the report responsive.",
-            matched_tips, EXPLORER_MAX_TIPS
+            "The tree has {} matched tips. The workspace is embedded up to {} tips to keep the report responsive.",
+            format_count(matched_tips),
+            format_count(EXPLORER_MAX_TIPS)
         ));
     }
 
@@ -1980,10 +1983,10 @@ fn phylo_matrix_explorer_html(
     let cell_count = matched_tips.saturating_mul(rendered_clusters);
     if cell_count > EXPLORER_MAX_CELLS {
         return explorer_unavailable_html(&format!(
-            "The tree and matrix would embed {} cells ({} tips x {} clusters). The explorer limit is {} cells; use gene_presence_absence_recore_states.csv for the full matrix.",
+            "The matrix would embed {} cells ({} tips x {} clusters), above the {} cell limit. Use gene_presence_absence_recore_states.csv for the full matrix.",
             format_count(cell_count),
-            matched_tips,
-            rendered_clusters,
+            format_count(matched_tips),
+            format_count(rendered_clusters),
             format_count(EXPLORER_MAX_CELLS)
         ));
     }
@@ -1998,22 +2001,96 @@ fn phylo_matrix_explorer_html(
         synteny_blocks,
     ) else {
         return explorer_unavailable_html(
-            "The tree could not be converted into a matched-tip browser explorer.",
+            "The tree could not be converted into a matched-tip browser workspace.",
         );
     };
 
     let mut html = String::new();
-    html.push_str("<section id='explorer' class='panel explorer'>");
-    html.push_str("<div class='explorer-head'><div><div class='kicker'>Interactive review</div><h2>Phylogeny and corrected matrix explorer</h2><p class='muted'>Click matrix columns or pick a cluster to recolor tree tips. Matrix rows follow the matched tree-tip order.</p></div><div class='legend' aria-label='Cell legend'><span><i class='sw p'></i>input</span><span><i class='sw r'></i>rescued</span><span><i class='sw n'></i>NSC</span><span><i class='sw a'></i>absent</span></div></div>");
-    html.push_str("<div class='explorer-controls cluster-controls'><input id='clusterSearch' type='search' placeholder='Search cluster or annotation'><select id='clusterSelect' aria-label='Cluster selector'></select><span id='clusterInfo' class='muted num'></span></div>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div><div id='processLegend' class='process-legend'></div><div class='viewer-controls'><div class='ctrl-group'><span class='ctrl-label'>Color</span><select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Tips: by selected cluster</option><option value='lineage'>Tips: by lineage</option><option value='process'>Tips: by selected process</option><option value='rescue'>Tips: by rescue burden</option><option value='absence'>Tips: by absence burden</option><option value='correction'>Tips: by any correction</option></select><select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Matrix: by evidence state</option><option value='process'>Matrix: by evolutionary process</option></select></div><div class='ctrl-group'><span class='ctrl-label'>Tree</span><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div><label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label></div><div class='ctrl-group'><span class='ctrl-label'>Zoom</span><label class='scale-control'>Column <input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8'></label><label class='scale-control'>Row <input id='rowHeight' type='range' min='1' max='18' value='8'></label><label class='scale-control synteny-control'>Synteny <input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1'></label></div><div class='ctrl-group ctrl-group-right'><button id='referenceOnly' type='button' class='action-button'>Reference-absent only</button><button id='toggleSynteny' type='button' class='action-button'>Show syntenies</button><button id='explorerFullscreen' type='button' class='action-button'>Fullscreen</button></div></div><div id='lineageLegend' class='lineage-legend'></div><div id='viewerSplit' class='viewer-layout synteny-hidden'><div class='viewer-top-bar'><div class='top-label top-tree' id='topTree'><span>Phylogeny</span><small id='topTreeMeta'>matched tips</small></div><div class='top-label top-matrix'><span>Corrected matrix by gene cluster</span><small id='topMatrixMeta'></small></div><div class='top-label top-synteny synteny-control'><span>Unique syntenies</span><small id='topSyntenyMeta'>select a cluster</small></div></div><div class='viewer-body' id='viewerBody'><div class='tree-pane' id='treePane'><div class='tree-scroll' id='treeScroll'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas></div></div><div class='split-handle tree-handle' id='treeHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize tree pane' title='Drag to resize'></div><div class='matrix-region'><div class='matrix-header' id='headerScroller'><canvas id='columnHeaderCanvas' class='column-head'></canvas></div><div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div></div><div class='split-handle synteny-handle synteny-control' id='syntenyHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize synteny pane' title='Drag to resize'></div><aside class='synteny-pane' id='syntenyPanel'><div class='synteny-head'><small id='syntenySummary'>Select a gene cluster to inspect flanking loci.</small></div><div class='synteny-scroll'><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></div></aside></div></div><div id='matrixStatus' class='matrix-status muted'>Wheel = zoom column; Shift + wheel = zoom row. Drag the gray handles between panes to resize them.</div>");
+
+    // ---- Toolbar: what to look at. Zoom lives next to the axes, not here.
+    html.push_str("<div class='toolbar' role='toolbar' aria-label='Matrix controls'>");
+    html.push_str("<div class='tool-group tool-grow'>");
+    html.push_str(
+        "<input id='clusterSearch' type='search' placeholder='Search cluster or annotation'>",
+    );
+    html.push_str("<select id='clusterSelect' aria-label='Selected gene cluster'></select>");
+    html.push_str("<span id='clusterInfo' class='muted num'></span>");
+    html.push_str("</div>");
+    html.push_str("<div class='tool-group'>");
+    html.push_str("<select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Tips: selected cluster</option><option value='lineage'>Tips: lineage</option><option value='process'>Tips: mechanism</option><option value='rescue'>Tips: rescue burden</option><option value='absence'>Tips: absence burden</option><option value='correction'>Tips: any correction</option></select>");
+    html.push_str("<select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Cells: evidence state</option><option value='process'>Cells: mechanism</option></select>");
+    html.push_str("</div>");
+    html.push_str("<div class='tool-group'>");
+    html.push_str("<div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active'>Phylogram</button><button id='cladogramMode' type='button'>Cladogram</button></div>");
+    html.push_str("<label class='toggle-control'><input id='tipLabels' type='checkbox' checked>Tip labels</label>");
+    html.push_str("</div>");
+    html.push_str("<div class='tool-group tool-right'>");
+    html.push_str("<button id='mechanismFilter' type='button' class='ghost-btn' aria-expanded='false' aria-controls='processLegend'>Mechanisms</button>");
+    html.push_str(
+        "<button id='referenceOnly' type='button' class='ghost-btn'>Reference-absent only</button>",
+    );
+    html.push_str(
+        "<button id='toggleSynteny' type='button' class='ghost-btn'>Show synteny</button>",
+    );
+    html.push_str("</div>");
+    html.push_str("</div>");
+    html.push_str("<div id='processLegend' class='process-legend' hidden></div>");
+    html.push_str("<div id='lineageLegend' class='lineage-legend'></div>");
+
+    // ---- Workspace grid.
+    html.push_str("<main id='explorer' class='workspace synteny-hidden'>");
+    html.push_str("<div id='viewerSplit' class='panes-wrap'>");
+    html.push_str("<div id='viewerBody' class='panes'>");
+
+    // Tree pane.
+    html.push_str("<section class='pane tree-pane' id='treePane' aria-label='Phylogeny'>");
+    html.push_str(
+        "<header class='pane-head'><span>Phylogeny</span><small id='topTreeMeta'></small></header>",
+    );
+    html.push_str("<div class='tree-scroll' id='treeScroll'><svg id='treeSvg' role='img' aria-label='Matched phylogeny'></svg><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas></div>");
+    html.push_str("<div class='zoom-rail'><label class='rail-label' for='rowHeight'>Rows</label><input id='rowHeight' type='range' min='1' max='18' value='8' aria-label='Row zoom'></div>");
+    html.push_str("</section>");
+
+    html.push_str("<div class='split-handle tree-handle' id='treeHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize phylogeny pane' title='Drag to resize'></div>");
+
+    // Matrix pane.
+    html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
+    html.push_str("<header class='pane-head'><span>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span></header>");
+    html.push_str("<div class='matrix-header' id='headerScroller'><canvas id='columnHeaderCanvas' class='column-head'></canvas></div>");
+    html.push_str("<div class='matrix-pane' id='matrixPane'><canvas id='matrixCanvas'></canvas><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
+    html.push_str("<div class='zoom-dock'><label for='cellSize'>Columns</label><input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8' aria-label='Column zoom'></div>");
+    html.push_str("</section>");
+
+    html.push_str("<div class='split-handle inspector-handle' id='inspectorHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize inspector' title='Drag to resize'></div>");
+
+    // Inspector.
+    html.push_str(
+        "<aside class='pane inspector' id='inspectorPane' aria-label='Selected cluster'>",
+    );
+    html.push_str("<header class='pane-head'><span>Selected cluster</span></header>");
+    html.push_str("<div id='clusterDetails' class='cluster-details'></div>");
+    html.push_str("</aside>");
+
+    html.push_str("</div></div>");
+
+    html.push_str("<div class='split-handle synteny-handle' id='syntenyHandle' role='separator' aria-orientation='horizontal' tabindex='0' aria-label='Resize synteny panel' title='Drag to resize'></div>");
+
+    // Synteny, full width under everything else: gene arrows need horizontal room.
+    html.push_str("<section class='synteny-pane' id='syntenyPanel' aria-label='Unique syntenies'>");
+    html.push_str("<header class='pane-head'><span>Unique syntenies</span><small id='topSyntenyMeta'></small><small id='syntenySummary' class='synteny-summary'></small><span class='zoom-inline'><label for='syntenyZoom'>Scale</label><input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1' aria-label='Synteny zoom'></span></header>");
+    html.push_str("<div class='synteny-scroll'><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></div>");
+    html.push_str("</section>");
+    html.push_str("</main>");
+
+    html.push_str("<footer class='statusbar'><span id='matrixStatus'></span></footer>");
+
     html.push_str("<script id='explorerData' type='application/json'>");
     html.push_str(&data_json);
     html.push_str(
         "</script><script>window.recoreExplorerData=JSON.parse(document.getElementById('explorerData').textContent);</script><script>",
     );
     html.push_str(EXPLORER_JS);
-    html.push_str("</script></section>");
+    html.push_str("</script>");
     html
 }
 
@@ -2059,7 +2136,7 @@ pub(super) fn write_html_report(
         "molecular_mechanism",
     )?;
     let qc = count_tsv_column(&output_dir.join("genome_qc.tsv"), "qc_status")?;
-    let top_candidates = top_candidate_rows(&output_dir.join("evolutionary_events.tsv"), 12)?;
+    let top_candidates = top_candidate_rows(&output_dir.join("evolutionary_events.tsv"), 25)?;
     let explorer_evolution = explorer_evolution_rows(&output_dir.join("evolutionary_events.tsv"))?;
     let explorer_synteny = explorer_synteny_blocks(
         &output_dir.join("cluster_synteny_blocks.tsv"),
@@ -2076,9 +2153,6 @@ pub(super) fn write_html_report(
     html.push_str("<!doctype html><html lang='en'><head><meta charset='utf-8'>");
     html.push_str("<meta name='viewport' content='width=device-width,initial-scale=1'>");
     html.push_str("<title>Recore run report</title>");
-    // Resolve the theme before the first paint, otherwise a dark-mode reader gets a
-    // full-page white flash while the rest of the body streams in.
-    html.push_str(THEME_BOOTSTRAP_JS);
     write!(
         html,
         "<meta name='generator' content='Recore v{}'>",
@@ -2086,84 +2160,86 @@ pub(super) fn write_html_report(
     )
     .expect("write to String is infallible");
     html.push_str("<meta name='description' content='Recore audit of a corrected pangenome presence/absence matrix.'>");
+    // Resolve the theme before the first paint, otherwise a dark-mode reader gets a
+    // full-page white flash while the rest of the body streams in.
+    html.push_str(THEME_BOOTSTRAP_JS);
     // The report has to open from a results directory with no network, so every
     // asset is inlined and the font stack falls back to what the system has.
     html.push_str("<style>");
     html.push_str(REPORT_CSS);
-    html.push_str("</style></head><body>");
+    html.push_str("</style></head><body class='app'>");
 
-    html.push_str("<div class='banner'><div class='banner-inner'><div class='banner-brand'>");
-    html.push_str("<div class='banner-logo' aria-hidden='true'>");
+    // ---- Top bar: identity and the numbers worth seeing without opening anything.
+    html.push_str("<header class='topbar'>");
+    html.push_str("<div class='topbar-brand'><span class='topbar-logo' aria-hidden='true'>");
     html.push_str(&report_logo_svg());
-    html.push_str("</div><div>");
-    html.push_str("<div class='kicker'>Recore audit report</div>");
-    html.push_str("<h1>Corrected pangenome matrix review</h1>");
-    html.push_str("<p class='banner-tagline'>A reproducible audit of rescued false absences, guarded matrix corrections, and the downstream interpretation signals that explain them.</p>");
-    write!(
-        html,
-        "<div class='pills'><span class='pill'><span class='dot {}'></span>synteny {}</span><span class='pill'><span class='dot {}'></span>NSC {}</span><span class='pill'><span class='dot {}'></span>tree {}</span><span class='pill'>policy <code>{:?}</code></span><span class='pill'>reference <code>{}</code></span></div>",
-        if args.synteny { "" } else { "off" },
-        if args.synteny { "on" } else { "off" },
-        if args.nscluster { "" } else { "off" },
-        if args.nscluster { "on" } else { "off" },
-        if phylo_tree.is_some() { "" } else { "off" },
-        if phylo_tree.is_some() { "interactive" } else { "static" },
-        stats.matrix_policy,
-        html_escape(args.reference_genome.as_deref().unwrap_or("not set")),
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<p class='path'>Output dir: {}</p>",
-        html_escape(&output_dir.display().to_string()),
-    )
-    .expect("write to String is infallible");
-    html.push_str("</div></div><div class='banner-meta'>");
-    write!(
-        html,
-        "<span class='version'>Recore v{}</span><span class='scale num'>{} clusters &middot; {} genomes</span><span class='scale'>schema recore.outputs.v6</span>",
-        html_escape(env!("CARGO_PKG_VERSION")),
-        format_count(pa.n_clusters()),
-        format_count(pa.n_genomes()),
-    )
-    .expect("write to String is infallible");
-    html.push_str("<div class='banner-actions'>");
-    html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
-    html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label'>Dark mode</span>");
-    html.push_str("</button>");
-    html.push_str("</div></div></div></div>");
+    html.push_str("</span><span class='topbar-title'>Corrected pangenome matrix</span></div>");
 
-    html.push_str("<nav class='nav-bar' aria-label='Section navigation'><div class='nav-inner'>");
-    let mut nav_items = vec![
-        ("summary", "Summary"),
-        ("stats", "Stats"),
-        ("breakdowns", "Breakdowns"),
-        ("mechanisms", "Mechanisms"),
-        ("candidates", "Candidates"),
-    ];
-    if phylo_tree.is_some() {
-        nav_items.push(("explorer", "Explorer"));
-    }
-    nav_items.push(("files", "Files"));
-    for (target, label) in &nav_items {
+    html.push_str("<div class='run-chips'>");
+    for (value, label, kind) in [
+        (format_count(pa.n_clusters()), "clusters", ""),
+        (format_count(pa.n_genomes()), "genomes", ""),
+        (format_count(matrix_corrected_total), "corrected", "pos"),
+        (
+            format_percent(matrix_corrected_total, stats.searchable_gaps),
+            "of gaps",
+            "",
+        ),
+        (format_count(rejected_total), "guarded", "warn"),
+        (
+            format!("{:+}", core_delta),
+            "core",
+            if core_delta >= 0 { "pos" } else { "warn" },
+        ),
+    ] {
         write!(
             html,
-            "<a href='#{0}' data-target='{0}'>{1}</a>",
-            target, label,
+            "<span class='chip {}'><b class='num'>{}</b>{}</span>",
+            kind,
+            html_escape(&value),
+            html_escape(label)
         )
         .expect("write to String is infallible");
     }
-    html.push_str("</div></nav>");
-
-    html.push_str("<main>");
-
-    html.push_str("<section id='summary' class='panel'>");
-    html.push_str("<div class='executive'>");
-    html.push_str("<div>");
-    html.push_str("<div class='kicker'>Executive summary</div>");
     write!(
         html,
-        "<h2 style='margin:6px 0 10px;font-size:18px'>Pangenome correction at a glance</h2><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore retained <strong class='num'>{}</strong> accepted evidence rows for audit and kept <strong class='num'>{}</strong> candidates out of the binary matrix through synteny/paralog guardrails. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p>",
+        "<span class='chip'>policy <code>{:?}</code></span>",
+        stats.matrix_policy
+    )
+    .expect("write to String is infallible");
+    html.push_str("</div>");
+
+    html.push_str("<div class='topbar-actions'>");
+    html.push_str("<button id='openDetails' type='button' class='ghost-btn' aria-expanded='false' aria-controls='runDetails'>Run details</button>");
+    html.push_str("<button id='themeToggle' type='button' class='icon-btn' aria-pressed='false' title='Toggle color theme'>");
+    html.push_str("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z'/></svg><span class='label'>Dark</span>");
+    html.push_str("</button>");
+    html.push_str(
+        "<button id='explorerFullscreen' type='button' class='ghost-btn'>Fullscreen</button>",
+    );
+    html.push_str("</div></header>");
+
+    let reference_gi = args
+        .reference_genome
+        .as_deref()
+        .and_then(|name| resolve_reference_genome(pa, name));
+
+    html.push_str(&explorer_workspace_html(
+        pa,
+        rescue_map,
+        nsc_result,
+        phylo_tree,
+        reference_gi,
+        &explorer_evolution,
+        &explorer_synteny,
+    ));
+
+    // ---- Run details drawer: everything that used to push the viewer off screen.
+    html.push_str("<aside id='runDetails' class='drawer' aria-hidden='true'><div class='drawer-head'><h2>Run details</h2><button id='closeDetails' type='button' class='icon-btn' aria-label='Close run details'>&times;</button></div><div class='drawer-body'>");
+
+    write!(
+        html,
+        "<section class='drawer-section'><h3>Summary</h3><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore retained <strong class='num'>{}</strong> accepted evidence rows for audit and kept <strong class='num'>{}</strong> candidates out of the binary matrix through synteny/paralog guardrails. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p><p class='path'>Output dir: {}</p></section>",
         format_count(matrix_corrected_total),
         stats.matrix_policy,
         format_count(stats.searchable_gaps),
@@ -2175,59 +2251,12 @@ pub(super) fn write_html_report(
         format_count(soft_before),
         format_count(soft_after),
         soft_delta,
+        html_escape(&output_dir.display().to_string()),
     )
     .expect("write to String is infallible");
-    html.push_str("</div>");
-    html.push_str("<div class='headline-grid'>");
-    write!(
-        html,
-        "<div class='headline'><span>Correction rate</span><strong>{}</strong></div>",
-        html_escape(&format_percent(
-            matrix_corrected_total,
-            stats.searchable_gaps
-        ))
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<div class='headline pos'><span>Evidence retained</span><strong>{}</strong></div>",
-        format_count(rescued)
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<div class='headline warn'><span>Guardrail rejections</span><strong>{}</strong></div>",
-        format_count(rejected_total)
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<div class='headline violet'><span>Review mode</span><strong>{}</strong></div>",
-        if phylo_tree.is_some() {
-            "tree-linked"
-        } else {
-            "table-only"
-        }
-    )
-    .expect("write to String is infallible");
-    html.push_str("</div></div></section>");
 
-    html.push_str("<section id='stats' class='panel'>");
-    html.push_str("<div class='panel-head'><div><h2>Run statistics</h2><small>Headline counts behind the executive summary.</small></div></div>");
-    html.push_str("<div class='stat-grid'>");
+    html.push_str("<section class='drawer-section'><h3>Run statistics</h3><div class='stat-grid'>");
     for (label, value, sub, accent) in [
-        (
-            "Clusters",
-            format_count(pa.n_clusters()),
-            "input matrix",
-            "accent",
-        ),
-        (
-            "Genomes",
-            format_count(pa.n_genomes()),
-            "input matrix",
-            "accent",
-        ),
         (
             "Searchable gaps",
             format_count(stats.searchable_gaps),
@@ -2248,7 +2277,7 @@ pub(super) fn write_html_report(
         ),
         (
             "Rejected evidence",
-            format_count(stats.synteny_rejected + stats.paralog_rejected),
+            format_count(rejected_total),
             "synteny/paralog guardrails",
             "warn",
         ),
@@ -2285,8 +2314,7 @@ pub(super) fn write_html_report(
     }
     html.push_str("</div></section>");
 
-    html.push_str("<section id='breakdowns'>");
-    html.push_str("<div class='section-grid'>");
+    html.push_str("<section class='drawer-section'><div class='section-grid'>");
     html.push_str(&count_items_html(
         "Orthology actions",
         &orthology_actions,
@@ -2313,8 +2341,7 @@ pub(super) fn write_html_report(
     ));
     html.push_str("</div></section>");
 
-    html.push_str("<section id='mechanisms' class='panel'>");
-    html.push_str("<div class='panel-head'><div><h2>Dominant mechanisms</h2><small>Top 12 molecular mechanisms across all clusters. Click matrix cells in the explorer to filter.</small></div></div>");
+    html.push_str("<section class='drawer-section'><h3>Dominant mechanisms</h3>");
     if mechanisms.is_empty() {
         html.push_str("<p class='muted'>No mechanism counts found.</p>");
     } else {
@@ -2337,12 +2364,11 @@ pub(super) fn write_html_report(
             let color = mechanism_color(label);
             write!(
                 html,
-                "<div class='mech-row'><div class='mech-name'><span class='swatch' style='background:{}'></span><span title='{}'>{}</span></div><div class='mech-bar-wrap'><div class='track'><div class='bar' style='width:{:.1}%;background:linear-gradient(90deg,{},{})'></div></div></div><div class='mech-count num'>{} <small>{:.1}%</small></div></div>",
+                "<div class='mech-row'><div class='mech-name'><span class='swatch' style='background:{}'></span><span title='{}'>{}</span></div><div class='mech-bar-wrap'><div class='track'><div class='bar' style='width:{:.1}%;background:{}'></div></div></div><div class='mech-count num'>{} <small>{:.1}%</small></div></div>",
                 color,
                 html_escape(label),
                 html_escape(&pretty_label(label)),
                 pct,
-                color,
                 color,
                 format_count(*value),
                 share,
@@ -2353,12 +2379,11 @@ pub(super) fn write_html_report(
     }
     html.push_str("</section>");
 
-    html.push_str("<section id='candidates' class='panel'>");
-    html.push_str("<div class='panel-head'><div><h2>Top candidate clusters</h2><small>Ranked by evolutionary_signal_score. Search annotation or cluster name and sort columns.</small></div></div>");
+    html.push_str("<section class='drawer-section'><h3>Top candidate clusters</h3>");
     if top_candidates.is_empty() {
         html.push_str("<p class='muted'>No evolutionary event table found.</p>");
     } else {
-        html.push_str("<div class='toolbar'>");
+        html.push_str("<div class='toolbar-inline'>");
         html.push_str(
             "<input id='candidatesSearch' type='search' placeholder='Filter by cluster, wording, mechanism'>",
         );
@@ -2397,8 +2422,9 @@ pub(super) fn write_html_report(
             let mech_color = mechanism_color(&row.mechanism);
             write!(
                 html,
-                "<tr data-priority='{}'><td><strong>{}</strong></td><td><span class='badge {}'>{}</span></td><td class='num' data-sort-value='{:.6}'>{:.3}</td><td><span class='mech-badge' style='--mech-color:{}'><i></i>{}</span></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr data-priority='{}' data-cluster='{}'><td><strong>{}</strong></td><td><span class='badge {}'>{}</span></td><td class='num' data-sort-value='{:.6}'>{:.3}</td><td><span class='mech-badge' style='--mech-color:{}'><i></i>{}</span></td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 html_escape(&row.priority),
+                html_escape(&row.cluster),
                 html_escape(&row.cluster),
                 badge_class,
                 html_escape(&row.priority),
@@ -2413,26 +2439,11 @@ pub(super) fn write_html_report(
             .expect("write to String is infallible");
         }
         html.push_str("</tbody></table></div>");
+        html.push_str("<p class='muted' style='margin-top:8px'>Click a row to select that cluster in the matrix.</p>");
     }
     html.push_str("</section>");
 
-    let reference_gi = args
-        .reference_genome
-        .as_deref()
-        .and_then(|name| resolve_reference_genome(pa, name));
-    html.push_str(&phylo_matrix_explorer_html(
-        pa,
-        rescue_map,
-        nsc_result,
-        phylo_tree,
-        reference_gi,
-        &explorer_evolution,
-        &explorer_synteny,
-    ));
-
-    html.push_str("<section id='files' class='panel'>");
-    html.push_str("<div class='panel-head'><div><h2>Files to inspect</h2><small>Authoritative outputs alongside this report.</small></div></div>");
-    html.push_str("<div class='files'>");
+    html.push_str("<section class='drawer-section'><h3>Files to inspect</h3><div class='files'>");
     for (path, description) in [
         (
             "gene_presence_absence_recore.csv",
@@ -2470,13 +2481,22 @@ pub(super) fn write_html_report(
 
     write!(
         html,
-        "<footer><span>Generated by <strong>Recore v{}</strong> with <code>--write-html-report</code>. This report is an audit summary; use the TSV files for exact downstream analyses.</span><span class='num'>{} clusters &middot; {} genomes</span></footer>",
+        "<section class='drawer-section'><h3>Provenance</h3><dl class='provenance'><dt>Version</dt><dd>Recore v{}</dd><dt>Schema</dt><dd>recore.outputs.v6</dd><dt>Synteny</dt><dd>{}</dd><dt>NSC</dt><dd>{}</dd><dt>Reference</dt><dd>{}</dd><dt>Tree</dt><dd>{}</dd></dl></section>",
         html_escape(env!("CARGO_PKG_VERSION")),
-        format_count(pa.n_clusters()),
-        format_count(pa.n_genomes()),
+        if args.synteny { "on" } else { "off" },
+        if args.nscluster { "on" } else { "off" },
+        html_escape(args.reference_genome.as_deref().unwrap_or("not set")),
+        if phylo_tree.is_some() {
+            "supplied"
+        } else {
+            "not supplied"
+        },
     )
     .expect("write to String is infallible");
-    html.push_str("</main>");
+
+    html.push_str("</div></aside>");
+    html.push_str("<div id='drawerScrim' class='drawer-scrim' hidden></div>");
+
     html.push_str("<script>");
     html.push_str(REPORT_UI_JS);
     html.push_str("</script>");

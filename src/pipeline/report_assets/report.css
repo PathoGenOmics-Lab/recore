@@ -161,17 +161,6 @@ body {
   font-feature-settings: "ss01", "cv11", "tnum";
 }
 
-main {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6) var(--space-12);
-  display: grid;
-  /* minmax(0, 1fr) rather than the implicit auto track: an auto track takes its
-     minimum from the item's min-content, so the wide synteny SVG used to push the
-     whole page out to ~3000px and give the report a horizontal scrollbar. */
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-6);
-}
 
 a {
   color: var(--link);
@@ -237,226 +226,6 @@ code {
 .num {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
-}
-
-/* ===== Slim top bar ===== */
-.banner {
-  background: var(--bg-elev);
-  color: var(--ink);
-  border-bottom: 1px solid var(--soft-line);
-}
-
-.banner-inner {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: var(--space-5) var(--space-6) var(--space-6);
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-6);
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-
-/* flex-basis follows the main axis, so a 480px basis became a 480px *height* the
-   moment .banner-inner stacked (narrow screens and print), leaving a page-tall
-   gap under the title. Keep the basis on the width instead. */
-.banner-brand {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-basis: auto;
-  width: min(480px, 100%);
-  max-width: 100%;
-}
-
-/* The logo artwork is a 16:9 wordmark on an opaque white plate, so the tile keeps
-   that ratio and stays white in both themes instead of stretching into a square. */
-.banner-logo {
-  width: 76px;
-  aspect-ratio: 2048 / 1153;
-  flex: 0 0 auto;
-  border-radius: var(--radius-sm);
-  background: #ffffff;
-  border: 1px solid var(--line);
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.banner-logo svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.banner h1 {
-  color: var(--ink);
-  font-size: 22px;
-  font-weight: 600;
-  margin: 2px 0;
-  letter-spacing: -0.012em;
-}
-
-.banner-tagline {
-  color: var(--muted);
-  font-size: 14px;
-  max-width: 620px;
-  margin-top: 2px;
-}
-
-.banner-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-end;
-}
-
-.banner-meta .version {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--accent-ink);
-  background: var(--accent-soft);
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-}
-
-.banner-meta .scale {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.banner-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.icon-btn {
-  appearance: none;
-  background: var(--bg-elev);
-  color: var(--ink-soft);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 6px 12px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--transition), border-color var(--transition), color var(--transition);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.icon-btn:hover {
-  background: var(--bg-subtle);
-  border-color: var(--line-strong);
-  color: var(--ink);
-}
-
-.icon-btn .glyph {
-  width: 14px;
-  height: 14px;
-}
-
-.pills {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-top: var(--space-3);
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: 0;
-  color: var(--muted);
-  padding: 0;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.pill code {
-  background: var(--bg-subtle);
-  border: 0;
-  color: var(--ink-soft);
-  padding: 1px 6px;
-  font-size: 12px;
-}
-
-.pill .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--positive);
-  display: inline-block;
-}
-
-.pill .dot.off {
-  background: var(--faint);
-}
-
-.path {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: var(--space-3);
-  word-break: break-all;
-}
-
-/* ===== Sub-nav ===== */
-.nav-bar {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: saturate(180%) blur(12px);
-  -webkit-backdrop-filter: saturate(180%) blur(12px);
-  border-bottom: 1px solid var(--soft-line);
-  display: flex;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.nav-inner {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 0 var(--space-6);
-  display: flex;
-  gap: var(--space-2);
-  width: 100%;
-}
-
-.nav-bar a {
-  flex: 0 0 auto;
-  padding: 10px 14px;
-  margin: 6px 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-  text-decoration: none;
-  white-space: nowrap;
-  border-radius: var(--radius-md);
-  transition: color var(--transition), background var(--transition);
-}
-
-.nav-bar a:hover {
-  color: var(--ink);
-  background: var(--bg-subtle);
-  text-decoration: none;
-}
-
-.nav-bar a.active {
-  color: var(--accent-ink);
-  background: var(--accent-soft);
 }
 
 /* ===== Panels ===== */
@@ -923,57 +692,7 @@ td a {
   line-height: 1.5;
 }
 
-/* ===== Toolbar ===== */
-.toolbar {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  align-items: center;
-  margin-bottom: var(--space-4);
-}
-
-.toolbar input[type="search"],
-.toolbar select,
-.toolbar input[type="text"] {
-  appearance: none;
-  background: var(--bg-elev);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 8px 12px;
-  font: inherit;
-  font-size: 14px;
-  min-width: 220px;
-  transition: border-color var(--transition), box-shadow var(--transition);
-}
-
-.toolbar input:focus,
-.toolbar select:focus {
-  outline: 0;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.toolbar .count {
-  color: var(--muted);
-  font-size: 13px;
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ===== Explorer ===== */
-.explorer {
-  padding: var(--space-7) var(--space-7);
-}
-
-.explorer-head {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-4);
-  align-items: flex-start;
-  margin-bottom: var(--space-5);
-}
-
 .legend {
   display: flex;
   gap: var(--space-3);
@@ -1403,165 +1122,6 @@ td a {
   color: var(--muted);
 }
 
-/* ===== Viewer layout (tree | matrix | synteny) ===== */
-.viewer-layout {
-  display: flex;
-  flex-direction: column;
-  margin-top: var(--space-4);
-  border: 1px solid var(--soft-line);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elev);
-  overflow: hidden;
-}
-
-.viewer-top-bar {
-  display: flex;
-  align-items: stretch;
-  background: var(--bg-subtle);
-  border-bottom: 1px solid var(--soft-line);
-}
-
-.top-label {
-  padding: 10px 14px;
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-left: 1px solid var(--soft-line);
-  min-width: 0;
-  overflow: hidden;
-}
-
-.top-label:first-child {
-  border-left: 0;
-}
-
-.top-label span {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.top-label small {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.top-tree {
-  flex: 0 0 auto;
-  width: var(--tree-w, 320px);
-}
-
-.top-matrix {
-  flex: 1 1 auto;
-}
-
-.top-synteny {
-  flex: 0 0 auto;
-  width: var(--synteny-w, 38%);
-}
-
-.viewer-body {
-  display: flex;
-  height: var(--viewer-h, clamp(540px, 76vh, 920px));
-  background: var(--bg-elev);
-  position: relative;
-}
-
-.tree-pane {
-  flex: 0 0 auto;
-  width: var(--tree-w, 320px);
-  min-width: 180px;
-  background: var(--bg-elev);
-  overflow: hidden;
-  position: relative;
-}
-
-.tree-scroll {
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex;
-  align-items: flex-start;
-}
-
-.tree-scroll svg {
-  display: block;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.lineage-strip {
-  display: block;
-  flex: 0 0 auto;
-  width: 6px;
-  image-rendering: pixelated;
-}
-
-.matrix-region {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-  background: var(--bg-elev);
-}
-
-.matrix-header {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--soft-line);
-  background: var(--bg-subtle);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-}
-
-.matrix-pane {
-  flex: 1 1 auto;
-  position: relative;
-  overflow: auto;
-  background: var(--bg-elev);
-  min-height: 0;
-}
-
-/* Height is set inline by the renderer: it grows when there is room for rotated
-   cluster labels above the column ticks. */
-.column-head {
-  display: block;
-  image-rendering: auto;
-  cursor: crosshair;
-}
-
-.matrix-pane canvas {
-  display: block;
-  cursor: crosshair;
-  /* Drawn at the device pixel ratio, so there is nothing to resample. */
-  image-rendering: auto;
-}
-
-.synteny-pane {
-  flex: 0 0 auto;
-  width: var(--synteny-w, 38%);
-  min-width: 260px;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elev);
-  overflow: hidden;
-}
-
-.synteny-scroll {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: auto;
-  background: var(--bg-elev);
-}
-
 /* ===== Drag handles between panes ===== */
 .split-handle {
   flex: 0 0 6px;
@@ -1872,19 +1432,613 @@ body.recore-dragging .tree-pane svg {
   padding: var(--space-6);
 }
 
-/* ===== Footer ===== */
-footer {
-  color: var(--muted);
-  font-size: 13px;
-  padding-top: var(--space-6);
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
+/* ===== App shell =====
+   The workspace is the report, so the page owns the viewport and never scrolls:
+   phylogeny, matrix and synteny get the whole window instead of a letterbox
+   inside a scrolling document. Everything else lives in the details drawer. */
+body.app {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
-footer code {
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 0 var(--space-5);
+  height: 52px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: nowrap;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+/* 16:9 wordmark on an opaque white plate, so the tile keeps that ratio and stays
+   white in both themes rather than stretching into a square. */
+.topbar-logo {
+  width: 54px;
+  aspect-ratio: 2048 / 1153;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  display: block;
+}
+
+.topbar-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.run-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.run-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: 1px solid var(--soft-line);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.chip b {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.chip.pos b { color: var(--positive); }
+.chip.warn b { color: var(--warning); }
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* ===== Toolbar ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 8px var(--space-5);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tool-grow {
+  flex: 1 1 260px;
+  min-width: 200px;
+  max-width: 560px;
+}
+
+.tool-right {
+  margin-left: auto;
+}
+
+.toolbar input[type="search"],
+.toolbar select {
+  appearance: none;
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.toolbar input[type="search"] {
+  flex: 1 1 180px;
+  min-width: 170px;
+}
+
+.toolbar select {
+  min-width: 150px;
+  max-width: 220px;
+}
+
+.toolbar input:focus,
+.toolbar select:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.ghost-btn {
+  appearance: none;
+  background: var(--bg-elev);
   color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.ghost-btn:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.ghost-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.ghost-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ===== Workspace ===== */
+.workspace {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  /* Same trap as the old document grid: an auto column takes its minimum from
+     the item's min-content, and the synteny SVG is as wide as its gene arrows,
+     so the whole workspace grew and pushed the inspector off screen. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, var(--synteny-h, 300px));
+  min-height: 0;
+  background: var(--bg);
+}
+
+.workspace.synteny-hidden {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.workspace.synteny-hidden .synteny-pane,
+.workspace.synteny-hidden .synteny-handle {
+  display: none;
+}
+
+.panes-wrap {
+  min-height: 0;
+  display: flex;
+}
+
+.panes {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-elev);
+  position: relative;
+}
+
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.pane-head small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-head .legend {
+  margin-left: auto;
+  font-size: 12px;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.tree-pane {
+  flex: 0 0 auto;
+  width: var(--tree-w, 300px);
+  min-width: 160px;
+  border-right: 1px solid var(--soft-line);
+}
+
+.tree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+}
+
+.tree-scroll svg {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lineage-strip {
+  display: block;
+  flex: 0 0 auto;
+  width: 6px;
+  image-rendering: pixelated;
+}
+
+.matrix-region {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+
+.matrix-header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.matrix-header::-webkit-scrollbar {
+  display: none;
+}
+
+.matrix-pane {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: auto;
+  min-height: 0;
+  background: var(--bg-elev);
+}
+
+/* Zoom sits on the axis it drives, and stays put while the pane scrolls: the
+   old toolbar sliders scrolled out of view exactly when you needed them. */
+.zoom-dock {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.zoom-dock input[type="range"] {
+  width: 120px;
+  accent-color: var(--accent);
+}
+
+.zoom-rail {
+  position: absolute;
+  left: 8px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.zoom-rail input[type="range"] {
+  width: 90px;
+  accent-color: var(--accent);
+}
+
+.inspector {
+  flex: 0 0 auto;
+  width: var(--inspector-w, 320px);
+  min-width: 220px;
+  border-left: 1px solid var(--soft-line);
+  overflow: hidden;
+}
+
+.inspector .cluster-dl {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1) 0;
+  font-size: 13px;
+}
+
+.inspector .cluster-dl > dd {
+  overflow-wrap: anywhere;
+}
+
+.inspector .cluster-dl > dt {
+  margin-top: var(--space-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inspector .cluster-head h3 {
+  font-size: 15px;
+}
+
+.inspector .cluster-details {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-elev);
+}
+
+.workspace.inspector-hidden .inspector,
+.workspace.inspector-hidden .inspector-handle {
+  display: none;
+}
+
+/* ===== Synteny, full width under the panes =====
+   Gene arrows need horizontal room; sharing the width with the matrix cut every
+   block in half. */
+.synteny-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--soft-line);
+}
+
+.synteny-summary {
+  color: var(--ink-soft) !important;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.zoom-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.zoom-inline input[type="range"] {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+.synteny-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  /* Scroll anchoring re-offsets the pane whenever the SVG is rebuilt at a new
+     size, which hid the row meta column behind the left edge. */
+  overflow-anchor: none;
+  background: var(--bg-elev);
+}
+
+/* ===== Status bar ===== */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  height: 30px;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ===== Run details drawer ===== */
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(860px, 92vw);
+  z-index: 60;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(101%);
+  transition: transform var(--transition);
+}
+
+.drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elev);
+  flex: 0 0 auto;
+}
+
+.drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-6);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+}
+
+.drawer-section {
+  background: var(--bg-elev);
+  border: 1px solid var(--soft-line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.drawer-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.provenance {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 6px var(--space-4);
+  margin: 0;
+  font-size: 13px;
+}
+
+.provenance dt {
+  color: var(--muted);
+}
+
+.provenance dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.toolbar-inline {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar-inline input[type="search"],
+.toolbar-inline select {
+  appearance: none;
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  min-width: 200px;
+}
+
+.toolbar-inline .count {
+  color: var(--muted);
+  font-size: 13px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The mechanism list is a column filter, so it opens over the workspace instead
+   of standing between the toolbar and the data as a wall of cards. */
+.process-legend[hidden] {
+  display: none !important;
+}
+
+.process-legend {
+  position: absolute;
+  z-index: 40;
+  top: 96px;
+  right: var(--space-5);
+  width: min(760px, 94vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+}
+
+@media (max-width: 1100px) {
+  .inspector {
+    display: none;
+  }
+  .inspector-handle {
+    display: none;
+  }
+  .run-chips {
+    display: none;
+  }
 }
 
 /* ===== Responsive ===== */

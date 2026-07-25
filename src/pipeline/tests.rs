@@ -298,14 +298,14 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     .unwrap();
 
     let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
-    assert!(text.contains("Phylogeny and corrected matrix explorer"));
+    assert!(text.contains("Corrected matrix"));
     assert!(text.contains("window.recoreExplorerData"));
     assert!(text.contains("clusterDetails"));
     assert!(text.contains("columnHeaderCanvas"));
     assert!(text.contains("syntenyPanel"));
     assert!(text.contains("syntenySvg"));
     assert!(text.contains("toggleSynteny"));
-    assert!(text.contains("Show syntenies"));
+    assert!(text.contains("Show synteny"));
     assert!(text.contains("synteny-hidden"));
     assert!(text.contains("applySyntenyVisibility"));
     assert!(text.contains("applyLayout"));
@@ -329,8 +329,8 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
-    assert!(text.contains("Column <input id='cellSize' type='range' min='0.25'"));
-    assert!(text.contains("Row <input id='rowHeight' type='range' min='1'"));
+    assert!(text.contains("id='cellSize' type='range' min='0.25'"));
+    assert!(text.contains("id='rowHeight' type='range' min='1'"));
     assert!(text.contains("step='0.25'"));
     assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));
@@ -346,10 +346,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("referenceCell"));
     assert!(text.contains("targetReferenceGene"));
     assert!(text.contains("Reference equivalent"));
-    assert!(text.contains("Tips: by lineage"));
+    assert!(text.contains("Tips: lineage"));
     assert!(text.contains("#C94434"));
-    assert!(text.contains("Tips: by selected process"));
-    assert!(text.contains("Matrix: by evolutionary process"));
+    assert!(text.contains("Tips: mechanism"));
+    assert!(text.contains("Cells: mechanism"));
     assert!(text.contains("clade_associated_gain"));
     assert!(text.contains("tipLabels"));
     assert!(text.contains("rebuildBaseMatrix"));
@@ -1186,7 +1186,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
 
     let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
     // Spot-check key sections.
-    assert!(text.contains("Phylogeny and corrected matrix explorer"));
+    assert!(text.contains("Corrected matrix"));
     assert!(text.contains("L4_AS00146"));
     assert!(text.contains("group_001"));
     assert!(text.contains("ancestral_retained_no_disruption"));
