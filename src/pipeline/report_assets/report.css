@@ -1122,23 +1122,35 @@ td a {
   color: var(--muted);
 }
 
-/* ===== Drag handles between panes ===== */
+/* ===== Drag handles between panes =====
+   Seams come in both orientations: tree|matrix and matrix|inspector are flex
+   items that resize horizontally, matrix|synteny is a grid row that resizes
+   vertically. The shared rule used to be flex-only, which left the synteny seam
+   with no height at all and nothing to grab. */
 .split-handle {
-  flex: 0 0 6px;
   background: var(--soft-line);
-  cursor: col-resize;
   position: relative;
   z-index: 4;
   transition: background var(--transition);
+  touch-action: none;
 }
 
+.split-handle[aria-orientation="vertical"] {
+  flex: 0 0 6px;
+  cursor: col-resize;
+}
+
+.split-handle[aria-orientation="horizontal"] {
+  width: 100%;
+  height: 8px;
+  cursor: row-resize;
+}
+
+/* Widen the hit area beyond the visible seam without moving the layout. */
 .split-handle::before {
   content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  right: -3px;
+  inset: -4px;
 }
 
 .split-handle::after {
@@ -1147,12 +1159,20 @@ td a {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 2px;
-  height: 36px;
   border-radius: 2px;
   background: color-mix(in srgb, var(--ink) 25%, transparent);
   pointer-events: none;
-  transition: background var(--transition), height var(--transition);
+  transition: background var(--transition), width var(--transition), height var(--transition);
+}
+
+.split-handle[aria-orientation="vertical"]::after {
+  width: 2px;
+  height: 36px;
+}
+
+.split-handle[aria-orientation="horizontal"]::after {
+  width: 44px;
+  height: 3px;
 }
 
 .split-handle:hover,
@@ -1166,78 +1186,35 @@ td a {
 .split-handle:focus-visible::after,
 .split-handle.dragging::after {
   background: var(--accent);
+}
+
+.split-handle[aria-orientation="vertical"]:hover::after,
+.split-handle[aria-orientation="vertical"].dragging::after {
   height: 56px;
+}
+
+.split-handle[aria-orientation="horizontal"]:hover::after,
+.split-handle[aria-orientation="horizontal"].dragging::after {
+  width: 72px;
 }
 
 .split-handle:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.viewer-body.synteny-hidden .synteny-pane,
-.viewer-body.synteny-hidden .synteny-handle {
-  display: none !important;
-}
-
-.explorer:fullscreen .viewer-body {
-  height: calc(100vh - 280px);
-}
-
-body.recore-dragging {
-  cursor: col-resize !important;
-  user-select: none;
-}
-
+body.recore-dragging,
 body.recore-dragging * {
-  cursor: col-resize !important;
   user-select: none !important;
 }
 
-body.recore-dragging .matrix-pane canvas,
-body.recore-dragging .tree-pane svg {
-  pointer-events: none;
+body.recore-dragging-col,
+body.recore-dragging-col * {
+  cursor: col-resize !important;
 }
 
-.tree-edge {
-  stroke: var(--faint);
-  stroke-width: 1.1;
-  fill: none;
-}
-
-.tree-row-guide {
-  stroke: var(--warning);
-  stroke-width: 0.9;
-  stroke-opacity: 0.35;
-}
-
-.tip-label {
-  font-size: 10px;
-  fill: var(--ink-soft);
-}
-
-.synteny-tip-ring {
-  fill: none;
-  stroke: var(--warning);
-  stroke-width: 1.4;
-  stroke-opacity: 0.95;
-}
-
-.matrix-tooltip {
-  position: absolute;
-  display: none;
-  pointer-events: none;
-  z-index: 4;
-  background: var(--ink);
-  color: var(--bg-elev);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font-size: 12px;
-  max-width: 300px;
-  line-height: 1.45;
-  box-shadow: var(--shadow-3);
-}
-
-.matrix-tooltip span {
-  color: color-mix(in srgb, var(--bg-elev) 70%, transparent);
+body.recore-dragging-row,
+body.recore-dragging-row * {
+  cursor: row-resize !important;
 }
 
 /* ===== Synteny ===== */
@@ -1351,12 +1328,16 @@ body.recore-dragging .tree-pane svg {
   transition: filter var(--transition), opacity var(--transition);
 }
 
+/* Neighbours read as genes, not as empty buttons: a soft fill with a definite
+   outline, so strand and length are visible at a glance. */
 .synteny-neighbor {
-  fill: var(--bg-elev);
+  fill: color-mix(in srgb, var(--accent) 9%, var(--bg-elev));
+  stroke: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
 }
 
 .synteny-reference-gene {
-  fill: color-mix(in srgb, var(--positive) 14%, var(--bg-elev));
+  fill: color-mix(in srgb, var(--positive) 18%, var(--bg-elev));
+  stroke: color-mix(in srgb, var(--positive) 55%, var(--line-strong));
 }
 
 .synteny-target {
@@ -1369,6 +1350,17 @@ body.recore-dragging .tree-pane svg {
   fill: transparent;
   stroke: var(--faint);
   stroke-dasharray: 3 2;
+}
+
+.synteny-scale-bar {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.synteny-scale-text {
+  font-size: 10px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .synteny-gene[data-gene-cluster] {

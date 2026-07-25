@@ -953,6 +953,13 @@ function syntenyLength(gene) {
   const value = Number(gene && gene.length);
   return Number.isFinite(value) && value > 0 ? value : 600;
 }
+/* Arrow width is a real base-pair scale, not a rank. The previous formula was
+   34px + 132px * (len / p90), so a 720bp gene and a 1200bp gene came out 113px
+   and 166px: a 1.67x difference drawn as 1.47x, and everything above the 90th
+   percentile drawn identically. A gene you cannot measure by eye is a box with
+   a label on it, not a gene. */
+const SYNTENY_TARGET_PX = 120;
+const SYNTENY_MIN_GENE_PX = 26;
 function syntenyLengthScale(rows) {
   const lengths = rows
     .flatMap(row => row.genes || [])
@@ -960,21 +967,45 @@ function syntenyLengthScale(rows) {
     .filter(value => value > 0)
     .sort((a, b) => a - b);
   if (!lengths.length) return 1200;
-  const idx = Math.min(lengths.length - 1, Math.floor(lengths.length * 0.90));
-  return Math.max(300, lengths[idx]);
+  // Median, so one unusually long gene does not squash all the others.
+  return Math.max(200, lengths[Math.floor(lengths.length / 2)]);
+}
+/** Pixels per base pair for the current scale and zoom. */
+function syntenyPxPerBp(scaleLen) {
+  return (SYNTENY_TARGET_PX * syntenyZoom()) / Math.max(1, scaleLen);
 }
 function syntenyGeneWidth(gene, scaleLen) {
-  const relative = Math.min(1, syntenyLength(gene) / Math.max(1, scaleLen));
-  return (34 + relative * 132) * syntenyZoom();
+  const len = syntenyLength(gene);
+  if (!len) return SYNTENY_MIN_GENE_PX * syntenyZoom();
+  return Math.max(SYNTENY_MIN_GENE_PX, len * syntenyPxPerBp(scaleLen));
 }
+/* Rows are anchored on the focal gene so the comparison between alternative
+   blocks is vertical. Laying every row out from the left edge only lined up
+   while all blocks happened to carry the same number of upstream neighbours. */
 function syntenyRowLayout(genes, left, gap, scaleLen) {
+  const widths = genes.map(gene => syntenyGeneWidth(gene, scaleLen));
+  const targetIdx = genes.findIndex(gene => gene.target);
+  let offset = 0;
+  if (targetIdx >= 0) {
+    let before = 0;
+    for (let i = 0; i < targetIdx; i += 1) before += widths[i] + gap;
+    offset = before;
+  }
   let x = left;
-  return genes.map(gene => {
-    const width = syntenyGeneWidth(gene, scaleLen);
-    const item = {gene, x, width};
-    x += width + gap;
+  const items = genes.map((gene, i) => {
+    const item = {gene, x, width: widths[i]};
+    x += widths[i] + gap;
     return item;
   });
+  // Shift so every row's focal gene sits at the same distance from the left.
+  const shift = offset;
+  items.forEach(item => { item.x += (syntenyAnchor(scaleLen) - shift); });
+  return items;
+}
+/** Distance from the row start to the focal gene, shared by every row. */
+let syntenyAnchorPx = 0;
+function syntenyAnchor() {
+  return syntenyAnchorPx;
 }
 function arrowPath(x, y, w, h, strand = "+") {
   const head = Math.min(12, Math.max(7, w * 0.24));
@@ -982,6 +1013,17 @@ function arrowPath(x, y, w, h, strand = "+") {
     return `M ${x + w} ${y} H ${x + head} L ${x} ${y + h / 2} L ${x + head} ${y + h} H ${x + w} Z`;
   }
   return `M ${x} ${y} H ${x + w - head} L ${x + w} ${y + h / 2} L ${x + w - head} ${y + h} H ${x} Z`;
+}
+/** Round a base-pair span to a readable 1/2/5 x 10^n step for the scale bar. */
+function niceScaleBp(raw) {
+  const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(1, raw))));
+  const scaled = raw / magnitude;
+  const step = scaled >= 5 ? 5 : scaled >= 2 ? 2 : 1;
+  return step * magnitude;
+}
+function formatBp(bp) {
+  if (bp >= 1000) return `${(bp / 1000).toLocaleString(undefined, {maximumFractionDigits: 1})} kb`;
+  return `${Math.round(bp)} bp`;
 }
 function renderSyntenyPanel() {
   if (syntenyHidden) return;
@@ -1041,6 +1083,19 @@ function renderSyntenyPanel() {
   const PADDING_X = 12;
   const innerLeft = PADDING_X + META_W + 8;
   const lengthScale = syntenyLengthScale(rows);
+  // Widest run of upstream neighbours across all rows: every row is shifted so
+  // its focal gene lands here, which is what makes the rows comparable.
+  syntenyAnchorPx = 0;
+  rows.forEach(row => {
+    const genes = row.genes || [];
+    const targetIdx = genes.findIndex(gene => gene.target);
+    if (targetIdx <= 0) return;
+    let before = 0;
+    for (let i = 0; i < targetIdx; i += 1) {
+      before += syntenyGeneWidth(genes[i], lengthScale) + GAP;
+    }
+    syntenyAnchorPx = Math.max(syntenyAnchorPx, before);
+  });
   const rowLayouts = rows.map(row => syntenyRowLayout(row.genes, innerLeft, GAP, lengthScale));
   const measuredWidth = Math.max(
     paneWidth,
@@ -1063,6 +1118,7 @@ function renderSyntenyPanel() {
   const referenceSummary = hasReferenceRow
     ? " Reference row inferred from shared neighbours."
     : "";
+  const pxPerBp = syntenyPxPerBp(lengthScale);
   syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tip${selectedCount === 1 ? "" : "s"}.${referenceSummary}`;
 
   // Collect per-row positions BEFORE drawing so we can draw connection lines on
@@ -1082,6 +1138,16 @@ function renderSyntenyPanel() {
     });
     rowPositions.push({positions, targetCenter, y});
   });
+
+  // Scale bar: arrows are drawn to base-pair scale, so say what the scale is.
+  const barBp = niceScaleBp(200 / pxPerBp);
+  const barPx = barBp * pxPerBp;
+  parts.push(
+    `<line x1="${PADDING_X + 6}" y1="10" x2="${PADDING_X + 6 + barPx}" y2="10" class="synteny-scale-bar"/>` +
+    `<line x1="${PADDING_X + 6}" y1="6" x2="${PADDING_X + 6}" y2="14" class="synteny-scale-bar"/>` +
+    `<line x1="${PADDING_X + 6 + barPx}" y1="6" x2="${PADDING_X + 6 + barPx}" y2="14" class="synteny-scale-bar"/>` +
+    `<text x="${PADDING_X + 12 + barPx}" y="13" class="synteny-scale-text">${formatBp(barBp)}</text>`
+  );
 
   // Layer 1: row backgrounds.
   rows.forEach((row, rowIdx) => {
@@ -1370,7 +1436,7 @@ function setupDragHandle(handle, side) {
     if (!active) return;
     active = false;
     handle.classList.remove("dragging");
-    document.body.classList.remove("recore-dragging");
+    document.body.classList.remove("recore-dragging", "recore-dragging-row", "recore-dragging-col");
     persistLayout();
     if (handle.hasPointerCapture && handle.hasPointerCapture(event.pointerId)) {
       handle.releasePointerCapture(event.pointerId);
@@ -1387,6 +1453,7 @@ function setupDragHandle(handle, side) {
     start = vertical ? event.clientY : event.clientX;
     handle.classList.add("dragging");
     document.body.classList.add("recore-dragging");
+    document.body.classList.add(vertical ? "recore-dragging-row" : "recore-dragging-col");
     try { handle.setPointerCapture(event.pointerId); } catch (_e) {}
     event.preventDefault();
   });
