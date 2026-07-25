@@ -1,9 +1,8 @@
 (() => {
   const root = document.documentElement;
-  const stored = localStorage.getItem("recore.theme");
-  const initial = stored
-    || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  applyTheme(initial);
+  // The head bootstrap already resolved the theme before first paint; only sync
+  // the toggle label and notify listeners if it somehow did not run.
+  applyTheme(root.getAttribute("data-theme") === "dark" ? "dark" : "light");
 
   function applyTheme(mode) {
     root.setAttribute("data-theme", mode);

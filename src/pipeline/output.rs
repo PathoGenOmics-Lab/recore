@@ -1491,6 +1491,13 @@ const EXPLORER_MAX_TIPS: usize = 5_000;
 const EXPLORER_MAX_CELLS: usize = 25_000_000;
 const EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER: usize = 10;
 
+/// Runs in <head> so `data-theme` is set before the browser paints anything.
+const THEME_BOOTSTRAP_JS: &str = "<script>(()=>{try{\
+const stored=localStorage.getItem('recore.theme');\
+const dark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;\
+document.documentElement.setAttribute('data-theme',stored||(dark?'dark':'light'));\
+}catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script>";
+
 /// Remove `name="..."` from the opening tag of an inline SVG.
 fn strip_svg_attribute(tag: &str, name: &str) -> String {
     let needle = format!("{name}=\"");
@@ -2035,9 +2042,12 @@ pub(super) fn write_html_report(
         .collect();
 
     let mut html = String::new();
-    html.push_str("<!doctype html><html lang='en' data-theme='light'><head><meta charset='utf-8'>");
+    html.push_str("<!doctype html><html lang='en'><head><meta charset='utf-8'>");
     html.push_str("<meta name='viewport' content='width=device-width,initial-scale=1'>");
     html.push_str("<title>Recore run report</title>");
+    // Resolve the theme before the first paint, otherwise a dark-mode reader gets a
+    // full-page white flash while the rest of the body streams in.
+    html.push_str(THEME_BOOTSTRAP_JS);
     write!(
         html,
         "<meta name='generator' content='Recore v{}'>",
