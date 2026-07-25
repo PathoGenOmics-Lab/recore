@@ -22,6 +22,7 @@ use crate::rescue::{
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
 
+mod cellcodec;
 mod evolution;
 mod output;
 mod quality;

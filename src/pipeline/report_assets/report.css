@@ -1,0 +1,2988 @@
+/* Recore HTML report: Linear/Notion aesthetic.
+   Off-white background, airy white surfaces, soft indigo accent,
+   sentence-case typography, hairlines instead of heavy borders. */
+
+:root {
+  --font-sans: "Inter", "Inter Variable", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", "SF Mono", Consolas,
+    "Liberation Mono", Menlo, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --transition: 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* One height for every control in the chrome. */
+  --control-h: 30px;
+}
+
+:root,
+:root[data-theme="light"] {
+  /* Pin the scheme to the report theme so native selects, range inputs and
+     scrollbars follow the toggle instead of the operating system. */
+  color-scheme: light;
+  --bg: #fafaf9;
+  --bg-elev: #ffffff;
+  --bg-subtle: #f5f5f4;
+  --bg-hover: #f0f0ef;
+  --panel: #ffffff;
+  --ink: #18181b;
+  --ink-soft: #3f3f46;
+  --muted: #71717a;
+  --subtle: #52525b;
+  --faint: #a1a1aa;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --soft-line: #efefef;
+  --accent: #6366f1;
+  --accent-soft: #eef2ff;
+  --accent-ink: #4f46e5;
+  --accent-strong: #4338ca;
+  --positive: #059669;
+  --positive-soft: #ecfdf5;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --info: #0891b2;
+  --info-soft: #ecfeff;
+  --violet: #8b5cf6;
+  --violet-soft: #f5f3ff;
+  --rescue: #059669;
+  --present: #6366f1;
+  --nsc: #8b5cf6;
+  --absent: #ffffff;
+  --absent-stroke: #d4d4d8;
+
+  --link: #4f46e5;
+  --link-hover: #4338ca;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 8px rgba(0, 0, 0, 0.03);
+  --shadow-3: 0 4px 14px rgba(0, 0, 0, 0.06), 0 20px 40px rgba(0, 0, 0, 0.04);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #09090b;
+  --bg-elev: #18181b;
+  --bg-subtle: #1f1f23;
+  --bg-hover: #27272a;
+  --panel: #18181b;
+  --ink: #fafafa;
+  --ink-soft: #e4e4e7;
+  --muted: #a1a1aa;
+  --subtle: #d4d4d8;
+  --faint: #71717a;
+  --line: #27272a;
+  --line-strong: #3f3f46;
+  --soft-line: #232327;
+  --accent: #818cf8;
+  --accent-soft: rgba(129, 140, 248, 0.16);
+  --accent-ink: #a5b4fc;
+  --accent-strong: #c7d2fe;
+  --positive: #34d399;
+  --positive-soft: rgba(52, 211, 153, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --info: #22d3ee;
+  --info-soft: rgba(34, 211, 238, 0.14);
+  --violet: #a78bfa;
+  --violet-soft: rgba(167, 139, 250, 0.14);
+  --rescue: #34d399;
+  --present: #818cf8;
+  --nsc: #a78bfa;
+  --absent: #18181b;
+  --absent-stroke: #3f3f46;
+
+  --link: #a5b4fc;
+  --link-hover: #c7d2fe;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 10px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 14px 30px rgba(0, 0, 0, 0.5);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Sections are jumped to from the sticky sub-nav, so keep their headings clear
+   of it instead of scrolling them underneath. */
+main > section[id] {
+  scroll-margin-top: 72px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11", "tnum";
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: var(--ink);
+  letter-spacing: -0.012em;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h2 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--bg-subtle);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ===== Panels ===== */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--soft-line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-7);
+  box-shadow: var(--shadow-1);
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.panel-head h2 {
+  margin-bottom: 4px;
+}
+
+.panel-head small {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.5;
+}
+
+/* ===== Stat cards ===== */
+/* Eight stat cards, so a fixed four-column grid gives two full rows instead of the
+   ragged 5 + 3 that auto-fill produced at desktop widths. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media screen and (min-width: 760px) {
+  .stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.stat {
+  background: var(--bg-elev);
+  border: 1px solid var(--soft-line);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+
+.stat:hover {
+  transform: translateY(-1px);
+  border-color: var(--line);
+  box-shadow: var(--shadow-2);
+}
+
+.stat .label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.stat .label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.stat.pos .label::before { background: var(--positive); }
+.stat.warn .label::before { background: var(--warning); }
+.stat.violet .label::before { background: var(--violet); }
+.stat.accent .label::before { background: var(--accent); }
+
+.stat .value {
+  font-size: 26px;
+  font-weight: 600;
+  margin-top: 6px;
+  color: var(--ink);
+  letter-spacing: -0.018em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.stat .sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+/* ===== Two-column section grid ===== */
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+/* ===== Bar lists ===== */
+.bars {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.bar-row {
+  display: grid;
+  gap: 6px;
+}
+
+.bar-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.bar-label strong {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bar-label strong small,
+.mech-count small {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+.track {
+  height: 6px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width var(--transition);
+}
+
+.bar.pos { background: var(--positive); }
+.bar.warn { background: var(--warning); }
+.bar.violet { background: var(--violet); }
+
+/* ===== Mechanism rows ===== */
+.mech-bars {
+  display: grid;
+  gap: var(--space-3);
+}
+
+/* The name column is capped rather than given a fraction of the row: at 1.5fr it
+   grew to ~640px on a wide panel and left a gulf between the label and its bar. */
+.mech-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 290px) minmax(0, 1fr) 78px;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 4px 0;
+}
+
+.mech-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mech-name .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  background: var(--accent);
+}
+
+.mech-name span {
+  font-size: 14px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mech-bar-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  align-items: center;
+}
+
+.mech-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+  color: var(--ink);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/* ===== Tables ===== */
+.table-wrap {
+  overflow-x: auto;
+  background: var(--panel);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--soft-line);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border-bottom: 1px solid var(--soft-line);
+  padding: 12px 16px;
+  white-space: nowrap;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  position: sticky;
+  top: 0;
+}
+
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  color: var(--ink);
+}
+
+th.sortable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  color: var(--ink);
+}
+
+th.sortable::after {
+  content: " ⇅";
+  color: var(--faint);
+  font-size: 10px;
+}
+
+th.sortable.sort-asc::after { content: " ↑"; color: var(--accent); }
+th.sortable.sort-desc::after { content: " ↓"; color: var(--accent); }
+
+td {
+  border-bottom: 1px solid var(--soft-line);
+  padding: 14px 16px;
+  vertical-align: top;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:hover {
+  background: var(--bg-subtle);
+}
+
+tbody tr.hidden {
+  display: none;
+}
+
+td.num,
+th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+td strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+td a {
+  color: var(--link);
+}
+
+/* ===== Badges (soft pills) ===== */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border: 0;
+  white-space: nowrap;
+}
+
+.badge.pass {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.badge.warn,
+.badge.review {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.badge.filter {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge.muted {
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+.mech-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--mech-color, var(--accent)) 12%, transparent);
+  color: var(--mech-color, var(--accent-ink));
+  white-space: nowrap;
+}
+
+.mech-badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mech-color, var(--accent));
+}
+
+/* ===== Files list ===== */
+.files {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+.file {
+  text-decoration: none;
+  color: var(--ink);
+  padding: var(--space-4);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr);
+  gap: var(--space-4);
+  align-items: baseline;
+  transition: background var(--transition), transform var(--transition);
+}
+
+.file:hover {
+  background: var(--bg-hover);
+  transform: translateX(2px);
+  text-decoration: none;
+}
+
+.file .file-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent-ink);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.file small {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ===== Explorer ===== */
+.legend {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--muted);
+  justify-content: flex-end;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+.sw.p { background: var(--present); }
+.sw.r { background: var(--rescue); }
+.sw.n { background: var(--nsc); }
+.sw.a {
+  background: var(--absent);
+  border: 1px solid var(--absent-stroke);
+}
+
+.explorer input,
+.explorer select,
+.explorer button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 7px 12px;
+  background: var(--bg-elev);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+}
+
+.explorer input:focus,
+.explorer select:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.explorer button {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.explorer button:disabled {
+  cursor: not-allowed;
+  color: var(--faint);
+  background: var(--bg-subtle);
+}
+
+.explorer button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: var(--line-strong);
+}
+
+.segmented-control button.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent-ink);
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  height: var(--control-h);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  background: var(--bg-elev);
+}
+
+.segmented-control button {
+  border: 0;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: transparent;
+  padding: 5px 12px;
+}
+
+#clusterInfo {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ===== Cluster details: clean dl ===== */
+.cluster-details {
+  margin-top: var(--space-4);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
+
+.cluster-details:empty::before {
+  content: "Select a cluster to inspect its evidence and mechanism.";
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.cluster-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.cluster-head h3 {
+  font-size: 20px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+}
+
+.cluster-head .annotation {
+  color: var(--ink-soft);
+  font-size: 15px;
+  flex: 1 1 auto;
+  min-width: 200px;
+}
+
+.cluster-head .prevalence {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cluster-dl {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: var(--space-4) var(--space-5);
+  font-size: 14px;
+  margin: 0;
+}
+
+.cluster-dl > dt {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.cluster-dl > dd {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+.cluster-dl dd .mech-badge {
+  margin-right: 6px;
+}
+
+.process-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--process-color, var(--accent)) 12%, transparent);
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--process-color, var(--accent-ink));
+}
+
+.process-chip i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--process-color);
+}
+
+.process-wording {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+/* The mechanism list is a matrix-column filter, so it lives inside the matrix
+   menu rather than as a wall of cards standing between chrome and data. */
+.process-legend {
+  display: grid;
+  gap: 5px;
+}
+
+.process-selected {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.process-clear {
+  border-radius: var(--radius-pill) !important;
+  padding: 4px 12px !important;
+  background: var(--accent-soft) !important;
+  border-color: transparent !important;
+  color: var(--accent-ink) !important;
+  font-size: 12px !important;
+}
+
+.process-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.process-item {
+  display: grid !important;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  text-align: left;
+  border: 1px solid var(--soft-line);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  padding: 7px 9px;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.process-item:hover {
+  border-color: var(--line);
+  background: var(--bg-subtle);
+}
+
+.process-item.active {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
+}
+
+.process-item.filtered {
+  border-color: var(--accent);
+}
+
+.process-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-top: 4px;
+}
+
+.process-item strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.process-item small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+.lineage-legend {
+  display: none;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.lineage-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.lineage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  padding: 2px 0;
+}
+
+.lineage-chip i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.lineage-chip strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.lineage-chip small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ===== Drag handles between panes =====
+   Seams come in both orientations: tree|matrix and matrix|inspector are flex
+   items that resize horizontally, matrix|synteny is a grid row that resizes
+   vertically. The shared rule used to be flex-only, which left the synteny seam
+   with no height at all and nothing to grab. */
+.split-handle {
+  background: var(--soft-line);
+  position: relative;
+  z-index: 4;
+  transition: background var(--transition);
+  touch-action: none;
+}
+
+.split-handle[aria-orientation="vertical"] {
+  flex: 0 0 6px;
+  cursor: col-resize;
+}
+
+.split-handle[aria-orientation="horizontal"] {
+  width: 100%;
+  height: 8px;
+  cursor: row-resize;
+}
+
+/* Widen the hit area beyond the visible seam without moving the layout. */
+.split-handle::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.split-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 25%, transparent);
+  pointer-events: none;
+  transition: background var(--transition), width var(--transition), height var(--transition);
+}
+
+.split-handle[aria-orientation="vertical"]::after {
+  width: 2px;
+  height: 36px;
+}
+
+.split-handle[aria-orientation="horizontal"]::after {
+  width: 44px;
+  height: 3px;
+}
+
+.split-handle:hover,
+.split-handle:focus-visible,
+.split-handle.dragging {
+  background: color-mix(in srgb, var(--accent) 35%, var(--soft-line));
+  outline: none;
+}
+
+.split-handle:hover::after,
+.split-handle:focus-visible::after,
+.split-handle.dragging::after {
+  background: var(--accent);
+}
+
+.split-handle[aria-orientation="vertical"]:hover::after,
+.split-handle[aria-orientation="vertical"].dragging::after {
+  height: 56px;
+}
+
+.split-handle[aria-orientation="horizontal"]:hover::after,
+.split-handle[aria-orientation="horizontal"].dragging::after {
+  width: 72px;
+}
+
+.split-handle:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+body.recore-dragging,
+body.recore-dragging * {
+  user-select: none !important;
+}
+
+body.recore-dragging-col,
+body.recore-dragging-col * {
+  cursor: col-resize !important;
+}
+
+body.recore-dragging-row,
+body.recore-dragging-row * {
+  cursor: row-resize !important;
+}
+
+.synteny-svg {
+  display: block;
+}
+
+.synteny-row,
+.synteny-reference-row {
+  cursor: pointer;
+}
+
+.synteny-row-bg {
+  fill: var(--bg-subtle);
+  stroke: transparent;
+  stroke-width: 1;
+  transition: fill var(--transition), stroke var(--transition);
+}
+
+.synteny-row:hover .synteny-row-bg,
+.synteny-reference-row:hover .synteny-row-bg {
+  fill: var(--bg-hover);
+}
+
+.synteny-row-selected {
+  fill: var(--accent-soft) !important;
+  stroke: color-mix(in srgb, var(--accent) 35%, transparent) !important;
+}
+
+.synteny-reference-bg {
+  fill: var(--positive-soft);
+  stroke: color-mix(in srgb, var(--positive) 30%, transparent);
+}
+
+.synteny-divider {
+  stroke: var(--soft-line);
+  stroke-width: 1;
+}
+
+.synteny-meta-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.synteny-rank {
+  font-size: 14px;
+  font-weight: 600;
+  fill: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.synteny-meta-rank-sub {
+  font-size: 11px;
+  font-weight: 500;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.synteny-meta-title {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--ink);
+  font-family: var(--font-mono);
+}
+
+.synteny-meta-sub {
+  font-size: 10px;
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.synteny-link {
+  stroke: var(--accent);
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  stroke-opacity: 0.30;
+  fill: none;
+  pointer-events: stroke;
+  transition: stroke var(--transition), stroke-opacity var(--transition), stroke-width var(--transition);
+}
+
+.synteny-link:hover,
+.synteny-link.highlight {
+  stroke-opacity: 0.80;
+  stroke-width: 6;
+  stroke: var(--accent-strong);
+}
+
+.synteny-link.dimmed {
+  stroke-opacity: 0.05;
+}
+
+.synteny-gene {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  transition: filter var(--transition), opacity var(--transition);
+}
+
+/* Neighbours read as genes, not as empty buttons: a soft fill with a definite
+   outline, so strand and length are visible at a glance. */
+.synteny-neighbor {
+  fill: color-mix(in srgb, var(--accent) 9%, var(--bg-elev));
+  stroke: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+}
+
+.synteny-reference-gene {
+  fill: color-mix(in srgb, var(--positive) 18%, var(--bg-elev));
+  stroke: color-mix(in srgb, var(--positive) 55%, var(--line-strong));
+}
+
+.synteny-target {
+  fill: var(--accent);
+  stroke: var(--accent-strong);
+  stroke-width: 1.4;
+}
+
+.synteny-gap {
+  fill: transparent;
+  stroke: var(--faint);
+  stroke-dasharray: 3 2;
+}
+
+.synteny-scale-bar {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.synteny-scale-text {
+  font-size: 10px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.synteny-gene[data-gene-cluster] {
+  cursor: pointer;
+}
+
+.synteny-gene[data-gene-cluster]:hover,
+.synteny-gene.cluster-highlight {
+  fill: color-mix(in srgb, var(--accent) 18%, var(--bg-elev));
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+
+.synteny-gene.dimmed {
+  opacity: 0.3;
+}
+
+.synteny-target-label {
+  font-size: 10px;
+  fill: #fff;
+  font-weight: 600;
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
+
+.synteny-arrow-label {
+  font-size: 10px;
+  fill: var(--ink-soft);
+  font-weight: 500;
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
+
+.synteny-sub-label {
+  font-size: 9px;
+  fill: var(--muted);
+  pointer-events: none;
+}
+
+.synteny-len-label {
+  font-size: 8.5px;
+  fill: var(--faint);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.synteny-empty-text {
+  font-size: 13px;
+  fill: var(--muted);
+}
+
+.workspace:fullscreen {
+  overflow: auto;
+  background: var(--bg);
+  padding: var(--space-6);
+}
+
+/* ===== App shell =====
+   The workspace is the report, so the page owns the viewport and never scrolls:
+   phylogeny, matrix and synteny get the whole window instead of a letterbox
+   inside a scrolling document. Everything else lives in the details drawer. */
+body.app {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  /* The single implicit column would otherwise size to the widest child's
+     min-content, so a chrome row that wants 1656px silently widens the page and
+     takes the workspace with it. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+/* Pin each band to its row. The lineage legend only exists when tips are
+   coloured by lineage, and with implicit placement its absence slid the
+   workspace into the auto row and handed the free space to the status bar. */
+body.app > .topbar { grid-row: 1; }
+body.app > .lineage-legend { grid-row: 2; }
+body.app > .workspace,
+body.app > .explorer-fallback { grid-row: 3; }
+body.app > .statusbar { grid-row: 4; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  height: 58px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: nowrap;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+/* Cropped to the wordmark and stripped of its full-bleed plate, so the mark uses
+   the box it is given instead of the two thirds of it the export happened to
+   fill. */
+.topbar-logo {
+  width: 118px;
+  aspect-ratio: 1717 / 810;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.topbar-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The mark is inlined rather than linked, so dark mode can reach inside it.
+   Two problems there: the counters of the e and the o are painted white, so on a
+   near-black panel they read as blobs rather than as holes, and the darkest end
+   of the teal-to-indigo ramp disappears. Repaint the white to the panel colour
+   and lift the rest. A plate would fix the first and cost the mark its size. */
+:root[data-theme="dark"] .topbar-logo svg [fill="rgb(255,255,255)"] {
+  fill: var(--bg-elev);
+}
+
+:root[data-theme="dark"] .topbar-logo svg {
+  filter: brightness(1.35) saturate(1.05);
+}
+
+.brand-rule {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+.topbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+
+/* ===== Find field =====
+   The primary question a reader arrives with is "where is X", so the control
+   that answers it gets primary placement and a shortcut. */
+.topbar-find {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 260px;
+  min-width: 208px;
+  max-width: 390px;
+}
+
+.omnibox {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px 0 11px;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.omnibox:hover {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+
+.omnibox:focus-visible {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.omnibox .glyph {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+
+.omnibox-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* The name is the answer and the annotation is the courtesy, so the annotation
+   gives up its width first. */
+.omnibox-name {
+  flex: 0 0 auto;
+  max-width: 60%;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.omnibox-note {
+  flex: 1 1 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.omnibox-key {
+  flex: 0 0 auto;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* Prev / next as one welded unit, with the position between them: stepping
+   through columns is a single motion, not two separate buttons. */
+.step-group {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.icon-btn.flush {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  width: 28px;
+  height: 100%;
+}
+
+.step-count {
+  min-width: 62px;
+  padding: 0 2px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ===== Run readout =====
+   Six numbers, each with its unit beneath it. Pills gave every figure the same
+   weight as its label and read as decoration. */
+.run-readout {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: auto;
+  overflow: hidden;
+}
+
+/* The readout and the brand are what give way; the find field keeps a floor so
+   the current cluster name is always readable. */
+.run-readout,
+.topbar-brand {
+  min-width: 0;
+}
+
+.readout {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 11px;
+  border-left: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.readout:first-child {
+  border-left: 0;
+}
+
+.readout b {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.1;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+.readout b.tag {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--accent-ink);
+}
+
+.readout span {
+  font-size: 9.5px;
+  font-weight: 550;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.readout.pos b { color: var(--positive); }
+.readout.warn b { color: var(--warning); }
+
+/* Chrome is one row now, so it gives things up in a deliberate order rather than
+   overflowing: policy first, then the derived figures, then the title, then the
+   readout entirely. What is dropped is always still in the details drawer. */
+@media (max-width: 1560px) {
+  .readout:nth-child(7) { display: none; }
+}
+
+/* The annotation is a courtesy preview; the cluster name is the answer. */
+@media (max-width: 1400px) {
+  .omnibox-note { display: none; }
+}
+
+@media (max-width: 1440px) {
+  .readout:nth-child(4) { display: none; }
+  .readout { padding: 0 9px; }
+}
+
+@media (max-width: 1340px) {
+  .readout:nth-child(5) { display: none; }
+}
+
+@media (max-width: 1240px) {
+  .topbar-title,
+  .brand-rule { display: none; }
+}
+
+@media (max-width: 1120px) {
+  .run-readout { display: none; }
+}
+
+.version-chip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.version-chip:hover {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+/* Anchors styled as buttons need the same box as the real ones. */
+a.ghost-btn {
+  text-decoration: none;
+}
+
+a.ghost-btn:hover {
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.topbar-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.topbar-actions .version-chip {
+  height: 28px;
+  padding: 0 9px;
+}
+
+.action-rule {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+.ghost-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.ghost-btn:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.ghost-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.ghost-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Square icon button on the same height as everything else, so the theme toggle
+   stops being a two-line box wedged between one-line pills. */
+.icon-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.icon-btn .glyph {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Tooltip: the browser's own takes a second to appear and cannot be styled,
+   which is no use for controls that are now icons. */
+.tip-bubble {
+  position: fixed;
+  z-index: 90;
+  max-width: 260px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: var(--bg-elev);
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-3);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.tip-bubble.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ===== Pane menus =====
+   Display options belong beside the pane they change. A shared strip of nine
+   look-alike controls forced you to remember which one drove which panel. */
+.ghost-icon {
+  border-color: transparent;
+  background: transparent;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+}
+
+.ghost-icon .glyph {
+  width: 15px;
+  height: 15px;
+}
+
+.pane-menu {
+  position: absolute;
+  z-index: 45;
+  top: 36px;
+  right: 8px;
+  width: 288px;
+  max-height: min(520px, calc(100vh - 140px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  font-weight: 400;
+}
+
+.pane-menu.wide {
+  width: 330px;
+}
+
+.pane-menu[hidden] {
+  display: none;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.menu-label {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.menu-row select {
+  appearance: none;
+  flex: 0 1 172px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 26px 0 9px;
+  background: var(--bg-subtle);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12.5px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) 12px, calc(100% - 9px) 12px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.menu-row select:focus-visible,
+.palette-input input:focus-visible {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.menu-row .segmented-control {
+  height: 28px;
+  flex: 0 1 172px;
+}
+
+.menu-row .segmented-control button {
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.menu-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+}
+
+.menu-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.menu-hint {
+  margin: -4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* A checkbox that reads as a state, not as a form field. */
+input.switch {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+input.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-1);
+  transition: transform var(--transition);
+}
+
+input.switch:checked {
+  background: var(--accent);
+}
+
+input.switch:checked::after {
+  transform: translateX(14px);
+}
+
+input.switch:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ===== Inspector tabs ===== */
+.inspector-head {
+  padding: 0 6px;
+  align-items: stretch;
+}
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* ===== Find palette =====
+   One dialog answers both "where is pks12" and "where is AS00146", and it does
+   it over 30,000 clusters without building 30,000 option elements. */
+.palette,
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  justify-content: center;
+}
+
+.palette[hidden],
+.sheet[hidden] {
+  display: none;
+}
+
+.palette {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.sheet {
+  align-items: center;
+}
+
+.palette-scrim,
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #09090b 42%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.palette-box,
+.sheet-box {
+  position: relative;
+  width: min(640px, calc(100vw - 32px));
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: rise 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette-box,
+  .sheet-box { animation: none; }
+}
+
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 52px;
+  border-bottom: 1px solid var(--line);
+}
+
+.palette-input .glyph {
+  width: 17px;
+  height: 17px;
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+
+.palette-input input {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  outline: 0;
+}
+
+.palette-input input::placeholder {
+  color: var(--faint);
+}
+
+.palette-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.palette-tabs button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  padding: 3px 11px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.palette-tabs button:hover {
+  background: var(--bg-subtle);
+  color: var(--ink);
+}
+
+.palette-tabs button.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  scroll-margin: 6px;
+}
+
+.palette-item.active {
+  background: var(--accent-soft);
+}
+
+.palette-kind {
+  flex: 0 0 auto;
+  width: 54px;
+  font-size: 9.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+.palette-item.active .palette-kind {
+  color: var(--accent-ink);
+}
+
+.palette-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-name mark {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.palette-note {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.palette-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.palette-empty {
+  padding: 22px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.palette-foot {
+  border-top: 1px solid var(--soft-line);
+}
+
+.palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  color: var(--faint);
+  background: var(--bg-subtle);
+}
+
+.palette-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.palette-foot #paletteCount {
+  margin-left: auto;
+}
+
+/* ===== Shortcut sheet ===== */
+.sheet-box {
+  width: min(620px, calc(100vw - 32px));
+  padding: var(--space-5);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.sheet-box h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 20px;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+
+.sheet-row kbd {
+  flex: 0 0 auto;
+  min-width: 74px;
+  font-size: 10.5px;
+}
+
+/* Wrap rather than truncate: a shortcut list that hides half of what a key does
+   is worse than one that takes an extra line. */
+.sheet-row span {
+  min-width: 0;
+}
+
+@media (max-width: 620px) {
+  .sheet-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ===== Tree scale bar =====
+   A phylogram without a scale is a picture, not a measurement. It gets its own
+   strip rather than floating over the tips: an opaque box parked on top of a
+   genome name is not a fix, it is the same problem with a border. */
+.scale-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 10px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.scale-bar[hidden] {
+  display: none;
+}
+
+.scale-bar i {
+  display: block;
+  height: 5px;
+  border: 1px solid var(--muted);
+  border-top: 0;
+  flex: 0 0 auto;
+}
+
+/* ===== Inspector cards =====
+   Both tabs speak the same language: a bar for the share, then the four states
+   as rows, then the metadata. A wall of label/value pairs reads like a dump. */
+.card-title {
+  margin-top: var(--space-4);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.prevalence-bar {
+  height: 6px;
+  margin-top: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  border: 1px solid var(--soft-line);
+  overflow: hidden;
+}
+
+.prevalence-bar i {
+  display: block;
+  height: 100%;
+  background: var(--present);
+}
+
+.cluster-details .prevalence {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.count-rows {
+  display: grid;
+  gap: 3px;
+  margin-top: var(--space-2);
+}
+
+.count-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.count-row .sw {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.count-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count-row b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.count-row small {
+  min-width: 44px;
+  text-align: right;
+  color: var(--faint);
+}
+
+.genome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.genome-actions .ghost-btn {
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+/* ===== Whole-matrix overview =====
+   The scrollbar says how far along you are. This says what is there. */
+.overview {
+  position: relative;
+  flex: 0 0 auto;
+  height: 26px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.overview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.overview-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ===== Workspace ===== */
+.workspace {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  /* Same trap as the old document grid: an auto column takes its minimum from
+     the item's min-content, and the synteny SVG is as wide as its gene arrows,
+     so the whole workspace grew and pushed the inspector off screen. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, var(--synteny-h, 300px));
+  min-height: 0;
+  background: var(--bg);
+}
+
+.workspace.synteny-hidden {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.workspace.synteny-hidden .synteny-pane,
+.workspace.synteny-hidden .synteny-handle {
+  display: none;
+}
+
+.panes-wrap {
+  min-height: 0;
+  display: flex;
+}
+
+.panes {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-elev);
+  position: relative;
+}
+
+/* Fixed height and no wrapping: the panes are aligned row for row, and a header
+   that wraps to two lines in one pane offsets its rows against the others. */
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  height: 34px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.pane-head small {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-head .legend {
+  margin-left: auto;
+  font-size: 12px;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.tree-pane {
+  flex: 0 0 auto;
+  width: var(--tree-w, 300px);
+  min-width: 160px;
+  border-right: 1px solid var(--soft-line);
+}
+
+/* Every pane draws its visible window onto a canvas the size of the viewport,
+   and a transparent scroller on top carries a spacer with the virtual size. The
+   canvas never moves, so scrolling cannot make it jitter, and nothing has to fit
+   inside the browser's 16384px canvas limit. */
+.pane-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pane-viewport > canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+.pane-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.pane-spacer {
+  width: 1px;
+  height: 1px;
+}
+
+.tree-canvas {
+  cursor: crosshair;
+}
+
+/* Mirrors the matrix column header so both panes start their first row at the
+   same screen position. Without it the tree sat a whole header higher than the
+   matrix, and tip N did not line up with row N. */
+.tree-head-spacer {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+}
+
+.lineage-strip {
+  left: auto !important;
+  right: 0;
+  width: 6px;
+  image-rendering: pixelated;
+}
+
+.matrix-region {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+
+.matrix-header {
+  position: relative;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.matrix-header > canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+.header-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.header-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.matrix-viewport {
+  background: var(--bg-elev);
+}
+
+/* Zoom sits on the axis it drives, and stays put while the pane scrolls: the
+   old toolbar sliders scrolled out of view exactly when you needed them. */
+/* Zoom lives in the pane header now: as a floating pill it covered the very
+   data it is there to help you read. */
+.head-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.head-zoom input[type="range"] {
+  width: 96px;
+  accent-color: var(--accent);
+}
+
+.tree-pane .pane-head .head-zoom {
+  margin-left: auto;
+}
+
+.tree-pane .pane-head .head-zoom input[type="range"] {
+  width: 58px;
+}
+
+.pane-name {
+  flex: 0 0 auto;
+}
+
+.matrix-region .pane-head .legend {
+  margin-left: auto;
+}
+
+.matrix-region .pane-head .head-zoom {
+  margin-left: var(--space-4);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.inspector {
+  flex: 0 0 auto;
+  width: var(--inspector-w, 320px);
+  min-width: 220px;
+  border-left: 1px solid var(--soft-line);
+  overflow: hidden;
+}
+
+.inspector .cluster-dl {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1) 0;
+  font-size: 13px;
+}
+
+.inspector .cluster-dl > dd {
+  overflow-wrap: anywhere;
+}
+
+.inspector .cluster-dl > dt {
+  margin-top: var(--space-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inspector .cluster-head h3 {
+  font-size: 15px;
+}
+
+.inspector .cluster-head .annotation {
+  font-size: 13px;
+  min-width: 0;
+  flex-basis: 100%;
+}
+
+.inspector .cluster-dl {
+  margin-top: var(--space-3);
+}
+
+.inspector .process-chip {
+  margin-top: var(--space-2);
+}
+
+.inspector .process-wording {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.inspector .cluster-details {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-elev);
+}
+
+/* ===== Synteny, full width under the panes =====
+   Gene arrows need horizontal room; sharing the width with the matrix cut every
+   block in half. */
+.synteny-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--soft-line);
+}
+
+.synteny-summary {
+  color: var(--ink-soft) !important;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.zoom-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.zoom-inline input[type="range"] {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+.synteny-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  /* Scroll anchoring re-offsets the pane whenever the SVG is rebuilt at a new
+     size, which hid the row meta column behind the left edge. */
+  overflow-anchor: none;
+  background: var(--bg-elev);
+}
+
+/* ===== Status bar ===== */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  height: 30px;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#matrixStatus {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.status-hint .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  margin: 0 2px;
+}
+
+.status-hint kbd {
+  height: 17px;
+  min-width: 18px;
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .status-hint { display: none; }
+}
+
+/* ===== Run details drawer ===== */
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(860px, 92vw);
+  z-index: 60;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(101%);
+  transition: transform var(--transition);
+}
+
+.drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elev);
+  flex: 0 0 auto;
+}
+
+.drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-6);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+}
+
+.drawer-section {
+  background: var(--bg-elev);
+  border: 1px solid var(--soft-line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.drawer-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.provenance {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 6px var(--space-4);
+  margin: 0;
+  font-size: 13px;
+}
+
+.provenance dt {
+  color: var(--muted);
+}
+
+.provenance dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+.toolbar-inline {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar-inline input[type="search"],
+.toolbar-inline select {
+  appearance: none;
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  min-width: 200px;
+}
+
+.toolbar-inline .count {
+  color: var(--muted);
+  font-size: 13px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .inspector,
+  .inspector-handle {
+    display: none;
+  }
+  .topbar-title {
+    display: none;
+  }
+}
+
+/* ===== Responsive ===== */
+@media screen and (max-width: 1100px) {
+}
+
+/* Below this the three panes cannot share a row. The container was renamed from
+   .viewer-body to .panes in the workspace rewrite, so this rule was setting the
+   tree pane to 100% inside a still-horizontal row and pushing the matrix off
+   screen. */
+@media screen and (max-width: 820px) {
+  .panes {
+    flex-direction: column;
+  }
+  .panes > .tree-pane {
+    width: 100%;
+    max-height: 40vh;
+  }
+  .panes > .split-handle {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 900px) {
+  main {
+    padding: var(--space-6) var(--space-4) var(--space-10);
+  }
+  .stat-grid,
+  .section-grid,
+  .files,
+  h1 {
+    font-size: 20px;
+  }
+  .cluster-dl {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+  .cluster-dl > dt {
+    margin-top: var(--space-2);
+  }
+}
+
+@media print {
+  /* Reports get printed and pasted into supplementary material, so force the
+     light palette even if the reader is in dark mode. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-elev: #ffffff;
+    --bg-subtle: #f5f5f4;
+    --bg-hover: #f5f5f4;
+    --panel: #ffffff;
+    --ink: #18181b;
+    --ink-soft: #3f3f46;
+    --muted: #52525b;
+    --subtle: #3f3f46;
+    --faint: #71717a;
+    --line: #d4d4d8;
+    --line-strong: #a1a1aa;
+    --soft-line: #e4e4e7;
+    --absent: #ffffff;
+    --absent-stroke: #d4d4d8;
+    --shadow-1: none;
+    --shadow-2: none;
+    --shadow-3: none;
+  }
+
+  /* Bars, swatches and matrix cells carry the meaning, and browsers drop
+     backgrounds when printing unless told otherwise. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* The shell pins itself to the viewport and hides its overflow, which on
+     paper meant one page showing a clipped sliver of the workspace. Release it
+     so the panes print at their drawn size and the drawer prints as a document. */
+  body.app {
+    height: auto;
+    min-height: 0;
+    display: block;
+    overflow: visible;
+    background: #ffffff;
+    font-size: 11pt;
+  }
+
+  .topbar-find,
+  .topbar-actions,
+  .zoom-inline,
+  .head-zoom,
+  .ghost-icon,
+  .pane-menu,
+  .split-handle,
+  .drawer-scrim,
+  .palette,
+  .sheet,
+  .overview,
+  .statusbar,
+  .drawer-head .icon-btn {
+    display: none !important;
+  }
+
+  .topbar {
+    height: auto;
+    border-bottom: 2px solid var(--line-strong);
+    padding: 0 0 10px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .run-readout {
+    display: flex !important;
+    overflow: visible;
+    margin-left: 0;
+  }
+
+  .workspace,
+  .workspace.synteny-hidden {
+    display: block;
+    grid-template-rows: none;
+    break-inside: avoid;
+  }
+
+  .panes-wrap,
+  .panes {
+    display: flex;
+    min-height: 0;
+  }
+
+  /* Canvases are bitmaps at their on-screen size; give the panes that height so
+     nothing is clipped, and let the synteny band follow on the next block. */
+  /* Definite pane heights for paper; the renderer redraws its canvases to match
+     from the beforeprint handler. Headless --print-to-pdf never fires that event
+     and has no prior screen layout, so it prints whatever size the canvases
+     already had. Cmd+P from a browser window is the path that matters, and it
+     reflows correctly. */
+  .pane-viewport {
+    /* flex-basis, not just height: the panes are flex items, so a bare height is
+       shrunk straight back to whatever the container had. */
+    flex: 0 0 380px;
+    overflow: hidden;
+    height: 380px;
+  }
+
+  .synteny-pane {
+    height: auto;
+    max-height: 380px;
+  }
+
+  /* The drawer holds the run summary, breakdowns and tables. On screen it slides
+     over the workspace; on paper it is the rest of the document. */
+  .drawer {
+    position: static;
+    width: auto;
+    transform: none;
+    box-shadow: none;
+    border: 0;
+    display: block;
+    break-before: page;
+  }
+
+  .drawer-body {
+    overflow: visible;
+    padding: 0;
+    display: block;
+  }
+
+  .drawer-section {
+    break-inside: avoid;
+    margin-bottom: 16px;
+  }
+
+  .stat-grid,
+  .section-grid,
+  .files {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel,
+  .stat,
+  .file,
+  .bar-row,
+  .mech-row,
+  tr {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}

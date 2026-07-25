@@ -1,4 +1,4 @@
-# Output Files
+# Output files
 
 All output files are written to the directory specified by `-o` (default: `recore_output/`).
 
@@ -14,14 +14,14 @@ Primary output. One row per rescued gene. Tab-separated.
 |--------|------|-------------|
 | `gene_cluster` | string | Panaroo cluster name (from CSV `Gene` column) |
 | `genome` | string | Genome name (matches CSV column header and FASTA filename stem) |
-| `rescue_type` | string | See [rescue types](rescue_types.md) |
-| `identity` | float | % nucleotide identity of the best hit (0–100) |
-| `coverage` | float | % of reference sequence covered by hit(s) (0–100) |
+| `rescue_type` | string | See [rescue types](../how-it-works/rescue-types.md) |
+| `identity` | float | % nucleotide identity of the best hit (0-100) |
+| `coverage` | float | % of reference sequence covered by hit(s) (0-100) |
 | `contig` | string | Contig name in the genome FASTA |
 | `start` | int | Start coordinate, **1-based** |
 | `end` | int | End coordinate, 1-based inclusive |
 | `strand` | char | `+` or `-` |
-| `confidence` | float | Combined quality score (0–1.2+); see [algorithm](algorithm.md#confidence-score) |
+| `confidence` | float | Combined quality score (0-1.2+); see [algorithm](../how-it-works/algorithm.md#confidence-adjustment) |
 | `synteny` | string | `PASS` or empty (not assessed). `FAIL` rows are written to `synteny_rejected_report.tsv` when `--synteny` is enabled |
 | `synteny_score` | float | Best adaptive context score across 1-to-5-neighbour windows; blank when not assessed |
 | `synteny_support_n` | int | Number of compatible reference contexts supporting the best synteny assessment |
@@ -421,9 +421,13 @@ Recore Summary
 Clusters:              4103
 Genomes:               479
 Total gaps:            91509
+Gaps passing filter:   91509
 Gaps searched:         91509
 Skipped (prevalence):  0
 Rescued:               947
+Matrix policy:         Balanced
+Matrix-corrected:      812
+  rescue cells:        812
 Rejected (synteny):    4
 Remaining gaps:        90562
 
@@ -453,7 +457,7 @@ Nucleotide similarity clustering:
 
 ### Interpreting core genome changes
 
-- **Core +7**: 7 clusters that were missing from at least one genome are now found in all — true core genes that Panaroo had incorrectly excluded.
+- **Core +7**: 7 clusters that were missing from at least one genome are now found in all: true core genes that Panaroo had incorrectly excluded.
 - **Soft-core -5**: 5 clusters that appeared to be soft-core were actually redundant with other clusters (merged by NSC). The true soft-core is slightly smaller.
 
 ---
@@ -559,18 +563,19 @@ colored by lineage with the mycolorsTB Nature palette; in lineage mode,
 monophyletic branches are colored too. Clicking mechanism cards adds or removes
 mechanisms from the matrix-column filter, and selected-cluster details show the
 reference cell/gene or the reference-derived event source when available. Dense
-views can be collapsed or zoomed with the Y-axis slider, column zoom slider,
-mouse wheel over the tree or column header, and fullscreen mode.
-When `cluster_synteny_blocks.tsv` is present, the explorer uses a split view:
-the left side keeps the tree plus matrix, and the right side draws up to ten
-ranked unique five-neighbour synteny blocks for the selected gene cluster. The
-synteny rows are unique by ordered displayed gene/locus architecture, ignoring
-internal cluster gaps, length differences, and coordinate differences; each row
-stores one representative locus and all carrier genomes for that architecture.
-The synteny side is hidden by default and can be shown from the viewer controls.
-Once visible, a vertical split slider between panes changes how much width
-belongs to the matrix versus the synteny panel, and a synteny x-axis zoom slider
-expands or compresses the gene-arrow layout. The selected block marks its
+views can be zoomed with the row and column sliders in each pane header, with
+the mouse wheel over the tree or the column header, and in fullscreen. The
+viewer's own page documents it in full: see
+[Run report](report.md).
+When `cluster_synteny_blocks.tsv` is present, the viewer can open a full-width
+synteny band under the matrix, drawing up to ten ranked unique five-neighbour
+blocks for the selected gene cluster. The rows are unique by ordered displayed
+gene/locus architecture, ignoring internal cluster gaps, length differences, and
+coordinate differences; each row stores one representative locus and all carrier
+genomes for that architecture. The band is hidden by default and opens from the
+layers button or the `S` key. Once visible, the seam above it is draggable and a
+scale slider expands or compresses the gene-arrow layout. The selected block
+marks its
 carrier genomes on the tree, the clickable H37Rv/reference row marks the
 reference tip, the focal cluster is highlighted, and clicking any gene arrow
 jumps to that cluster in the matrix. Gene arrows carry strand orientation and

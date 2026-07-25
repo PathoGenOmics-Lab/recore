@@ -163,3 +163,19 @@ The default AMAP output metrics file is
 `benchmarks/amap_performance_metrics.tsv`. Because it records local hardware
 and temporary paths, treat it as a local run log rather than a portable
 benchmark table.
+
+## Tutorial dataset
+
+`make_tutorial_dataset.py` writes the small input set the documentation
+[tutorial](https://pathogenomics-lab.github.io/recore/getting-started/tutorial/)
+walks through: twelve MTBC-style genomes, twenty-four clusters, GFF3
+annotations, a Newick tree, and eleven false absences planted on purpose in four
+flavours (dropped gene, missing CDS, pseudogene, and a diverged copy that must
+not be rescued).
+
+```bash
+python3 benchmarks/make_tutorial_dataset.py --out tutorial_data
+```
+
+It is deterministic: the same `--seed` gives the same dataset, so the numbers
+quoted in the tutorial stay true.

@@ -1,8 +1,8 @@
-# Rescue Types
+# Rescue types
 
 Recore classifies each rescued gene into one of 9 types based on the alignment evidence and GFF annotation context.
 
-Examples below show the core `rescue_report.tsv` columns; see [output_files.md](output_files.md) for the full schema, including fragment evidence columns.
+Examples below show the core `rescue_report.tsv` columns; see [Output files](../guide/outputs.md) for the full schema, including fragment evidence columns.
 
 ---
 
@@ -44,7 +44,7 @@ geneM   genome2   MISSING_CDS   99.2   89.5   contig_1   2195924   2197220   +  
 
 **Evidence:** Full-coverage hit (≥80%) with a GFF gene at that locus that belongs to a different Panaroo cluster, **with ≥95% nucleotide identity**.
 
-**Confidence:** `identity × coverage × 1.1` (slight boost — evidence is strong)
+**Confidence:** `identity × coverage × 1.1` (slight boost: evidence is strong)
 
 **Example:**
 ```
@@ -95,7 +95,7 @@ These events are reported separately so downstream analyses can avoid treating t
 
 **Evidence:** Full-coverage hit (≥80%) with ≥98% identity, overlapping a GFF gene of similar length (within ±300 bp), where the length difference is non-zero.
 
-**Confidence:** `identity × coverage × 0.95`
+**Confidence:** `identity × 0.95` (the only rescue type whose score does not multiply in coverage)
 
 **Example:**
 ```
@@ -112,7 +112,7 @@ geneA   genome4   START_VARIANT:+57bp   99.6   100.0   contig_1   34100   34956 
 
 **Evidence:** Full-coverage hit with a GFF gene at that locus belonging to a different cluster, **with <95% identity**.
 
-**Confidence:** `identity × coverage × 0.7` (reduced — this is a cross-match, not a true rescue)
+**Confidence:** `identity × coverage × 0.7` (reduced: this is a cross-match, not a true rescue)
 
 **Matrix behavior:** PARALOG candidates are audit-only unless synteny explicitly passes. Without `synteny=PASS`, they are written to `paralog_rejected_report.tsv` and are not inserted into `gene_presence_absence_recore.csv`.
 
@@ -121,7 +121,7 @@ geneA   genome4   START_VARIANT:+57bp   99.6   100.0   contig_1   34100   34956 
 geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   1921800   +   0.628      PE_PGRS47
 ```
 
-> **Note for MTBC analyses:** A large fraction of PARALOGs in tuberculosis data come from the PE/PPE superfamily, which comprises ~170 genes with high nucleotide similarity. These are not rescued genes — they are correctly absent.
+> **Note for MTBC analyses:** A large fraction of PARALOGs in tuberculosis data come from the PE/PPE superfamily, which comprises ~170 genes with high nucleotide similarity. These are not rescued genes; they are correctly absent.
 
 ---
 
@@ -142,7 +142,7 @@ geneC   genome6   PSEUDOGENE:2stops   99.1   100.0   contig_1   2103400   210420
 
 ## PSEUDOGENE:Frameshift
 
-**What it means:** The gene is fragmented in a pattern consistent with a frameshift mutation — fragments have high identity but are separated by small gaps whose size is not divisible by 3.
+**What it means:** The gene is fragmented in a pattern consistent with a frameshift mutation: fragments have high identity but are separated by small gaps whose size is not divisible by 3.
 
 **Evidence:** ≥2 fragments with average identity ≥95%, gaps between fragments ≤50bp, and at least one gap whose size mod 3 ≠ 0.
 
@@ -157,11 +157,11 @@ geneD   genome7   PSEUDOGENE:frameshift   97.8   91.0   contig_2   654000   6551
 
 ## PSEUDOGENE:PartialDeletion
 
-**What it means:** The gene is truncated — only 60–80% of the reference sequence is present with high identity. This is consistent with a partial deletion of one end of the gene.
+**What it means:** The gene is truncated: only 60-80% of the reference sequence is present with high identity. This is consistent with a partial deletion of one end of the gene.
 
-**Evidence:** Hit with ≥90% identity but coverage 60–80% (below `--min-coverage`, above 60%).
+**Evidence:** Hit with ≥90% identity but coverage 60-80% (below `--min-coverage`, above 60%).
 
-**Confidence:** `identity × coverage × 0.4` (lowest — truncated gene, evidence is weakest)
+**Confidence:** `identity × coverage × 0.4` (lowest: truncated gene, evidence is weakest)
 
 **Example:**
 ```

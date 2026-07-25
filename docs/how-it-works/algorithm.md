@@ -1,4 +1,4 @@
-# Recore Algorithm
+# Algorithm
 
 ## Overview
 
@@ -12,7 +12,7 @@ The pipeline runs in 12 sequential phases. Each phase is deterministic given the
 
 ### Presence/absence matrix
 
-Parses Panaroo's `gene_presence_absence.csv`. The CSV has 13–15 metadata columns (Gene, Annotation, No. isolates, etc.) followed by one column per genome. Each cell is either empty (gene absent) or contains semicolon-separated gene IDs.
+Parses Panaroo's `gene_presence_absence.csv`. The CSV has 13-15 metadata columns (Gene, Annotation, No. isolates, etc.) followed by one column per genome. Each cell is either empty (gene absent) or contains semicolon-separated gene IDs.
 
 The matrix is stored as a `PresenceAbsence` struct with encapsulated access via newtype indices (`ClusterIdx`, `GenomeIdx`) to prevent index confusion.
 
@@ -107,7 +107,7 @@ The primary minimap2 pass runs with:
 
 PAF lines are parsed in streaming fashion (no full output in RAM). Each hit is:
 1. Demuxed back to its genome by parsing the `|||` prefix
-2. Checked against the gap set — hits for non-gap (cluster, genome) pairs are discarded
+2. Checked against the gap set; hits for non-gap (cluster, genome) pairs are discarded
 3. Filtered by minimum identity (`--min-identity`, default 90%)
 
 Result: a HashMap from `(genome_idx, cluster_name)` → `Vec<Hit>`.
@@ -162,7 +162,7 @@ Fragment-chain evidence is written to `rescue_report.tsv` for auditability.
 
 ### Path 3: Partial deletion pseudogene
 
-If the best hit has ≥90% identity but only 60–80% coverage (below min_coverage), the gene is classified as PSEUDOGENE:PartialDeletion. Multi-fragment coverage is also considered.
+If the best hit has ≥90% identity but only 60-80% coverage (below min_coverage), the gene is classified as PSEUDOGENE:PartialDeletion. Multi-fragment coverage is also considered.
 
 ### If none of the paths match → no rescue (gene is truly absent)
 
@@ -451,7 +451,7 @@ NSC-merged clusters are excluded from the count (their presences are absorbed in
 | PARALOG | Cross-match to a related gene family (<95% identity) | 0.7× |
 | PSEUDOGENE:InternalStop | Internal stop codon(s) in the best reading frame | 0.5× |
 | PSEUDOGENE:Frameshift | Fragments with gaps not divisible by 3 | 0.5× |
-| PSEUDOGENE:PartialDeletion | High identity (≥90%) but only 60–80% coverage | 0.4× |
+| PSEUDOGENE:PartialDeletion | High identity (≥90%) but only 60-80% coverage | 0.4× |
 
 ---
 
@@ -462,7 +462,7 @@ NSC-merged clusters are excluded from the count (their presences are absorbed in
 | Parsing | O(clusters × genomes) | O(clusters × genomes) |
 | Gap filtering | O(clusters × genomes) | O(gaps) |
 | GFF indexing | O(genes × log(genes)) per genome | O(genes) per genome |
-| minimap2 | O(queries × target_size) | O(streaming) — PAF not buffered |
+| minimap2 | O(queries × target_size) | O(streaming), PAF not buffered |
 | Classification | O(hits) with rayon parallelism | O(rescues) |
 | Internal stops | O(DROPPED_rescues × hit_length) | O(genome) per genome |
 | Synteny | O(rescues × neighbour_windows × present_cluster_copies) | O(contexts per cluster) per rescue |

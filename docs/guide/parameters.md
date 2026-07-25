@@ -1,4 +1,4 @@
-# Parameters Reference
+# Parameters
 
 ## Required
 
@@ -12,7 +12,7 @@
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-a, --annotations` | — | Directory of GFF3 annotation files. Required for SPLIT/START_VARIANT classification and synteny validation. |
+| `-a, --annotations` | none | Directory of GFF3 annotation files. Required for SPLIT/START_VARIANT classification and synteny validation. |
 | `-o, --output` | `recore_output/` | Output directory |
 | `-t, --threads` | `4` | Number of parallel threads (for rayon classification and minimap2) |
 
@@ -31,7 +31,7 @@ NSC k-mer size must be at least 1, and `--nsc-engine` must be `minhash` or
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--preset` | `asm5` | minimap2 preset. `asm5` for sequences ≤5% divergence (MTBC, closely related strains). `asm20` for up to 20% divergence (more divergent species). |
-| `--min-identity` | `90.0` | Minimum % nucleotide identity to consider a hit. For MTBC, the default (90%) is appropriate — real genes have >99%. Lowering this increases PARALOG noise. |
+| `--min-identity` | `90.0` | Minimum % nucleotide identity to consider a hit. For MTBC, the default (90%) is appropriate: real genes have >99%. Lowering this increases PARALOG noise. |
 | `--min-coverage` | `80.0` | Minimum % of reference sequence that must be covered by a hit (single hit or merged fragments). |
 | `--multi-allele` | `false` | Use all alleles per cluster as queries. More sensitive for clusters with high intra-cluster diversity, but slower. Panaroo produces multiple alleles in `pan_genome_reference.fa`. |
 
@@ -49,9 +49,9 @@ NSC k-mer size must be at least 1, and `--nsc-engine` must be `minhash` or
 | `--write-corrected-gff` | `false` | Write per-genome `corrected_gff/*.recore.gff3` files with rescued CDS features appended. Original GFF records are preserved when `--annotations` is provided. |
 | `--write-html-report` | `false` | Write a self-contained `recore_report.html` with headline QC, correction counts, evolutionary mechanisms, top candidate clusters, and links to the underlying audit files. |
 | `--matrix-policy` | `balanced` | Controls which accepted rescues can enter the binary corrected matrix. `strict` corrects only `STRICT_PRESENT` and `ALIAS_CLUSTER`; `balanced` also corrects full-length `SEQUENCE_ONLY`; `sensitive` also corrects partial/disrupted accepted evidence for exploratory analyses. In all modes, the adaptive orthology-quality guard can keep weak accepted evidence as `audit_only_quality`. |
-| `--reference-genome` | — | Audit one genome column/reference background by exact matrix name or embedded `ASxxxxx` identifier. Runs a reference-only shadow search and writes `reference_genome_audit.tsv` with `new_to_reference`, `reference_like_or_present`, and `reference_like_ambiguous` classifications, plus `publication_confidence` labels for clean, complex/paralogous, event-derived, fragmented, pseudogene, and unresolved reference evidence. Also writes `reference_cluster_events.tsv` for reference-absent clusters whose representative sequence is best explained as an allele, fragment, or partial homologue of a reference gene. These rows are audit-only and do not change the binary matrix. |
-| `--tree` | — | Optional rooted Newick tree. When provided, Recore uses Fitch parsimony on the corrected presence/absence state to add ancestral state, root-state confidence, gain/loss counts, carrier-MRCA purity, Dollo-like fit, monophyly, and phylogenetic pattern calls to `evolutionary_events.tsv`. Tip names can match matrix columns exactly or by embedded `ASxxxxx` identifiers. |
-| `--mobile-element-reference` | — | Optional nucleotide FASTA of mobile elements, insertion sequences, or transposase loci. Recore aligns these sequences to genomes with rescue/disruption evidence and reports nearby hits in `evolutionary_events.tsv` as `mobile_element_source=sequence`, so IS support can be sequence-based rather than dependent on GFF product names. |
+| `--reference-genome` | none | Audit one genome column/reference background by exact matrix name or embedded `ASxxxxx` identifier. Runs a reference-only shadow search and writes `reference_genome_audit.tsv` with `new_to_reference`, `reference_like_or_present`, and `reference_like_ambiguous` classifications, plus `publication_confidence` labels for clean, complex/paralogous, event-derived, fragmented, pseudogene, and unresolved reference evidence. Also writes `reference_cluster_events.tsv` for reference-absent clusters whose representative sequence is best explained as an allele, fragment, or partial homologue of a reference gene. These rows are audit-only and do not change the binary matrix. |
+| `--tree` | none | Optional rooted Newick tree. When provided, Recore uses Fitch parsimony on the corrected presence/absence state to add ancestral state, root-state confidence, gain/loss counts, carrier-MRCA purity, Dollo-like fit, monophyly, and phylogenetic pattern calls to `evolutionary_events.tsv`. Tip names can match matrix columns exactly or by embedded `ASxxxxx` identifiers. |
+| `--mobile-element-reference` | none | Optional nucleotide FASTA of mobile elements, insertion sequences, or transposase loci. Recore aligns these sequences to genomes with rescue/disruption evidence and reports nearby hits in `evolutionary_events.tsv` as `mobile_element_source=sequence`, so IS support can be sequence-based rather than dependent on GFF product names. |
 | `--mobile-element-min-identity` | `85.0` | Minimum identity for sequence-based mobile-element hits. |
 | `--mobile-element-min-coverage` | `50.0` | Minimum query coverage for sequence-based mobile-element hits. |
 | `--mobile-element-window` | `1000` | Maximum distance in bp from a rescue/disruption interval to report mobile-element support. IS interruption calls still require close evidence within 250 bp. |
@@ -64,8 +64,8 @@ NSC k-mer size must be at least 1, and `--nsc-engine` must be `minhash` or
 | `--nsc-engine` | `minhash` | Clustering engine: `minhash` (built-in, approximate, no dependencies) or `mmseqs2` (exact, requires MMseqs2 in PATH). |
 | `--nsc-kmer-size` | `21` | k-mer size for MinHash sketching. Larger values are more specific (fewer false positives). |
 | `--nsc-threshold` | `0.8` | Maximum containment threshold for MinHash. Pairs above this are merged. |
-| `--nsc-min-seq-id` | `0.9` | Minimum sequence identity for MMseqs2 linclust (0.0–1.0). |
-| `--nsc-coverage` | `0.8` | Minimum bidirectional coverage for MMseqs2 linclust (0.0–1.0). |
+| `--nsc-min-seq-id` | `0.9` | Minimum sequence identity for MMseqs2 linclust (0.0-1.0). |
+| `--nsc-coverage` | `0.8` | Minimum bidirectional coverage for MMseqs2 linclust (0.0-1.0). |
 
 ## Logging
 
@@ -81,7 +81,7 @@ NSC k-mer size must be at least 1, and `--nsc-engine` must be `minhash` or
 
 MTBC has >99.95% average nucleotide identity across strains. This has two consequences:
 
-1. Real genes have very high identity — PARALOGs (90–94%) are nearly always noise
+1. Real genes have very high identity; PARALOGs (90-94%) are nearly always noise
 2. PE/PPE genes (~170 families with high mutual similarity) are a major source of cross-matches
 
 **Recommended command:**
@@ -127,7 +127,7 @@ recore \
   -t 8
 ```
 
-**Why `asm20`:** Allows up to 20% divergence — needed when comparing strains from the same species but different lineages.
+**Why `asm20`:** Allows up to 20% divergence, which is needed when comparing strains from the same species but different lineages.
 
 **Why `--min-prevalence 0.05`:** Rare accessory clusters (present in <5% of genomes) generate excessive cross-match noise across the matrix.
 
@@ -140,12 +140,12 @@ recore \
 Affects PARALOG counts most strongly. If you see an unexpectedly large number of PARALOGs:
 
 - Check if `--min-identity` was set below 90% by mistake
-- For MTBC: real genes should be >99% identical; PARALOGs at 90–94% are noise
+- For MTBC: real genes should be >99% identical; PARALOGs at 90-94% are noise
 - Increasing to 95% eliminates most PE/PPE cross-matches but may miss a few rare variants
 
 ### `--min-coverage` (coverage filter)
 
-Controls the boundary between PSEUDOGENE:PartialDeletion (60–80%) and no rescue (<60%):
+Controls the boundary between PSEUDOGENE:PartialDeletion (60-80%) and no rescue (<60%):
 
 - Increasing to 90%: only rescues nearly complete genes; misses short pseudogenes
 - Decreasing to 60%: rescues more partial genes but increases false positives

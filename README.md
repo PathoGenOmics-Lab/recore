@@ -823,15 +823,21 @@ evidence tables.
 
 ## Documentation
 
-Additional details are in [docs/](docs/):
+Full documentation: **<https://pathogenomics-lab.github.io/recore/>**
 
-| Document | Description |
-|----------|-------------|
-| [algorithm.md](docs/algorithm.md) | pipeline phases, data structures, and complexity |
-| [rescue_types.md](docs/rescue_types.md) | rescue classes and biological interpretation |
-| [output_files.md](docs/output_files.md) | output schemas and coordinate conventions |
-| [parameters.md](docs/parameters.md) | complete parameter guide |
+| Page | Description |
+|------|-------------|
+| [Quick start](https://pathogenomics-lab.github.io/recore/getting-started/quickstart/) | the run most people want, and what to read first |
+| [Parameters](https://pathogenomics-lab.github.io/recore/guide/parameters/) | complete parameter guide |
+| [Matrix policies](https://pathogenomics-lab.github.io/recore/guide/matrix-policies/) | which evidence reaches the binary matrix |
+| [Output files](https://pathogenomics-lab.github.io/recore/guide/outputs/) | output schemas and coordinate conventions |
+| [Run report](https://pathogenomics-lab.github.io/recore/guide/report/) | the self-contained HTML viewer |
+| [How it works](https://pathogenomics-lab.github.io/recore/how-it-works/algorithm/) | pipeline phases, data structures, and complexity |
+| [Rescue types](https://pathogenomics-lab.github.io/recore/how-it-works/rescue-types/) | rescue classes and biological interpretation |
 | [benchmarks/README.md](benchmarks/README.md) | synthetic benchmark design and reproduction |
+
+The pages live in [`docs/`](docs/) and build with `mkdocs serve` after
+`pip install -r requirements-docs.txt`.
 
 ## Changelog
 
