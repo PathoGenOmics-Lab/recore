@@ -1520,18 +1520,37 @@ fn strip_svg_attribute(tag: &str, name: &str) -> String {
     out.trim_end().to_string()
 }
 
+/// The exported artwork sits inside a 2048x1153 canvas on an opaque white plate,
+/// and the wordmark itself only covers the middle 65%. Inlined as-is the mark
+/// renders two thirds the size of the box it is given, which is why it read as a
+/// stamp rather than a brand.
+///
+/// Bounding box of every drawn element except the plate, measured from the
+/// rendered asset. Only applied when the source still declares the viewBox it was
+/// measured against, so replacing the logo falls back to the untouched artwork.
+const LOGO_SOURCE_VIEWBOX: &str = "0 0 2048 1153";
+const LOGO_CONTENT_VIEWBOX: &str = "216 159 1717 810";
+const LOGO_PLATE_PATH: &str =
+    "<path transform=\"translate(0,0)\" fill=\"rgb(255,255,255)\" d=\"M 0 0 L 2048 0 L 2048 1153 L 0 1153 L 0 0 z\"/>";
+
 /// The exported logo carries a fixed pixel size and `preserveAspectRatio="none"`,
-/// which lets any CSS box stretch it out of shape. Drop those so the inlined copy
-/// scales from its viewBox and keeps its proportions wherever it is placed.
+/// which lets any CSS box stretch it out of shape. Drop those, crop the canvas to
+/// the wordmark and drop the white plate so the mark fills whatever box it is
+/// given and inherits the page background.
 fn report_logo_svg() -> String {
-    let Some(tag_end) = REPORT_LOGO.find('>') else {
-        return REPORT_LOGO.to_string();
+    let body = REPORT_LOGO.replacen(LOGO_PLATE_PATH, "", 1);
+    let Some(tag_end) = body.find('>') else {
+        return body;
     };
-    let (tag, rest) = REPORT_LOGO.split_at(tag_end);
+    let (tag, rest) = body.split_at(tag_end);
     let mut opening = tag.to_string();
     for attr in ["width", "height", "preserveAspectRatio", "style"] {
         opening = strip_svg_attribute(&opening, attr);
     }
+    opening = opening.replace(
+        &format!("viewBox=\"{LOGO_SOURCE_VIEWBOX}\""),
+        &format!("viewBox=\"{LOGO_CONTENT_VIEWBOX}\""),
+    );
     opening.push_str(" preserveAspectRatio=\"xMidYMid meet\" focusable=\"false\"");
     format!("{opening}{rest}")
 }
@@ -1945,7 +1964,7 @@ fn build_explorer_data_json(
 
 fn explorer_unavailable_html(reason: &str) -> String {
     format!(
-        "<section class='panel full explorer' style='margin-top:14px'><h2>Phylogeny and matrix explorer</h2><p class='muted'>{}</p></section>",
+        "<section class='panel full explorer explorer-fallback'><h2>Phylogeny and matrix explorer</h2><p class='muted'>{}</p></section>",
         html_escape(reason)
     )
 }
@@ -1964,6 +1983,12 @@ fn icon(name: &str) -> &'static str {
         "target" => "<circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/>",
         "layers" => "<path d='M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/>",
         "tree" => "<path d='M4 4v16M4 8h6M4 16h6M10 5v6M10 13v6M10 5h5M10 11h5M10 13h5M10 19h5'/>",
+        "search" => "<circle cx='11' cy='11' r='7'/><path d='m20 20-3.5-3.5'/>",
+        "sliders" => "<path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2'/><circle cx='16' cy='6' r='2'/><circle cx='10' cy='12' r='2'/><circle cx='16' cy='18' r='2'/>",
+        "left" => "<path d='m14 6-6 6 6 6'/>",
+        "right" => "<path d='m10 6 6 6-6 6'/>",
+        "keyboard" => "<rect x='2' y='6' width='20' height='12' rx='2'/><path d='M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8'/>",
+        "close" => "<path d='M6 6l12 12M18 6 6 18'/>",
         _ => "<circle cx='12' cy='12' r='9'/>",
     };
     Box::leak(format!("<svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{path}</svg>").into_boxed_str())
@@ -2032,49 +2057,6 @@ fn explorer_workspace_html(
 
     let mut html = String::new();
 
-    // ---- Toolbar: what to look at. Zoom lives next to the axes, not here.
-    html.push_str("<div class='toolbar' role='toolbar' aria-label='Matrix controls'>");
-    html.push_str("<div class='tool-group tool-grow'>");
-    html.push_str(
-        "<input id='clusterSearch' type='search' placeholder='Search cluster or annotation'>",
-    );
-    html.push_str("<select id='clusterSelect' aria-label='Selected gene cluster'></select>");
-    html.push_str("</div>");
-    html.push_str("<div class='tool-group'>");
-    html.push_str("<input id='genomeSearch' type='search' placeholder='Find genome' aria-label='Find genome by name'>");
-    html.push_str("<span id='genomeInfo' class='muted num'></span>");
-    html.push_str("</div>");
-    html.push_str("<div class='tool-group'>");
-    html.push_str("<select id='tipColorMode' aria-label='Tip color mode'><option value='cluster'>Tips: selected cluster</option><option value='lineage'>Tips: lineage</option><option value='process'>Tips: mechanism</option><option value='rescue'>Tips: rescue burden</option><option value='absence'>Tips: absence burden</option><option value='correction'>Tips: any correction</option></select>");
-    html.push_str("<select id='matrixColorMode' aria-label='Matrix color mode'><option value='state'>Cells: evidence state</option><option value='process'>Cells: mechanism</option></select>");
-    html.push_str("<select id='columnOrder' aria-label='Column order'><option value='matrix'>Order: input matrix</option><option value='prevalence'>Order: prevalence</option><option value='mechanism'>Order: mechanism</option><option value='corrected'>Order: corrected cells</option><option value='name'>Order: cluster name</option></select>");
-    html.push_str("</div>");
-    html.push_str("<div class='tool-group'>");
-    html.push_str("<div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active' data-tip='Branch lengths drawn to scale'>Phylogram</button><button id='cladogramMode' type='button' data-tip='Topology only, branch lengths ignored'>Cladogram</button></div>");
-    html.push_str("<select id='rootMode' data-tip='Where the displayed tree is rooted. Every ancestral reading depends on this.' aria-label='Tree root'><option value='l8'>Root: L8 outgroup</option><option value='input'>Root: as supplied</option><option value='midpoint'>Root: midpoint</option></select><label class='toggle-control' data-tip='Draw genome names beside the tips'><input id='tipLabels' type='checkbox' checked>Tip labels</label>");
-    html.push_str("</div>");
-    html.push_str("<div class='tool-group tool-right'>");
-    write!(
-        html,
-        "<button id='mechanismFilter' type='button' class='icon-btn' data-tip='Filter matrix columns by evolutionary mechanism' aria-label='Mechanism filter' aria-expanded='false' aria-controls='processLegend'>{}</button>",
-        icon("filter")
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<button id='referenceOnly' type='button' class='icon-btn' data-tip='Show only clusters absent from the reference genome' aria-label='Reference-absent only'>{}</button>",
-        icon("target")
-    )
-    .expect("write to String is infallible");
-    write!(
-        html,
-        "<button id='toggleSynteny' type='button' class='icon-btn' data-tip='Show the flanking-gene context for the selected cluster' aria-label='Show synteny'>{}</button>",
-        icon("layers")
-    )
-    .expect("write to String is infallible");
-    html.push_str("</div>");
-    html.push_str("</div>");
-    html.push_str("<div id='processLegend' class='process-legend' hidden></div>");
     html.push_str("<div id='lineageLegend' class='lineage-legend'></div>");
 
     // ---- Workspace grid.
@@ -2082,35 +2064,66 @@ fn explorer_workspace_html(
     html.push_str("<div id='viewerSplit' class='panes-wrap'>");
     html.push_str("<div id='viewerBody' class='panes'>");
 
-    // Tree pane.
+    // Tree pane. Everything that shapes the tree lives in the tree's own menu:
+    // a control belongs beside the thing it changes, not in a shared strip.
     html.push_str("<section class='pane tree-pane' id='treePane' aria-label='Phylogeny'>");
+    write!(
+        html,
+        "<header class='pane-head'><span class='pane-name'>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='1' max='40' value='8' aria-label='Row zoom' data-tip='Row height'></span><button id='treeMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Tree display: shape, root, labels and colour' aria-label='Tree display' aria-haspopup='dialog' aria-expanded='false' aria-controls='treeMenu'>{}</button></header>",
+        icon("sliders")
+    )
+    .expect("write to String is infallible");
     html.push_str(
-        "<header class='pane-head'><span>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='1' max='18' value='8' aria-label='Row zoom' title='Row zoom'></span></header>",
+        "<div id='treeMenu' class='pane-menu' role='dialog' aria-label='Tree display' hidden>",
     );
+    html.push_str("<div class='menu-row'><span class='menu-label'>Shape</span><div class='segmented-control' role='group' aria-label='Tree mode'><button id='phylogramMode' type='button' class='active' data-tip='Branch lengths drawn to scale'>Phylogram</button><button id='cladogramMode' type='button' data-tip='Topology only, branch lengths ignored'>Cladogram</button></div></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='rootMode'>Root</label><select id='rootMode' data-tip='Where the displayed tree is rooted. Every ancestral reading depends on this.'><option value='l8'>L8 outgroup</option><option value='input'>As supplied</option><option value='midpoint'>Midpoint</option></select></div>");
+    html.push_str("<p class='menu-hint'>Alt-click any tip to root the tree on that genome.</p>");
+    html.push_str("<div class='menu-sep'></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='tipColorMode'>Colour tips by</label><select id='tipColorMode'><option value='cluster'>Selected cluster</option><option value='lineage'>Lineage</option><option value='process'>Mechanism</option><option value='rescue'>Rescue burden</option><option value='absence'>Absence burden</option><option value='correction'>Any correction</option></select></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='tipLabels'>Tip labels</label><input id='tipLabels' type='checkbox' class='switch' checked data-tip='Draw genome names beside the tips'></div>");
+    html.push_str("</div>");
     // Tree, lineage strip and matrix all draw only their visible window onto a
     // viewport-sized canvas; the spacers carry the virtual size so the browser
     // still owns the scrollbars.
     html.push_str("<div class='tree-head-spacer' id='treeHeadSpacer' aria-hidden='true'></div>");
     html.push_str("<div class='pane-viewport tree-viewport'><canvas id='treeCanvas' class='tree-canvas' role='img' aria-label='Matched phylogeny'></canvas><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas><div class='pane-scroll' id='treeScroll'><div class='pane-spacer' id='treeSpacer'></div></div></div>");
+    html.push_str("<div id='treeScaleBar' class='scale-bar' aria-hidden='true'></div>");
     html.push_str("</section>");
 
     html.push_str("<div class='split-handle tree-handle' id='treeHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize phylogeny pane' title='Drag to resize'></div>");
 
     // Matrix pane.
     html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
-    html.push_str("<header class='pane-head'><span>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span><span class='head-zoom'><label for='cellSize'>Columns</label><input id='cellSize' type='range' min='0.25' max='44' step='0.25' value='8' aria-label='Column zoom'></span></header>");
+    write!(
+        html,
+        "<header class='pane-head'><span class='pane-name'>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span><span class='head-zoom'><input id='cellSize' type='range' min='0.25' max='90' step='0.25' value='8' aria-label='Column zoom' data-tip='Column width'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
+        icon("sliders")
+    )
+    .expect("write to String is infallible");
+    html.push_str("<div id='matrixMenu' class='pane-menu wide' role='dialog' aria-label='Matrix display' hidden>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='matrixColorMode'>Colour cells by</label><select id='matrixColorMode'><option value='state'>Evidence state</option><option value='process'>Mechanism</option></select></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='columnOrder'>Column order</label><select id='columnOrder'><option value='matrix'>Input matrix</option><option value='prevalence'>Prevalence</option><option value='mechanism'>Mechanism</option><option value='corrected'>Corrected cells</option><option value='name'>Cluster name</option></select></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='referenceOnly'>Reference-absent only</label><input id='referenceOnly' type='checkbox' class='switch' data-tip='Show only clusters absent from the reference genome'></div>");
+    html.push_str("<div class='menu-sep'></div>");
+    html.push_str("<div class='menu-title'>Filter columns by mechanism</div>");
+    html.push_str("<div id='processLegend' class='process-legend'></div>");
+    html.push_str("</div>");
     html.push_str("<div class='matrix-header'><canvas id='columnHeaderCanvas' class='column-head'></canvas><div class='pane-scroll header-scroll' id='headerScroller'><div class='pane-spacer' id='headerSpacer'></div></div></div>");
     html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas'></canvas><div class='pane-scroll' id='matrixPane'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
+    // Whole-matrix overview: at 30,000 columns the scrollbar tells you nothing
+    // about where the interesting columns are. Prevalence per column does.
+    html.push_str("<div class='overview' id='overviewStrip' data-tip='Column prevalence across the whole matrix. Click or drag to jump.'><canvas id='overviewCanvas'></canvas><div class='overview-window' id='overviewWindow'></div></div>");
     html.push_str("</section>");
 
     html.push_str("<div class='split-handle inspector-handle' id='inspectorHandle' role='separator' aria-orientation='vertical' tabindex='0' aria-label='Resize inspector' title='Drag to resize'></div>");
 
-    // Inspector.
-    html.push_str(
-        "<aside class='pane inspector' id='inspectorPane' aria-label='Selected cluster'>",
-    );
-    html.push_str("<header class='pane-head'><span>Selected cluster</span></header>");
-    html.push_str("<div id='clusterDetails' class='cluster-details'></div>");
+    // Inspector. Tabbed, because a tip click should be able to answer a question
+    // about a genome without evicting what you know about the cluster.
+    html.push_str("<aside class='pane inspector' id='inspectorPane' aria-label='Inspector'>");
+    html.push_str("<header class='pane-head inspector-head'><div class='tab-bar' role='tablist' aria-label='Inspector'><button type='button' id='clusterTab' class='tab active' role='tab' aria-selected='true' aria-controls='clusterDetails' data-panel='cluster'>Cluster</button><button type='button' id='genomeTab' class='tab' role='tab' aria-selected='false' aria-controls='genomeDetails' data-panel='genome'>Genome</button></div></header>");
+    html.push_str("<div id='clusterDetails' class='cluster-details' role='tabpanel' aria-labelledby='clusterTab'></div>");
+    html.push_str("<div id='genomeDetails' class='cluster-details' role='tabpanel' aria-labelledby='genomeTab' hidden></div>");
     html.push_str("</aside>");
 
     html.push_str("</div></div>");
@@ -2119,12 +2132,17 @@ fn explorer_workspace_html(
 
     // Synteny, full width under everything else: gene arrows need horizontal room.
     html.push_str("<section class='synteny-pane' id='syntenyPanel' aria-label='Unique syntenies'>");
-    html.push_str("<header class='pane-head'><span>Unique syntenies</span><small id='topSyntenyMeta'></small><small id='syntenySummary' class='synteny-summary'></small><span class='zoom-inline'><label for='syntenyZoom'>Scale</label><input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1' aria-label='Synteny zoom'></span></header>");
+    write!(
+        html,
+        "<header class='pane-head'><span class='pane-name'>Unique syntenies</span><small id='topSyntenyMeta'></small><small id='syntenySummary' class='synteny-summary'></small><span class='zoom-inline'><label for='syntenyZoom'>Scale</label><input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1' aria-label='Synteny zoom'></span><button id='closeSynteny' type='button' class='icon-btn ghost-icon' data-tip='Hide the synteny panel (S)' aria-label='Hide synteny'>{}</button></header>",
+        icon("close")
+    )
+    .expect("write to String is infallible");
     html.push_str("<div class='synteny-scroll'><svg id='syntenySvg' class='synteny-svg' role='img' aria-label='Unique synteny blocks'></svg></div>");
     html.push_str("</section>");
     html.push_str("</main>");
 
-    html.push_str("<footer class='statusbar'><span id='matrixStatus'></span></footer>");
+    html.push_str("<footer class='statusbar'><span id='matrixStatus'></span><span class='status-hint'><kbd>&#8984;K</kbd> find<span class='dot'></span><kbd>?</kbd> shortcuts</span></footer>");
 
     html.push_str("<script id='explorerData' type='application/json'>");
     html.push_str(&data_json);
@@ -2211,35 +2229,78 @@ pub(super) fn write_html_report(
     html.push_str(REPORT_CSS);
     html.push_str("</style></head><body class='app'>");
 
-    // ---- Top bar: identity and the numbers worth seeing without opening anything.
+    // ---- One chrome row. Everything that shapes a single pane moved into that
+    // pane's own menu, which left identity, the find field, the run readout and
+    // the global actions -- and gave the data back the 40px the second row took.
     html.push_str("<header class='topbar'>");
-    html.push_str(
-        "<div class='topbar-brand'><span class='topbar-logo' data-tip='Recore' aria-hidden='true'>",
-    );
+    html.push_str("<div class='topbar-brand'><span class='topbar-logo'>");
     html.push_str(&report_logo_svg());
-    html.push_str("</span><span class='topbar-title'>Corrected pangenome matrix</span></div>");
+    html.push_str("</span><span class='brand-rule' aria-hidden='true'></span><span class='topbar-title'>Corrected pangenome matrix</span></div>");
 
-    html.push_str("<div class='run-chips'>");
-    for (value, label, kind) in [
-        (format_count(pa.n_clusters()), "clusters", ""),
-        (format_count(pa.n_genomes()), "genomes", ""),
-        (format_count(matrix_corrected_total), "corrected", "pos"),
+    // The find field is the primary control, so it gets primary placement and a
+    // shortcut. A 30,000-option <select> was neither reachable nor fast.
+    html.push_str("<div class='topbar-find'>");
+    write!(
+        html,
+        "<button id='clusterOmnibox' type='button' class='omnibox' aria-haspopup='dialog' aria-expanded='false' aria-controls='palette' data-tip='Find any cluster or genome by name or annotation'>{}<span class='omnibox-body'><span class='omnibox-name' id='omniboxName'>Search</span><span class='omnibox-note' id='omniboxNote'>clusters and genomes</span></span><kbd class='omnibox-key' id='omniboxKey'>&#8984;K</kbd></button>",
+        icon("search")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<div class='step-group' role='group' aria-label='Step through clusters'><button id='prevCluster' type='button' class='icon-btn flush' data-tip='Previous cluster (\u{2190})' aria-label='Previous cluster'>{}</button><span id='clusterPosition' class='step-count num'></span><button id='nextCluster' type='button' class='icon-btn flush' data-tip='Next cluster (\u{2192})' aria-label='Next cluster'>{}</button></div>",
+        icon("left"),
+        icon("right")
+    )
+    .expect("write to String is infallible");
+    html.push_str("</div>");
+
+    // A readout, not a row of pills: the number carries the weight and the unit
+    // sits under it in small caps, so six figures read at a glance.
+    html.push_str("<div class='run-readout'>");
+    for (value, label, kind, tip) in [
+        (
+            format_count(pa.n_clusters()),
+            "clusters",
+            "",
+            "Gene clusters in the input matrix",
+        ),
+        (
+            format_count(pa.n_genomes()),
+            "genomes",
+            "",
+            "Genomes in the input matrix",
+        ),
+        (
+            format_count(matrix_corrected_total),
+            "corrected",
+            "pos",
+            "Absent cells Recore turned into a supported presence",
+        ),
         (
             format_percent(matrix_corrected_total, stats.searchable_gaps),
             "of gaps",
             "",
+            "Share of the searchable absence cells that were corrected",
         ),
-        (format_count(rejected_total), "guarded", "warn"),
+        (
+            format_count(rejected_total),
+            "guarded",
+            "warn",
+            "Candidate corrections rejected by the synteny and paralog guards",
+        ),
         (
             format!("{:+}", core_delta),
             "core",
             if core_delta >= 0 { "pos" } else { "warn" },
+            "Change in core genome size after correction",
         ),
     ] {
         write!(
             html,
-            "<span class='chip {}'><b class='num'>{}</b>{}</span>",
+            "<div class='readout {}' data-tip='{}'><b class='num'>{}</b><span>{}</span></div>",
             kind,
+            html_escape(tip),
             html_escape(&value),
             html_escape(label)
         )
@@ -2247,13 +2308,26 @@ pub(super) fn write_html_report(
     }
     write!(
         html,
-        "<span class='chip'>policy <code>{:?}</code></span>",
+        "<div class='readout' data-tip='Matrix correction policy this run used'><b class='tag'>{:?}</b><span>policy</span></div>",
         stats.matrix_policy
     )
     .expect("write to String is infallible");
     html.push_str("</div>");
 
     html.push_str("<div class='topbar-actions'>");
+    write!(
+        html,
+        "<button id='toggleSynteny' type='button' class='icon-btn' data-tip='Show the flanking-gene context for the selected cluster (S)' aria-label='Show synteny' aria-pressed='false'>{}</button>",
+        icon("layers")
+    )
+    .expect("write to String is infallible");
+    write!(
+        html,
+        "<button id='shortcutsButton' type='button' class='icon-btn' data-tip='Keyboard shortcuts (?)' aria-label='Keyboard shortcuts'>{}</button>",
+        icon("keyboard")
+    )
+    .expect("write to String is infallible");
+    html.push_str("<span class='action-rule' aria-hidden='true'></span>");
     write!(
         html,
         "<a class='version-chip' data-tip='Release notes for this version' href='{}/releases/tag/v{}' target='_blank' rel='noopener'>v{}</a>",
@@ -2278,13 +2352,13 @@ pub(super) fn write_html_report(
     .expect("write to String is infallible");
     write!(
         html,
-        "<button id='openDetails' type='button' class='icon-btn' data-tip='Run details: summary, breakdowns, candidates and output files' aria-label='Run details' aria-expanded='false' aria-controls='runDetails'>{}</button>",
+        "<button id='openDetails' type='button' class='icon-btn' data-tip='Run details: summary, breakdowns, candidates and output files (D)' aria-label='Run details' aria-expanded='false' aria-controls='runDetails'>{}</button>",
         icon("info")
     )
     .expect("write to String is infallible");
     write!(
         html,
-        "<button id='exportView' type='button' class='icon-btn' data-tip='Download this view as PNG, and the synteny panel as SVG' aria-label='Export view'>{}</button>",
+        "<button id='exportView' type='button' class='icon-btn' data-tip='Download this view as PNG, and the synteny panel as SVG (E)' aria-label='Export view'>{}</button>",
         icon("download")
     )
     .expect("write to String is infallible");
@@ -2296,12 +2370,59 @@ pub(super) fn write_html_report(
     .expect("write to String is infallible");
     write!(
         html,
-        "<button id='explorerFullscreen' type='button' class='icon-btn' data-tip='Fullscreen' aria-label='Fullscreen'>{}</button>",
+        "<button id='explorerFullscreen' type='button' class='icon-btn' data-tip='Fullscreen (F)' aria-label='Fullscreen' aria-pressed='false'>{}</button>",
         icon("expand")
     )
     .expect("write to String is infallible");
     html.push_str("</div>");
-    html.push_str("</div></header>");
+    html.push_str("</header>");
+
+    // ---- Find-anything palette. Shared by clusters and genomes so one shortcut
+    // answers both "where is pks12" and "where is AS00146".
+    html.push_str("<div id='palette' class='palette' hidden><div class='palette-scrim' id='paletteScrim'></div>");
+    html.push_str("<div class='palette-box' role='dialog' aria-modal='true' aria-label='Find a cluster or genome'>");
+    write!(
+        html,
+        "<div class='palette-input'>{}<input id='clusterSearch' type='search' autocomplete='off' spellcheck='false' placeholder='Search clusters and genomes' aria-label='Search clusters and genomes' aria-controls='paletteList'><kbd>esc</kbd></div>",
+        icon("search")
+    )
+    .expect("write to String is infallible");
+    html.push_str("<div class='palette-tabs' role='tablist' aria-label='Search scope'><button type='button' role='tab' data-scope='all' class='active' aria-selected='true'>All</button><button type='button' role='tab' data-scope='cluster' aria-selected='false'>Clusters</button><button type='button' role='tab' data-scope='genome' aria-selected='false'>Genomes</button></div>");
+    html.push_str(
+        "<ul id='paletteList' class='palette-list' role='listbox' aria-label='Results'></ul>",
+    );
+    html.push_str("<div class='palette-foot'><span><kbd>&#8593;</kbd><kbd>&#8595;</kbd> move</span><span><kbd>&#8629;</kbd> open</span><span id='paletteCount' class='num'></span></div>");
+    html.push_str("</div></div>");
+
+    // ---- Shortcut sheet.
+    html.push_str("<div id='shortcutSheet' class='sheet' hidden><div class='sheet-scrim' id='sheetScrim'></div><div class='sheet-box' role='dialog' aria-modal='true' aria-labelledby='sheetTitle'><h2 id='sheetTitle'>Keyboard shortcuts</h2><div class='sheet-grid'>");
+    for (keys, action) in [
+        ("\u{2318}K / Ctrl K", "Find a cluster or genome"),
+        ("/", "Find a cluster or genome"),
+        ("\u{2190} \u{2192}", "Previous / next cluster"),
+        ("\u{21e7} \u{2190} \u{2192}", "Jump ten clusters"),
+        ("S", "Show or hide the synteny panel"),
+        ("D", "Open the run details"),
+        ("E", "Export the view"),
+        ("F", "Fullscreen"),
+        ("T", "Switch theme"),
+        ("C", "Phylogram or cladogram"),
+        ("R", "Reroot at the midpoint"),
+        ("Z", "Fit the matrix to the window"),
+        ("\u{21e7} wheel", "Zoom columns"),
+        ("\u{2318} wheel", "Zoom rows"),
+        ("Alt-click a tip", "Root the tree on that genome"),
+        ("Esc", "Close whatever is open"),
+    ] {
+        write!(
+            html,
+            "<div class='sheet-row'><kbd>{}</kbd><span>{}</span></div>",
+            html_escape(keys),
+            html_escape(action)
+        )
+        .expect("write to String is infallible");
+    }
+    html.push_str("</div></div></div>");
 
     let reference_gi = args
         .reference_genome

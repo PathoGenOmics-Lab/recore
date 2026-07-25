@@ -106,10 +106,32 @@ const lineageDescriptions = {
   unknown:"Lineage not parsed from genome name",
 };
 const lineageOrder = ["L4","L2","L3","L1","L7","L5","L6","L9","L10","A1","A2","A3","A4","L8","M. canettii","unknown"];
-const select = document.getElementById("clusterSelect");
 const search = document.getElementById("clusterSearch");
-const genomeSearch = document.getElementById("genomeSearch");
-const genomeInfo = document.getElementById("genomeInfo");
+const omnibox = document.getElementById("clusterOmnibox");
+const omniboxName = document.getElementById("omniboxName");
+const omniboxNote = document.getElementById("omniboxNote");
+const omniboxKey = document.getElementById("omniboxKey");
+const clusterPosition = document.getElementById("clusterPosition");
+const prevClusterButton = document.getElementById("prevCluster");
+const nextClusterButton = document.getElementById("nextCluster");
+const palette = document.getElementById("palette");
+const paletteList = document.getElementById("paletteList");
+const paletteCount = document.getElementById("paletteCount");
+const paletteScrim = document.getElementById("paletteScrim");
+const shortcutSheet = document.getElementById("shortcutSheet");
+const shortcutsButton = document.getElementById("shortcutsButton");
+const treeMenu = document.getElementById("treeMenu");
+const treeMenuBtn = document.getElementById("treeMenuBtn");
+const matrixMenu = document.getElementById("matrixMenu");
+const matrixMenuBtn = document.getElementById("matrixMenuBtn");
+const clusterTab = document.getElementById("clusterTab");
+const genomeTab = document.getElementById("genomeTab");
+const genomeDetails = document.getElementById("genomeDetails");
+const overviewStrip = document.getElementById("overviewStrip");
+const overviewCanvas = document.getElementById("overviewCanvas");
+const overviewWindow = document.getElementById("overviewWindow");
+const treeScaleBar = document.getElementById("treeScaleBar");
+const closeSyntenyButton = document.getElementById("closeSynteny");
 const sizeControl = document.getElementById("cellSize");
 const rowHeightControl = document.getElementById("rowHeight");
 const colorMode = document.getElementById("tipColorMode");
@@ -117,7 +139,7 @@ const matrixColorMode = document.getElementById("matrixColorMode");
 const columnOrder = document.getElementById("columnOrder");
 const rootMode = document.getElementById("rootMode");
 const labelToggle = document.getElementById("tipLabels");
-const referenceButton = document.getElementById("referenceOnly");
+const referenceToggle = document.getElementById("referenceOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
 const syntenyZoomControl = document.getElementById("syntenyZoom");
 const fullscreenButton = document.getElementById("explorerFullscreen");
@@ -125,7 +147,6 @@ const phylogramButton = document.getElementById("phylogramMode");
 const cladogramButton = document.getElementById("cladogramMode");
 const explorerSection = document.getElementById("explorer");
 const inspectorPane = document.getElementById("inspectorPane");
-const mechanismFilterButton = document.getElementById("mechanismFilter");
 const exportButton = document.getElementById("exportView");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
@@ -165,7 +186,7 @@ const DEFAULT_TREE_W = 320;
 const DEFAULT_SYNTENY_H = 300;
 const MIN_TREE_W = 180;
 const MIN_MATRIX_W = 220;
-const MIN_SYNTENY_H = 140;
+const MIN_SYNTENY_H = 170;
 const MAX_SYNTENY_FRACTION = 0.72;
 const DEFAULT_INSPECTOR_W = 320;
 const MIN_INSPECTOR_W = 220;
@@ -173,9 +194,9 @@ const LINEAGE_STRIP_W = 6;
 // Single source for the zoom bounds. The sliders, currentCellSize/currentRowHeight
 // and the wheel handler must agree, or the wheel snaps the value into its own range.
 const MIN_COL_ZOOM = 0.25;
-const MAX_COL_ZOOM = 44;
+const MAX_COL_ZOOM = 90;
 const MIN_ROW_ZOOM = 1;
-const MAX_ROW_ZOOM = 18;
+const MAX_ROW_ZOOM = 40;
 // Target pixel span used to pick the opening zoom from the run size.
 const FIT_TARGET_H = 560;
 const FIT_TARGET_W = 720;
@@ -183,6 +204,10 @@ const FIT_TARGET_W = 720;
 // rotated label without the text of neighbouring columns touching.
 const LABEL_MIN_CELL_W = 9;
 const LABEL_BAND_H = 82;
+// Above this a name fits across the column, and turning your head to read a
+// dozen columns is a cost the layout no longer has to impose.
+const LABEL_HORIZONTAL_CELL_W = 54;
+const LABEL_BAND_H_FLAT = 26;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 const defaultStatus = "Hover a cell for genome, cluster and evidence state. Wheel over the column header zooms columns, over the tree zooms rows. Drag the seams between panes to resize.";
 let selected = 0;
@@ -224,6 +249,7 @@ let selectedSyntenyCarriers = new Set();
 let mechanismFilters = new Set();
 /* Rows matching the genome search, marked on the tree and the lineage strip. */
 let highlightedRows = new Set();
+let overviewKey = "";
 let treeRoot = data.tree;
 
 /* ---- Cell decoding -------------------------------------------------------
@@ -428,15 +454,15 @@ function refreshVisibleClusters() {
     selectedSyntenyCarriers = new Set();
     syntenyKey = "";
   }
-  if (referenceButton) {
-    referenceButton.classList.toggle("active", referenceOnly);
-    referenceButton.setAttribute(
+  if (referenceToggle) {
+    referenceToggle.checked = referenceOnly;
+    referenceToggle.setAttribute(
       "data-tip",
       data.referenceGenome
         ? `Show only clusters absent from ${data.referenceGenome.name}`
         : "No reference genome was supplied for this run",
     );
-    referenceButton.disabled = !data.referenceGenome;
+    referenceToggle.disabled = !data.referenceGenome;
   }
 }
 function selectedVisibleColumn() {
@@ -736,21 +762,13 @@ function layout(node, depth, distance = 0) {
   node.row = count ? sum / count : leafOrder.length;
   return node.row;
 }
+/* Keeps the selection inside the visible set and repaints the find field. This
+   used to build one <option> per cluster on every keystroke, which at 30,000
+   clusters meant 30,000 DOM nodes for a list nobody could scroll anyway. */
 function populateOptions() {
   const previousSelected = selected;
-  const q = search.value.trim().toLowerCase();
-  select.innerHTML = "";
-  visibleClusters.forEach(idx => {
-    const cluster = data.clusters[idx];
-    const haystack = (cluster.name + " " + (cluster.annotation || "")).toLowerCase();
-    if (q && !haystack.includes(q)) return;
-    const opt = document.createElement("option");
-    opt.value = String(idx);
-    opt.textContent = cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
-    select.appendChild(opt);
-  });
-  if (![...select.options].some(opt => Number(opt.value) === selected)) {
-    selected = select.options.length ? Number(select.options[0].value) : 0;
+  if (visibleClusters.length && !visibleClusters.includes(selected)) {
+    selected = visibleClusters[0];
   }
   if (selected !== previousSelected) {
     selectedSyntenyBlock = 0;
@@ -758,7 +776,47 @@ function populateOptions() {
     selectedSyntenyCarriers = new Set();
     syntenyKey = "";
   }
-  select.value = String(selected);
+  const cluster = data.clusters[selected];
+  if (omniboxName) omniboxName.textContent = cluster ? cluster.name : "No cluster";
+  if (omniboxNote) {
+    omniboxNote.textContent = cluster
+      ? (cluster.annotation || "No annotation provided")
+      : "nothing matches the current filters";
+  }
+  if (clusterPosition) {
+    const at = visibleClusters.indexOf(selected);
+    clusterPosition.textContent = at < 0
+      ? `0 / ${visibleClusters.length}`
+      : `${at + 1} / ${visibleClusters.length}`;
+  }
+  if (omnibox) {
+    omnibox.setAttribute(
+      "data-tip",
+      cluster
+        ? `${cluster.name}: ${cluster.annotation || "no annotation"}. Search any cluster or genome.`
+        : "Search any cluster or genome.",
+    );
+  }
+  if (prevClusterButton) prevClusterButton.disabled = visibleClusters.indexOf(selected) <= 0;
+  if (nextClusterButton) {
+    const at = visibleClusters.indexOf(selected);
+    nextClusterButton.disabled = at < 0 || at >= visibleClusters.length - 1;
+  }
+}
+
+/** Move the selection by `delta` columns within the visible set. */
+function stepCluster(delta) {
+  if (!visibleClusters.length) return;
+  const at = visibleClusters.indexOf(selected);
+  const next = Math.max(0, Math.min(visibleClusters.length - 1, (at < 0 ? 0 : at) + delta));
+  if (visibleClusters[next] === selected) return;
+  selected = visibleClusters[next];
+  selectedSyntenyBlock = 0;
+  selectedSyntenyReference = false;
+  syntenyKey = "";
+  populateOptions();
+  treeDirty = true;
+  render(true);
 }
 function currentCellSize() {
   const value = Number(sizeControl.value || 8);
@@ -797,9 +855,13 @@ function referenceInterpretation(cluster) {
   const state = cluster.referenceState ? `reference state ${cluster.referenceState}` : "reference state not assessed";
   return `<div class="reference-meta"><strong>Reference equivalent</strong>${parts.join("")}<span>${escapeHtml(state)}</span></div>`;
 }
-function xForNode(node) {
+/** Horizontal room the branches actually get, once labels are accounted for. */
+function treeUsableWidth() {
   const labelPad = labelToggle.checked && leafOrder.length <= 1500 ? 150 : 24;
-  const usable = Math.max(80, treeWidth - 22 - labelPad);
+  return Math.max(80, treeWidth - 22 - labelPad);
+}
+function xForNode(node) {
+  const usable = treeUsableWidth();
   if (treeMode === "phylogram" && maxDistance > 0) {
     return 14 + node.distance / maxDistance * usable;
   }
@@ -984,7 +1046,7 @@ function selectMatrixClusterByName(name) {
   selectedSyntenyBlock = 0;
   selectedSyntenyReference = false;
   selectedSyntenyCarriers = new Set();
-  search.value = "";
+  if (referenceToggle) referenceToggle.checked = referenceOnly;
   populateOptions();
   resetMatrixCache();
   render(true);
@@ -1320,6 +1382,7 @@ function renderSyntenyPanel() {
   syntenySvg.setAttribute("height", String(height));
   syntenySvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   syntenySvg.innerHTML = parts.join("");
+  fitSyntenyHeight(height);
   // Each row opens on its meta column: rank, carriers, representative genome and
   // coordinates. Centring the focal gene, which is what a narrow side panel had
   // to do, pushes that column off the left edge now the band is full width, so
@@ -1357,6 +1420,7 @@ function persistLayout() {
       treeW: Math.round(layoutState.treeW),
       syntenyH: Math.round(layoutState.syntenyH),
       inspectorW: Math.round(layoutState.inspectorW),
+      syntenyUserSized: layoutState.syntenyUserSized,
       syntenyHidden,
     };
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(payload));
@@ -1374,6 +1438,7 @@ const layoutState = (() => {
     inspectorW: Number.isFinite(stored.inspectorW)
       ? Math.max(MIN_INSPECTOR_W, stored.inspectorW)
       : DEFAULT_INSPECTOR_W,
+    syntenyUserSized: stored.syntenyUserSized === true,
     syntenyHiddenStored: stored.syntenyHidden,
   };
 })();
@@ -1420,6 +1485,19 @@ function applyLayout() {
   viewerSplit.style.setProperty("--inspector-w", `${inspectorW}px`);
   treeWidth = Math.max(160, Math.round(treeW) - LINEAGE_STRIP_W - 4);
 }
+/* Two synteny rows are the point of the panel, so open at the height that shows
+   them rather than at a number picked in advance. Once the reader drags the
+   seam, that is their decision and the content stops overriding it. */
+function fitSyntenyHeight(contentHeight) {
+  if (layoutState.syntenyUserSized || syntenyHidden || !explorerSection) return;
+  const headH = syntenyPanel ? (syntenyPanel.querySelector(".pane-head")?.offsetHeight || 34) : 34;
+  const workspaceH = explorerSection.clientHeight || 0;
+  const ceiling = workspaceH > 0 ? Math.round(workspaceH * MAX_SYNTENY_FRACTION) : 520;
+  const want = Math.max(MIN_SYNTENY_H, Math.min(ceiling, Math.round(contentHeight) + headH + 10));
+  if (Math.abs(want - layoutState.syntenyH) < 2) return;
+  layoutState.syntenyH = want;
+  applyLayout();
+}
 function applyViewerSplit() {
   applyLayout();
 }
@@ -1430,8 +1508,8 @@ function applySyntenyVisibility() {
   syntenyToggle.setAttribute(
     "data-tip",
     syntenyHidden
-      ? "Show the flanking-gene context for the selected cluster"
-      : "Hide the synteny panel",
+      ? "Show the flanking-gene context for the selected cluster (S)"
+      : "Hide the synteny panel (S)",
   );
   syntenyToggle.setAttribute("aria-pressed", syntenyHidden ? "false" : "true");
   applyLayout();
@@ -1466,8 +1544,10 @@ function setupDragHandle(handle, side) {
         Math.min(maxInspector, startInspectorW - delta),
       );
     } else {
-      // Dragging up grows the synteny band, so the delta is inverted.
+      // Dragging up grows the synteny band, so the delta is inverted. Once the
+      // reader has picked a height, stop second-guessing it from the content.
       layoutState.syntenyH = Math.max(MIN_SYNTENY_H, startSyntenyH - delta);
+      layoutState.syntenyUserSized = true;
     }
     applyLayout();
   };
@@ -1534,9 +1614,8 @@ function updateTopBarMeta() {
   if (topTreeMeta) {
     // Short in the header, full text on hover: the caption is the first thing
     // that should give way when the pane narrows.
-    const mode = treeMode === "phylogram" && maxDistance > 0 ? "phylogram" : "cladogram";
-    topTreeMeta.textContent = `${leafOrder.length} tips · ${mode}`;
-    topTreeMeta.title = `${leafOrder.length} matched tips · ${treeCaption()}`;
+    topTreeMeta.textContent = `${leafOrder.length} tips`;
+    topTreeMeta.setAttribute("data-tip", `${leafOrder.length} matched tips · ${treeCaption()}`);
   }
   if (topMatrixMeta) topMatrixMeta.textContent = `${visibleClusters.length} / ${data.clusters.length} clusters`;
   if (topSyntenyMeta) {
@@ -1751,8 +1830,12 @@ function renderMatrix(scrollToSelected) {
   }
 }
 
+function columnLabelsFlat() {
+  return cellW >= LABEL_HORIZONTAL_CELL_W;
+}
 function columnLabelBand() {
-  return cellW >= LABEL_MIN_CELL_W && visibleClusters.length <= 4000 ? LABEL_BAND_H : 0;
+  if (cellW < LABEL_MIN_CELL_W || visibleClusters.length > 4000) return 0;
+  return columnLabelsFlat() ? LABEL_BAND_H_FLAT : LABEL_BAND_H;
 }
 function renderColumnHeader() {
   const cols = visibleClusters.length;
@@ -1798,16 +1881,25 @@ function renderColumnHeader() {
     headerCtx.strokeRect(x + 0.5, 0.5, Math.max(1, cellW - 1), cssH - 1);
   }
   if (!band) return;
+  const flat = columnLabelsFlat();
   headerCtx.save();
   headerCtx.font = LABEL_FONT;
   headerCtx.textBaseline = "middle";
-  // After rotate(-90deg) the local +x axis points up the screen, so left-aligned
-  // text grows upward from the tick row and reads bottom to top.
-  headerCtx.textAlign = "left";
+  // Rotated: after rotate(-90deg) the local +x axis points up the screen, so
+  // left-aligned text grows upward from the tick row and reads bottom to top.
+  headerCtx.textAlign = flat ? "center" : "left";
   for (let c = firstCol; c < lastCol; c += 1) {
     const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
     if (!cluster) continue;
     headerCtx.fillStyle = c === selectedCol ? selectStroke : labelInk;
+    if (flat) {
+      headerCtx.fillText(
+        fitLabel(cluster.name, cellW - 8),
+        c * cellW - left + cellW / 2,
+        band / 2,
+      );
+      continue;
+    }
     headerCtx.save();
     headerCtx.translate(c * cellW - left + cellW / 2, band - 6);
     headerCtx.rotate(-Math.PI / 2);
@@ -2126,6 +2218,8 @@ function render(scrollToSelected = false) {
   renderTree();
   renderLineageStrip();
   renderLineageLegend();
+  renderTreeScaleBar();
+  renderOverview();
   updateTopBarMeta();
 }
 function scheduleRender(scrollToSelected = false) {
@@ -2159,7 +2253,9 @@ function resetMatrixCache() {
   treeDirty = true;
 }
 refreshThemeColors();
-applyRoot(hasL8Tip(data.tree) ? "l8" : "input");
+const defaultRootMode = hasL8Tip(data.tree) ? "l8" : "input";
+applyRoot(defaultRootMode);
+if (rootMode) rootMode.value = defaultRootMode;
 computeGenomeStats();
 refreshVisibleClusters();
 // Open at a zoom that suits the run. A 16-genome, 12-cluster matrix at the old
@@ -2172,9 +2268,11 @@ function fitZoomToData() {
   const matrixW = bodyW > 0
     ? Math.max(220, bodyW - layoutState.treeW - layoutState.inspectorW - 24)
     : FIT_TARGET_W;
-  const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(FIT_TARGET_H / tips)));
+  const viewH = matrixViewport ? matrixViewport.clientHeight : 0;
+  const targetH = viewH > 120 ? viewH - 4 : FIT_TARGET_H;
+  const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(targetH / tips)));
   // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
-  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW / cols) / 0.82)));
+  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW - 2) / cols / 0.82)));
   rowHeightControl.value = String(rowFit);
   sizeControl.value = String(colFit);
   labelToggle.checked = tips <= 500 && rowFit >= 4;
@@ -2215,48 +2313,89 @@ window.addEventListener("resize", () => {
 });
 status.textContent = defaultStatus;
 render(true);
+// The first fit runs before the column header knows how tall it needs to be, and
+// the header can halve once labels turn horizontal. One more pass, after the
+// panes have their real size, so the data actually fills them.
+requestAnimationFrame(() => {
+  fitZoomToData();
+  resetMatrixCache();
+  render(true);
+});
 window.addEventListener("recore:theme-change", () => {
   refreshThemeColors();
   resetMatrixCache();
   render(false);
 });
-// The mechanism list is a column filter, so it opens on demand over the
-// workspace rather than sitting between the toolbar and the matrix.
-if (mechanismFilterButton && processLegend) {
-  const setLegendOpen = open => {
-    processLegend.hidden = !open;
-    mechanismFilterButton.setAttribute("aria-expanded", String(open));
-    mechanismFilterButton.classList.toggle("active", open || mechanismFilters.size > 0);
-  };
-  mechanismFilterButton.addEventListener("click", () => setLegendOpen(processLegend.hidden));
-  document.addEventListener("keydown", event => {
-    if (event.key === "Escape" && !processLegend.hidden) setLegendOpen(false);
+/* ---- Pane menus ----------------------------------------------------------
+   One menu per pane, holding everything that shapes that pane. Only one is open
+   at a time, and a click anywhere else closes it. */
+const paneMenus = [
+  {menu: treeMenu, button: treeMenuBtn},
+  {menu: matrixMenu, button: matrixMenuBtn},
+].filter(entry => entry.menu && entry.button);
+
+function setPaneMenu(target, open) {
+  paneMenus.forEach(({menu, button}) => {
+    const show = menu === target && open;
+    menu.hidden = !show;
+    button.setAttribute("aria-expanded", String(show));
+    button.classList.toggle("active", show);
   });
-  document.addEventListener("pointerdown", event => {
-    if (processLegend.hidden) return;
-    if (processLegend.contains(event.target) || mechanismFilterButton.contains(event.target)) return;
-    setLegendOpen(false);
-  });
+  syncMenuIndicators();
 }
-search.addEventListener("input", () => { populateOptions(); treeDirty = true; render(true); });
-select.addEventListener("change", () => { selected = Number(select.value || 0); selectedSyntenyBlock = 0; selectedSyntenyReference = false; syntenyKey = ""; treeDirty = true; render(true); });
+
+function anyPaneMenuOpen() {
+  return paneMenus.some(({menu}) => !menu.hidden);
+}
+
+/* The buttons have to say something when their menu is shut, or a filter left on
+   two minutes ago silently explains a matrix that looks wrong. */
+function syncMenuIndicators() {
+  if (matrixMenuBtn && matrixMenu.hidden) {
+    matrixMenuBtn.classList.toggle("active", mechanismFilters.size > 0 || referenceOnly);
+  }
+  if (treeMenuBtn && treeMenu.hidden) {
+    treeMenuBtn.classList.toggle("active", rootMode ? rootMode.value !== defaultRootMode : false);
+  }
+}
+
+paneMenus.forEach(({menu, button}) => {
+  button.addEventListener("click", event => {
+    event.stopPropagation();
+    setPaneMenu(menu, menu.hidden);
+  });
+  menu.addEventListener("click", event => event.stopPropagation());
+});
+document.addEventListener("pointerdown", event => {
+  if (!anyPaneMenuOpen()) return;
+  if (event.target.closest(".pane-menu, #treeMenuBtn, #matrixMenuBtn")) return;
+  setPaneMenu(null, false);
+});
+
 colorMode.addEventListener("change", () => { treeDirty = true; render(false); });
 labelToggle.addEventListener("change", () => { treeDirty = true; render(false); });
 phylogramButton.addEventListener("click", () => setTreeMode("phylogram"));
 cladogramButton.addEventListener("click", () => setTreeMode("cladogram"));
-referenceButton.addEventListener("click", () => {
-  if (!data.referenceGenome) return;
-  referenceOnly = !referenceOnly;
+referenceToggle.addEventListener("change", () => {
+  if (!data.referenceGenome) {
+    referenceToggle.checked = false;
+    return;
+  }
+  referenceOnly = referenceToggle.checked;
   refreshVisibleClusters();
   populateOptions();
   resetMatrixCache();
   render(true);
 });
-syntenyToggle.addEventListener("click", () => {
-  syntenyHidden = !syntenyHidden;
+if (prevClusterButton) prevClusterButton.addEventListener("click", () => stepCluster(-1));
+if (nextClusterButton) nextClusterButton.addEventListener("click", () => stepCluster(1));
+function setSynteny(open) {
+  syntenyHidden = !open;
   applySyntenyVisibility();
   render(false);
-});
+}
+syntenyToggle.addEventListener("click", () => setSynteny(syntenyHidden));
+if (closeSyntenyButton) closeSyntenyButton.addEventListener("click", () => setSynteny(false));
 syntenySvg.addEventListener("click", event => {
   const gene = event.target.closest(".synteny-gene[data-gene-cluster]");
   if (gene) {
@@ -2339,19 +2478,23 @@ processLegend.addEventListener("click", event => {
   refreshVisibleClusters();
   populateOptions();
   resetMatrixCache();
+  syncMenuIndicators();
   render(true);
 });
-fullscreenButton.addEventListener("click", async () => {
+async function toggleFullscreen() {
   if (!document.fullscreenElement && explorerSection.requestFullscreen) {
     await explorerSection.requestFullscreen();
   } else if (document.exitFullscreen) {
     await document.exitFullscreen();
   }
-});
+}
+fullscreenButton.addEventListener("click", toggleFullscreen);
 document.addEventListener("fullscreenchange", () => {
-  fullscreenButton.textContent = document.fullscreenElement === explorerSection
-    ? "Exit fullscreen"
-    : "Fullscreen";
+  // Setting textContent here used to wipe the inline SVG and leave a blank box.
+  const on = document.fullscreenElement === explorerSection;
+  fullscreenButton.classList.toggle("active", on);
+  fullscreenButton.setAttribute("aria-pressed", String(on));
+  fullscreenButton.setAttribute("data-tip", on ? "Leave fullscreen (F)" : "Fullscreen (F)");
 });
 sizeControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
 rowHeightControl.addEventListener("input", () => { resetMatrixCache(); render(false); });
@@ -2443,7 +2586,6 @@ function selectVisibleColumn(c) {
   if (c < 0) return;
   selected = originalClusterAtVisibleColumn(c);
   selectedSyntenyReference = false;
-  search.value = "";
   populateOptions();
   treeDirty = true;
   render(true);
@@ -2609,69 +2751,534 @@ if (exportButton) {
 }
 
 
-/* With 10,000 tips there was no way to answer "where is AS00146". Matching tips
-   are ringed on the tree and the view scrolls to the first hit. */
-if (genomeSearch) {
-  genomeSearch.addEventListener("input", () => {
-    const query = genomeSearch.value.trim().toLowerCase();
-    highlightedRows = new Set();
-    if (!query) {
-      if (genomeInfo) genomeInfo.textContent = "";
-      treeDirty = true;
-      render(false);
-      return;
-    }
-    let firstRow = -1;
-    for (let row = 0; row < leafOrder.length; row += 1) {
-      const name = (data.genomes[leafOrder[row]] || "").toLowerCase();
-      if (name.includes(query)) {
-        highlightedRows.add(row);
-        if (firstRow < 0) firstRow = row;
-      }
-    }
-    if (genomeInfo) {
-      genomeInfo.textContent = highlightedRows.size
-        ? `${highlightedRows.size} of ${leafOrder.length} tips`
-        : "no match";
-    }
-    if (firstRow >= 0 && matrixPane) {
-      const view = viewportSize(matrixViewport);
-      matrixPane.scrollTop = Math.max(0, firstRow * cellH - view.h / 2);
-      if (treeScroll) treeScroll.scrollTop = matrixPane.scrollTop;
-      status.textContent = `${data.genomes[leafOrder[firstRow]]}: tip ${firstRow + 1} of ${leafOrder.length}`;
-    }
-    treeDirty = true;
-    render(false);
-  });
-}
-
-
 if (rootMode) {
   rootMode.addEventListener("change", () => {
     applyRoot(rootMode.value);
     render(false);
+    syncMenuIndicators();
     status.textContent = `Tree rerooted: ${rootMode.options[rootMode.selectedIndex].textContent}.`;
   });
 }
-/* Clicking a tip roots on it, which is how every tree viewer people already use
-   behaves, and is far easier to reach for than a menu. */
+
+/** Root the displayed tree on one genome, and remember it in the root menu. */
+function rootOnGenome(genomeIdx) {
+  const name = data.genomes[genomeIdx] || "";
+  if (rootMode) {
+    const option = [...rootMode.options].find(o => o.value.startsWith("genome:"))
+      || rootMode.appendChild(document.createElement("option"));
+    option.value = `genome:${genomeIdx}`;
+    option.textContent = name;
+    rootMode.value = option.value;
+  }
+  applyRoot(`genome:${genomeIdx}`);
+  render(false);
+  syncMenuIndicators();
+  status.textContent = `Tree rooted on ${name}. The tree menu takes you back.`;
+}
+
+/* ---- Genome inspection ----------------------------------------------------
+   A plain tip click used to reroot the whole tree, which is a big move to
+   trigger by accident and left no way to simply ask about a genome. Click now
+   inspects; Alt-click reroots. */
+let selectedGenome = -1;
+
+function setInspectorTab(name) {
+  const wantGenome = name === "genome";
+  if (clusterTab) {
+    clusterTab.classList.toggle("active", !wantGenome);
+    clusterTab.setAttribute("aria-selected", String(!wantGenome));
+  }
+  if (genomeTab) {
+    genomeTab.classList.toggle("active", wantGenome);
+    genomeTab.setAttribute("aria-selected", String(wantGenome));
+  }
+  if (details) details.hidden = wantGenome;
+  if (genomeDetails) genomeDetails.hidden = !wantGenome;
+}
+
+if (clusterTab) clusterTab.addEventListener("click", () => setInspectorTab("cluster"));
+if (genomeTab) genomeTab.addEventListener("click", () => setInspectorTab("genome"));
+
+function inspectGenome(genomeIdx, {focus = true} = {}) {
+  if (genomeIdx < 0) return;
+  selectedGenome = genomeIdx;
+  renderGenomeDetails();
+  if (focus) setInspectorTab("genome");
+}
+
+function renderGenomeDetails() {
+  if (!genomeDetails) return;
+  if (selectedGenome < 0) {
+    genomeDetails.innerHTML = "<p class='muted'>Click a tip in the phylogeny to inspect that genome.</p>";
+    return;
+  }
+  const name = data.genomes[selectedGenome] || "";
+  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, A: 0};
+  const assessed = totals.P + totals.R + totals.N + totals.A;
+  const lineage = lineageOfGenomeName(name);
+  const node = findLeafByGenome(treeRoot, selectedGenome);
+  const state = stateAt(selected, selectedGenome);
+  const cluster = data.clusters[selected];
+  const row = rowOfGenome[selectedGenome];
+  const isReference = data.referenceGenome && data.referenceGenome.index === selectedGenome;
+  const share = value => assessed ? `${(value / assessed * 100).toFixed(1)}%` : "0%";
+  const bar = (label, value, key) =>
+    `<div class="genome-stat"><span class="sw ${key}"></span><span class="genome-stat-name">${escapeHtml(label)}</span><b class="num">${value.toLocaleString()}</b><small class="num">${share(value)}</small></div>`;
+  genomeDetails.innerHTML = `
+    <div class="cluster-head">
+      <h3>${escapeHtml(name)}</h3>
+      ${isReference ? "<span class='pill'>reference</span>" : ""}
+    </div>
+    <p class="muted">Tip ${row >= 0 ? row + 1 : "?"} of ${leafOrder.length}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
+    <dl class="cluster-dl">
+      <dt>In the selected cluster</dt>
+      <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong></dd>
+      <dt>Cluster content</dt>
+    </dl>
+    <div class="genome-stats">
+      ${bar("present in input", totals.P, "p")}
+      ${bar("rescued by Recore", totals.R, "r")}
+      ${bar("supported by NSC", totals.N, "n")}
+      ${bar("absent", totals.A, "a")}
+    </div>
+    <dl class="cluster-dl">
+      <dt>Position on the tree</dt>
+      <dd>${node
+        ? `root distance ${escapeHtml(formatBranchLength(node.distance))}, terminal branch ${escapeHtml(formatBranchLength(node.length))}`
+        : "not on the displayed tree"}</dd>
+    </dl>
+    <div class="genome-actions">
+      <button type="button" class="ghost-btn" data-root-here="${selectedGenome}">Root the tree here</button>
+      <button type="button" class="ghost-btn" data-find-tip="${selectedGenome}">Scroll to this tip</button>
+    </div>`;
+}
+
+if (genomeDetails) {
+  genomeDetails.addEventListener("click", event => {
+    const rootHere = event.target.closest("[data-root-here]");
+    if (rootHere) {
+      rootOnGenome(Number(rootHere.getAttribute("data-root-here")));
+      return;
+    }
+    const findTip = event.target.closest("[data-find-tip]");
+    if (findTip) scrollToGenome(Number(findTip.getAttribute("data-find-tip")));
+  });
+}
+
+/** Centre the panes on one genome's row and ring it on the tree. */
+function scrollToGenome(genomeIdx) {
+  const row = rowOfGenome[genomeIdx];
+  if (row < 0 || !matrixPane) return;
+  const view = viewportSize(matrixViewport);
+  matrixPane.scrollTop = Math.max(0, row * cellH - view.h / 2);
+  if (treeScroll) treeScroll.scrollTop = matrixPane.scrollTop;
+  highlightedRows = new Set([row]);
+  treeDirty = true;
+  render(false);
+  status.textContent = `${data.genomes[genomeIdx]}: tip ${row + 1} of ${leafOrder.length}`;
+}
+
 if (treeScroll) {
   treeScroll.addEventListener("click", event => {
     const row = rowAtPointer(event, treeScroll);
     if (row < 0) return;
     const genomeIdx = leafOrder[row];
-    const name = data.genomes[genomeIdx] || "";
-    if (rootMode) {
-      const option = [...rootMode.options].find(o => o.value.startsWith("genome:"))
-        || rootMode.appendChild(document.createElement("option"));
-      option.value = `genome:${genomeIdx}`;
-      option.textContent = `Root: ${name}`;
-      rootMode.value = option.value;
+    if (event.altKey) {
+      rootOnGenome(genomeIdx);
+      return;
     }
-    applyRoot(`genome:${genomeIdx}`);
-    render(false);
-    status.textContent = `Tree rooted on ${name}. Use the root menu to go back.`;
+    inspectGenome(genomeIdx);
   });
 }
+
+/* ---- Find palette ---------------------------------------------------------
+   Clusters and genomes answer to the same shortcut, because "where is X" is one
+   question and the reader should not have to know which kind of thing X is. */
+const PALETTE_LIMIT = 200;
+let paletteScope = "all";
+let paletteRows = [];
+let paletteActive = 0;
+
+function paletteIsOpen() {
+  return palette && !palette.hidden;
+}
+
+function openPalette(scope) {
+  if (!palette) return;
+  if (scope) setPaletteScope(scope);
+  palette.hidden = false;
+  if (omnibox) omnibox.setAttribute("aria-expanded", "true");
+  search.select();
+  search.focus();
+  refreshPalette();
+}
+
+function closePalette() {
+  if (!palette) return;
+  palette.hidden = true;
+  if (omnibox) {
+    omnibox.setAttribute("aria-expanded", "false");
+    omnibox.focus();
+  }
+}
+
+function setPaletteScope(scope) {
+  paletteScope = scope;
+  palette.querySelectorAll(".palette-tabs button").forEach(button => {
+    const on = button.getAttribute("data-scope") === scope;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-selected", String(on));
+  });
+}
+
+/* Name hits beat annotation hits, and a prefix beats a hit in the middle, so the
+   thing you half-remembered the start of comes first. */
+function scoreHit(name, note, query) {
+  const lowName = name.toLowerCase();
+  if (!query) return 3;
+  if (lowName.startsWith(query)) return 0;
+  if (lowName.includes(query)) return 1;
+  if (note && note.toLowerCase().includes(query)) return 2;
+  return -1;
+}
+
+function buildPaletteRows() {
+  const query = search.value.trim().toLowerCase();
+  const hits = [];
+  if (paletteScope !== "genome") {
+    for (let i = 0; i < visibleClusters.length; i += 1) {
+      const idx = visibleClusters[i];
+      const cluster = data.clusters[idx];
+      const note = cluster.annotation || "";
+      const score = scoreHit(cluster.name, note, query);
+      if (score < 0) continue;
+      hits.push({
+        kind: "cluster",
+        score,
+        idx,
+        name: cluster.name,
+        note: note || "No annotation provided",
+        badge: `${cluster.present || 0} / ${data.genomes.length}`,
+      });
+    }
+  }
+  if (paletteScope !== "cluster") {
+    for (let row = 0; row < leafOrder.length; row += 1) {
+      const genomeIdx = leafOrder[row];
+      const name = data.genomes[genomeIdx] || "";
+      const lineage = lineageOfGenomeName(name);
+      const note = lineage && lineage !== "unknown" ? `lineage ${lineage}` : "";
+      const score = scoreHit(name, note, query);
+      if (score < 0) continue;
+      hits.push({
+        kind: "genome",
+        score,
+        idx: genomeIdx,
+        name,
+        note: note || "no lineage assigned",
+        badge: `tip ${row + 1}`,
+      });
+    }
+  }
+  hits.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
+  return {total: hits.length, rows: hits.slice(0, PALETTE_LIMIT)};
+}
+
+function markMatch(text, query) {
+  if (!query) return escapeHtml(text);
+  const at = text.toLowerCase().indexOf(query);
+  if (at < 0) return escapeHtml(text);
+  return `${escapeHtml(text.slice(0, at))}<mark>${escapeHtml(text.slice(at, at + query.length))}</mark>${escapeHtml(text.slice(at + query.length))}`;
+}
+
+function refreshPalette() {
+  if (!paletteList) return;
+  const query = search.value.trim().toLowerCase();
+  const {total, rows} = buildPaletteRows();
+  paletteRows = rows;
+  paletteActive = 0;
+  if (!rows.length) {
+    paletteList.innerHTML = `<li class="palette-empty">Nothing matches ${query ? `"${escapeHtml(query)}"` : "the current filters"}.</li>`;
+  } else {
+    paletteList.innerHTML = rows.map((row, i) =>
+      `<li class="palette-item${i === 0 ? " active" : ""}" role="option" aria-selected="${i === 0}" data-index="${i}">` +
+      `<span class="palette-kind">${row.kind}</span>` +
+      `<span class="palette-name">${markMatch(row.name, query)}</span>` +
+      `<span class="palette-note">${escapeHtml(row.note)}</span>` +
+      `<span class="palette-badge">${escapeHtml(row.badge)}</span></li>`
+    ).join("");
+  }
+  if (paletteCount) {
+    paletteCount.textContent = total > rows.length
+      ? `${rows.length} of ${total.toLocaleString()}`
+      : `${total.toLocaleString()} result${total === 1 ? "" : "s"}`;
+  }
+}
+
+function movePaletteActive(delta) {
+  if (!paletteRows.length) return;
+  paletteActive = (paletteActive + delta + paletteRows.length) % paletteRows.length;
+  paletteList.querySelectorAll(".palette-item").forEach((item, i) => {
+    const on = i === paletteActive;
+    item.classList.toggle("active", on);
+    item.setAttribute("aria-selected", String(on));
+    if (on) item.scrollIntoView({block: "nearest"});
+  });
+}
+
+function commitPaletteRow(row) {
+  if (!row) return;
+  if (row.kind === "cluster") {
+    selectMatrixClusterByName(row.name);
+    setInspectorTab("cluster");
+  } else {
+    inspectGenome(row.idx);
+    scrollToGenome(row.idx);
+  }
+  closePalette();
+}
+
+if (palette) {
+  if (omnibox) omnibox.addEventListener("click", () => openPalette());
+  if (paletteScrim) paletteScrim.addEventListener("click", closePalette);
+  search.addEventListener("input", refreshPalette);
+  palette.querySelectorAll(".palette-tabs button").forEach(button => {
+    button.addEventListener("click", () => {
+      setPaletteScope(button.getAttribute("data-scope") || "all");
+      refreshPalette();
+      search.focus();
+    });
+  });
+  paletteList.addEventListener("click", event => {
+    const item = event.target.closest(".palette-item");
+    if (item) commitPaletteRow(paletteRows[Number(item.getAttribute("data-index"))]);
+  });
+  paletteList.addEventListener("mousemove", event => {
+    const item = event.target.closest(".palette-item");
+    if (!item) return;
+    const index = Number(item.getAttribute("data-index"));
+    if (index === paletteActive) return;
+    movePaletteActive(index - paletteActive);
+  });
+  search.addEventListener("keydown", event => {
+    if (event.key === "ArrowDown") { event.preventDefault(); movePaletteActive(1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); movePaletteActive(-1); }
+    else if (event.key === "Enter") { event.preventDefault(); commitPaletteRow(paletteRows[paletteActive]); }
+    else if (event.key === "Escape") { event.preventDefault(); closePalette(); }
+    else if (event.key === "Tab") {
+      event.preventDefault();
+      const order = ["all", "cluster", "genome"];
+      setPaletteScope(order[(order.indexOf(paletteScope) + 1) % order.length]);
+      refreshPalette();
+    }
+  });
+}
+
+/* ---- Shortcuts ------------------------------------------------------------ */
+const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+if (omniboxKey) omniboxKey.textContent = isApple ? "⌘K" : "Ctrl K";
+document.querySelectorAll(".status-hint kbd").forEach(node => {
+  if (node.textContent === "⌘K") node.textContent = isApple ? "⌘K" : "Ctrl K";
+});
+
+function setSheetOpen(open) {
+  if (!shortcutSheet) return;
+  shortcutSheet.hidden = !open;
+}
+if (shortcutsButton) shortcutsButton.addEventListener("click", () => setSheetOpen(shortcutSheet.hidden));
+const sheetScrim = document.getElementById("sheetScrim");
+if (sheetScrim) sheetScrim.addEventListener("click", () => setSheetOpen(false));
+
+function typingInField(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
+document.addEventListener("keydown", event => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (paletteIsOpen()) closePalette();
+    else openPalette();
+    return;
+  }
+  if (event.key === "Escape") {
+    if (paletteIsOpen()) { closePalette(); return; }
+    if (shortcutSheet && !shortcutSheet.hidden) { setSheetOpen(false); return; }
+    if (anyPaneMenuOpen()) { setPaneMenu(null, false); return; }
+    return;
+  }
+  if (paletteIsOpen() || typingInField(event.target)) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+  switch (event.key) {
+    case "/":
+      event.preventDefault();
+      openPalette();
+      return;
+    case "?":
+      event.preventDefault();
+      setSheetOpen(shortcutSheet ? shortcutSheet.hidden : false);
+      return;
+    case "ArrowLeft":
+      event.preventDefault();
+      stepCluster(event.shiftKey ? -10 : -1);
+      return;
+    case "ArrowRight":
+      event.preventDefault();
+      stepCluster(event.shiftKey ? 10 : 1);
+      return;
+    default:
+      break;
+  }
+  switch (event.key.toLowerCase()) {
+    case "s":
+      setSynteny(syntenyHidden);
+      break;
+    case "d":
+      document.getElementById("openDetails")?.click();
+      break;
+    case "e":
+      exportButton?.click();
+      break;
+    case "f":
+      toggleFullscreen();
+      break;
+    case "t":
+      document.getElementById("themeToggle")?.click();
+      break;
+    case "c":
+      setTreeMode(treeMode === "phylogram" ? "cladogram" : "phylogram");
+      break;
+    case "r":
+      if (rootMode) {
+        rootMode.value = "midpoint";
+        applyRoot("midpoint");
+        render(false);
+        syncMenuIndicators();
+        status.textContent = "Tree rerooted: Midpoint.";
+      }
+      break;
+    case "z":
+      fitZoomToData();
+      resetMatrixCache();
+      render(true);
+      status.textContent = "Zoom fitted to the data.";
+      break;
+    default:
+      break;
+  }
+});
+
+/* ---- Tree scale bar -------------------------------------------------------
+   A phylogram without a scale is a picture rather than a measurement, and the
+   branch lengths here are the whole argument for drawing one. */
+function niceStep(raw) {
+  if (!(raw > 0)) return 0;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const scaled = raw / magnitude;
+  const step = scaled >= 5 ? 5 : scaled >= 2 ? 2 : 1;
+  return step * magnitude;
+}
+
+function formatDistance(value) {
+  if (value >= 1) return value.toFixed(2).replace(/\.?0+$/, "");
+  if (value >= 0.001) return value.toFixed(4).replace(/0+$/, "");
+  return value.toExponential(1);
+}
+
+function renderTreeScaleBar() {
+  if (!treeScaleBar) return;
+  if (treeMode !== "phylogram" || !(maxDistance > 0)) {
+    treeScaleBar.hidden = true;
+    return;
+  }
+  const pxPerUnit = treeUsableWidth() / maxDistance;
+  const step = niceStep(maxDistance / 4);
+  const width = step * pxPerUnit;
+  if (!(width >= 18) || !Number.isFinite(width)) {
+    treeScaleBar.hidden = true;
+    return;
+  }
+  treeScaleBar.hidden = false;
+  treeScaleBar.innerHTML = `<i style="width:${Math.round(width)}px"></i><span>${escapeHtml(formatDistance(step))} substitutions/site</span>`;
+}
+
+/* ---- Whole-matrix overview ------------------------------------------------
+   At 30,000 columns a scrollbar tells you how far along you are and nothing
+   about what is there. Prevalence per column does, and clicking jumps. */
+function renderOverview() {
+  if (!overviewCanvas || !overviewStrip) return;
+  // Below a few dozen columns the whole matrix is already on screen, and a
+  // navigation aid for something you can see is just another band of colour.
+  const useful = visibleClusters.length >= 40;
+  overviewStrip.hidden = !useful;
+  if (!useful) return;
+  const width = overviewStrip.clientWidth;
+  const height = overviewStrip.clientHeight;
+  if (width < 4 || height < 4) return;
+  const key = `${width}x${height}|${visibleClusters.length}|${selected}|${panelBg}`;
+  if (key !== overviewKey) {
+    overviewKey = key;
+    const scale = canvasScale(width, height);
+    const octx = overviewCanvas.getContext("2d");
+    sizeCanvas(overviewCanvas, octx, width, height, scale);
+    octx.clearRect(0, 0, width, height);
+    const n = visibleClusters.length;
+    const genomes = Math.max(1, data.genomes.length);
+    if (n) {
+      // One bar per device column: with more clusters than pixels, take the
+      // strongest cluster in each bucket so a single high-prevalence column in
+      // a crowd of empty ones is still visible.
+      octx.fillStyle = colors.P;
+      octx.globalAlpha = 0.45;
+      for (let x = 0; x < width; x += 1) {
+        const from = Math.floor(x / width * n);
+        const to = Math.max(from + 1, Math.floor((x + 1) / width * n));
+        let best = 0;
+        for (let i = from; i < to && i < n; i += 1) {
+          const present = data.clusters[visibleClusters[i]]?.present || 0;
+          if (present > best) best = present;
+        }
+        const h = Math.max(1, Math.round(best / genomes * (height - 4)));
+        octx.fillRect(x, height - 2 - h, 1, h);
+      }
+      octx.globalAlpha = 1;
+      const at = visibleClusters.indexOf(selected);
+      if (at >= 0) {
+        octx.fillStyle = selectStroke;
+        octx.fillRect(Math.floor(at / n * width), 0, 2, height);
+      }
+    }
+  }
+  if (overviewWindow) {
+    const n = Math.max(1, visibleClusters.length);
+    const view = viewportSize(matrixViewport);
+    const first = matrixScrollLeft() / cellW;
+    const span = Math.min(n, view.w / cellW);
+    overviewWindow.style.left = `${(first / n * width).toFixed(1)}px`;
+    overviewWindow.style.width = `${Math.max(2, span / n * width).toFixed(1)}px`;
+  }
+}
+
+if (overviewStrip) {
+  const jumpTo = clientX => {
+    const rect = overviewStrip.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+    const view = viewportSize(matrixViewport);
+    matrixPane.scrollLeft = Math.max(0, fraction * virtualW - view.w / 2);
+  };
+  overviewStrip.addEventListener("pointerdown", event => {
+    overviewStrip.setPointerCapture(event.pointerId);
+    jumpTo(event.clientX);
+  });
+  overviewStrip.addEventListener("pointermove", event => {
+    if (event.buttons & 1) jumpTo(event.clientX);
+  });
+}
+
+renderGenomeDetails();
+populateOptions();
+render(false);
 
 })();

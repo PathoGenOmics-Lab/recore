@@ -348,7 +348,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("matrixColorMode"));
     assert!(text.contains("processLegend"));
     assert!(text.contains("lineageLegend"));
-    assert!(text.contains("viewer-controls"));
+
     assert!(text.contains("data-mechanism"));
     assert!(text.contains("data-clear-mechanism"));
     assert!(text.contains("mechanismFilters = new Set"));
@@ -357,10 +357,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("referenceCell"));
     assert!(text.contains("targetReferenceGene"));
     assert!(text.contains("Reference equivalent"));
-    assert!(text.contains("Tips: lineage"));
+    assert!(text.contains("value='lineage'"));
     assert!(text.contains("#C94434"));
-    assert!(text.contains("Tips: mechanism"));
-    assert!(text.contains("Cells: mechanism"));
+    assert!(text.contains("Colour tips by"));
+    assert!(text.contains("Colour cells by"));
     assert!(text.contains("clade_associated_gain"));
     assert!(text.contains("tipLabels"));
     assert!(text.contains("visibleColumnRange"));
@@ -371,6 +371,18 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(!text.contains("clusterHeaderLabel"));
     assert!(text.contains("referenceOnly"));
     assert!(text.contains("explorerFullscreen"));
+    // The chrome the redesign introduced: one find field over both kinds of
+    // thing, per-pane menus, a genome card and a scale for the branch lengths.
+    assert!(text.contains("id='clusterOmnibox'"));
+    assert!(text.contains("id='paletteList'"));
+    assert!(text.contains("id='shortcutSheet'"));
+    assert!(text.contains("id='treeMenu'"));
+    assert!(text.contains("id='matrixMenu'"));
+    assert!(text.contains("id='genomeDetails'"));
+    assert!(text.contains("id='treeScaleBar'"));
+    assert!(text.contains("id='overviewCanvas'"));
+    assert!(text.contains("substitutions/site"));
+    assert!(text.contains("Alt-click any tip"));
     assert!(text.contains("\"referenceGenome\":null"));
     // Cells are the compact per-cluster encoding, not one character per genome.
     // Two genomes fall inside a single byte, so both clusters use bitset mode:

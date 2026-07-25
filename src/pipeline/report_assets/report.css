@@ -835,8 +835,7 @@ td a {
   padding: 5px 12px;
 }
 
-.scale-control,
-.toolbar .toggle-control {
+.scale-control {
   height: var(--control-h);
 }
 
@@ -1439,16 +1438,29 @@ body.app {
   height: 100vh;
   height: 100dvh;
   display: grid;
+  /* The single implicit column would otherwise size to the widest child's
+     min-content, so a chrome row that wants 1656px silently widens the page and
+     takes the workspace with it. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
+/* Pin each band to its row. The lineage legend only exists when tips are
+   coloured by lineage, and with implicit placement its absence slid the
+   workspace into the auto row and handed the free space to the status bar. */
+body.app > .topbar { grid-row: 1; }
+body.app > .lineage-legend { grid-row: 2; }
+body.app > .workspace,
+body.app > .explorer-fallback { grid-row: 3; }
+body.app > .statusbar { grid-row: 4; }
+
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: 0 var(--space-5);
-  height: 52px;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  height: 58px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--line);
   flex-wrap: nowrap;
@@ -1462,16 +1474,12 @@ body.app {
   flex: 0 0 auto;
 }
 
-/* 16:9 wordmark on an opaque white plate, so the tile keeps that ratio and stays
-   white in both themes rather than stretching into a square. */
+/* Cropped to the wordmark and stripped of its plate, so the mark uses the box it
+   is given instead of the two thirds of it the export happened to fill. */
 .topbar-logo {
-  width: 84px;
-  aspect-ratio: 2048 / 1153;
+  width: 118px;
+  aspect-ratio: 1717 / 810;
   flex: 0 0 auto;
-  border-radius: var(--radius-sm);
-  background: #ffffff;
-  border: 1px solid var(--line);
-  overflow: hidden;
   display: block;
 }
 
@@ -1481,48 +1489,240 @@ body.app {
   display: block;
 }
 
+/* The mark is drawn in teal-to-indigo; the darkest end of that ramp disappears
+   against a near-black panel, so lift the whole thing rather than recolour it. */
+:root[data-theme="dark"] .topbar-logo svg {
+  filter: brightness(1.6) saturate(1.05);
+}
+
+.brand-rule {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
 .topbar-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
-}
-
-.run-chips {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.run-chips::-webkit-scrollbar {
-  display: none;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-subtle);
-  border: 1px solid var(--soft-line);
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.chip b {
-  font-size: 13px;
-  font-weight: 650;
   color: var(--ink);
 }
 
-.chip.pos b { color: var(--positive); }
-.chip.warn b { color: var(--warning); }
+/* ===== Find field =====
+   The primary question a reader arrives with is "where is X", so the control
+   that answers it gets primary placement and a shortcut. */
+.topbar-find {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 260px;
+  min-width: 0;
+  max-width: 390px;
+}
+
+.omnibox {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px 0 11px;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.omnibox:hover {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+
+.omnibox:focus-visible {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.omnibox .glyph {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+
+.omnibox-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.omnibox-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.omnibox-note {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.omnibox-key {
+  flex: 0 0 auto;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* Prev / next as one welded unit, with the position between them: stepping
+   through columns is a single motion, not two separate buttons. */
+.step-group {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.icon-btn.flush {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  width: 28px;
+  height: 100%;
+}
+
+.step-count {
+  min-width: 62px;
+  padding: 0 2px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ===== Run readout =====
+   Six numbers, each with its unit beneath it. Pills gave every figure the same
+   weight as its label and read as decoration. */
+.run-readout {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: auto;
+  overflow: hidden;
+}
+
+/* Never let the chrome push the page wider than the window: the workspace owns
+   the viewport, and a horizontal page scrollbar would move all of it. */
+.topbar > * {
+  min-width: 0;
+}
+
+.readout {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 11px;
+  border-left: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.readout:first-child {
+  border-left: 0;
+}
+
+.readout b {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.1;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+.readout b.tag {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--accent-ink);
+}
+
+.readout span {
+  font-size: 9.5px;
+  font-weight: 550;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.readout.pos b { color: var(--positive); }
+.readout.warn b { color: var(--warning); }
+
+/* Chrome is one row now, so it gives things up in a deliberate order rather than
+   overflowing: policy first, then the derived figures, then the title, then the
+   readout entirely. What is dropped is always still in the details drawer. */
+@media (max-width: 1560px) {
+  .readout:nth-child(7) { display: none; }
+}
+
+@media (max-width: 1440px) {
+  .readout:nth-child(4) { display: none; }
+  .readout { padding: 0 9px; }
+}
+
+@media (max-width: 1340px) {
+  .readout:nth-child(5) { display: none; }
+}
+
+@media (max-width: 1240px) {
+  .topbar-title,
+  .brand-rule { display: none; }
+}
+
+@media (max-width: 1120px) {
+  .run-readout { display: none; }
+}
 
 .version-chip {
   display: inline-flex;
@@ -1557,83 +1757,26 @@ a.ghost-btn:hover {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  gap: 3px;
   flex: 0 0 auto;
 }
 
-.topbar-actions .ghost-btn,
-.topbar-actions a.ghost-btn {
-  padding: 5px 9px;
-  font-size: 12px;
+.topbar-actions .icon-btn {
+  width: 28px;
+  height: 28px;
 }
 
-/* ===== Toolbar ===== */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: 8px var(--space-5);
-  background: var(--bg);
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
+.topbar-actions .version-chip {
+  height: 28px;
+  padding: 0 9px;
 }
 
-.tool-group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.tool-grow {
-  flex: 1 1 240px;
-  min-width: 190px;
-  max-width: 420px;
-}
-
-.tool-right {
-  margin-left: auto;
-}
-
-/* Below this the toolbar has to wrap; without releasing the auto margin the
-   overflow row sits beside a band of empty toolbar. */
-@media (max-width: 1700px) {
-  .tool-right {
-    margin-left: 0;
-  }
-}
-
-.toolbar input[type="search"],
-.toolbar select {
-  appearance: none;
-  background: var(--bg-elev);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  height: var(--control-h);
-  padding: 0 10px;
-  font: inherit;
-  font-size: 13px;
-  min-width: 0;
-  transition: border-color var(--transition), box-shadow var(--transition);
-}
-
-.toolbar input[type="search"] {
-  flex: 1 1 180px;
-  min-width: 170px;
-}
-
-.toolbar select {
-  min-width: 130px;
-  max-width: 190px;
-}
-
-.toolbar input:focus,
-.toolbar select:focus {
-  outline: 0;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.action-rule {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+  flex: 0 0 auto;
 }
 
 .ghost-btn {
@@ -1726,6 +1869,579 @@ a.ghost-btn:hover {
 .tip-bubble.show {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ===== Pane menus =====
+   Display options belong beside the pane they change. A shared strip of nine
+   look-alike controls forced you to remember which one drove which panel. */
+.ghost-icon {
+  border-color: transparent;
+  background: transparent;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+}
+
+.ghost-icon .glyph {
+  width: 15px;
+  height: 15px;
+}
+
+.pane-menu {
+  position: absolute;
+  z-index: 45;
+  top: 36px;
+  right: 8px;
+  width: 288px;
+  max-height: min(520px, calc(100vh - 140px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  font-weight: 400;
+}
+
+.pane-menu.wide {
+  width: 330px;
+}
+
+.pane-menu[hidden] {
+  display: none;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.menu-label {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.menu-row select {
+  appearance: none;
+  flex: 0 1 172px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 26px 0 9px;
+  background: var(--bg-subtle);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12.5px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) 12px, calc(100% - 9px) 12px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.menu-row select:focus-visible,
+.palette-input input:focus-visible {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.menu-row .segmented-control {
+  height: 28px;
+  flex: 0 1 172px;
+}
+
+.menu-row .segmented-control button {
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.menu-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+}
+
+.menu-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.menu-hint {
+  margin: -4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* A checkbox that reads as a state, not as a form field. */
+input.switch {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+input.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-1);
+  transition: transform var(--transition);
+}
+
+input.switch:checked {
+  background: var(--accent);
+}
+
+input.switch:checked::after {
+  transform: translateX(14px);
+}
+
+input.switch:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ===== Inspector tabs ===== */
+.inspector-head {
+  padding: 0 6px;
+  align-items: stretch;
+}
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* ===== Find palette =====
+   One dialog answers both "where is pks12" and "where is AS00146", and it does
+   it over 30,000 clusters without building 30,000 option elements. */
+.palette,
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  justify-content: center;
+}
+
+.palette[hidden],
+.sheet[hidden] {
+  display: none;
+}
+
+.palette {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.sheet {
+  align-items: center;
+}
+
+.palette-scrim,
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #09090b 42%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.palette-box,
+.sheet-box {
+  position: relative;
+  width: min(640px, calc(100vw - 32px));
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: rise 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette-box,
+  .sheet-box { animation: none; }
+}
+
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 52px;
+  border-bottom: 1px solid var(--line);
+}
+
+.palette-input .glyph {
+  width: 17px;
+  height: 17px;
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+
+.palette-input input {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  outline: 0;
+}
+
+.palette-input input::placeholder {
+  color: var(--faint);
+}
+
+.palette-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.palette-tabs button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  padding: 3px 11px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.palette-tabs button:hover {
+  background: var(--bg-subtle);
+  color: var(--ink);
+}
+
+.palette-tabs button.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  scroll-margin: 6px;
+}
+
+.palette-item.active {
+  background: var(--accent-soft);
+}
+
+.palette-kind {
+  flex: 0 0 auto;
+  width: 54px;
+  font-size: 9.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+.palette-item.active .palette-kind {
+  color: var(--accent-ink);
+}
+
+.palette-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-name mark {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.palette-note {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.palette-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.palette-empty {
+  padding: 22px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.palette-foot,
+.sheet-box h2 {
+  border-top: 1px solid var(--soft-line);
+}
+
+.palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  color: var(--faint);
+  background: var(--bg-subtle);
+}
+
+.palette-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.palette-foot #paletteCount {
+  margin-left: auto;
+}
+
+/* ===== Shortcut sheet ===== */
+.sheet-box {
+  width: min(620px, calc(100vw - 32px));
+  padding: var(--space-5);
+}
+
+.sheet-box h2 {
+  border-top: 0;
+  margin: 0 0 var(--space-4);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 20px;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+
+.sheet-row kbd {
+  flex: 0 0 auto;
+  min-width: 74px;
+  font-size: 10.5px;
+}
+
+/* Wrap rather than truncate: a shortcut list that hides half of what a key does
+   is worse than one that takes an extra line. */
+.sheet-row span {
+  min-width: 0;
+}
+
+@media (max-width: 620px) {
+  .sheet-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ===== Tree scale bar =====
+   A phylogram without a scale is a picture, not a measurement. It gets its own
+   strip rather than floating over the tips: an opaque box parked on top of a
+   genome name is not a fix, it is the same problem with a border. */
+.scale-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 10px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.scale-bar[hidden] {
+  display: none;
+}
+
+.scale-bar i {
+  display: block;
+  height: 5px;
+  border: 1px solid var(--muted);
+  border-top: 0;
+  flex: 0 0 auto;
+}
+
+/* ===== Genome card ===== */
+.genome-stats {
+  display: grid;
+  gap: 3px;
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.genome-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.genome-stat .sw {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.genome-stat-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genome-stat b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.genome-stat small {
+  min-width: 44px;
+  text-align: right;
+  color: var(--faint);
+}
+
+.genome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.genome-actions .ghost-btn {
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+/* ===== Whole-matrix overview =====
+   The scrollbar says how far along you are. This says what is there. */
+.overview {
+  position: relative;
+  flex: 0 0 auto;
+  height: 26px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--bg-subtle);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.overview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.overview-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
 }
 
 /* ===== Workspace ===== */
@@ -1928,7 +2644,11 @@ a.ghost-btn:hover {
 }
 
 .tree-pane .pane-head .head-zoom input[type="range"] {
-  width: 72px;
+  width: 58px;
+}
+
+.pane-name {
+  flex: 0 0 auto;
 }
 
 .matrix-region .pane-head .legend {
@@ -2099,6 +2819,40 @@ a.ghost-btn:hover {
   overflow: hidden;
 }
 
+#matrixStatus {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.status-hint .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  margin: 0 2px;
+}
+
+.status-hint kbd {
+  height: 17px;
+  min-width: 18px;
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .status-hint { display: none; }
+}
+
 /* ===== Run details drawer ===== */
 .drawer {
   position: fixed;
@@ -2205,33 +2959,26 @@ a.ghost-btn:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* The mechanism list is a column filter, so it opens over the workspace instead
-   of standing between the toolbar and the data as a wall of cards. */
-.process-legend[hidden] {
-  display: none !important;
-}
-
+/* The mechanism list is a matrix-column filter, so it lives inside the matrix
+   menu rather than as a wall of cards standing between chrome and data. */
 .process-legend {
-  position: absolute;
-  z-index: 40;
-  top: 96px;
-  right: var(--space-5);
-  width: min(760px, 94vw);
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: var(--space-4);
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-3);
+  display: grid;
+  gap: 5px;
+  margin-top: 0;
 }
 
-@media (max-width: 1380px) {
-  /* The run chips are the first thing to go: they repeat what the drawer says,
-     while the actions do not exist anywhere else. */
-  .run-chips {
-    display: none;
-  }
+.process-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.process-item {
+  padding: 7px 9px;
+}
+
+.process-selected {
+  font-size: 12px;
+  gap: 7px;
 }
 
 @media (max-width: 1100px) {
@@ -2343,14 +3090,19 @@ a.ghost-btn:hover {
     font-size: 11pt;
   }
 
-  .toolbar,
+  .topbar-find,
   .topbar-actions,
   .zoom-dock,
   .zoom-rail,
   .zoom-inline,
+  .head-zoom,
+  .ghost-icon,
+  .pane-menu,
   .split-handle,
   .drawer-scrim,
-  .process-legend,
+  .palette,
+  .sheet,
+  .overview,
   .statusbar,
   .drawer-head .icon-btn {
     display: none !important;
@@ -2364,10 +3116,10 @@ a.ghost-btn:hover {
     gap: 12px;
   }
 
-  .run-chips {
+  .run-readout {
     display: flex !important;
     overflow: visible;
-    flex-wrap: wrap;
+    margin-left: 0;
   }
 
   .workspace,

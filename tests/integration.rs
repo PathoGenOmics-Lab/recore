@@ -235,10 +235,23 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("lineageLegend"));
     assert!(html_report.contains("data-mechanism"));
     assert!(html_report.contains("targetReferenceGene"));
-    assert!(html_report.contains("Tips: lineage"));
+    assert!(html_report.contains("value='lineage'"));
     assert!(html_report.contains("phylogramMode"));
     assert!(html_report.contains("referenceOnly"));
     assert!(html_report.contains("visibleColumnRange"));
+    // Find-anything palette, shortcut sheet and the per-pane menus that replaced
+    // the shared control strip.
+    assert!(html_report.contains("id='palette'"));
+    assert!(html_report.contains("id='clusterOmnibox'"));
+    assert!(html_report.contains("id='shortcutSheet'"));
+    assert!(html_report.contains("id='treeMenu'"));
+    assert!(html_report.contains("id='matrixMenu'"));
+    assert!(html_report.contains("id='genomeDetails'"));
+    assert!(html_report.contains("id='overviewCanvas'"));
+    assert!(html_report.contains("id='treeScaleBar'"));
+    // The logo ships cropped to the wordmark, without its opaque plate.
+    assert!(html_report.contains("viewBox=\"216 159 1717 810\""));
+    assert!(!html_report.contains("M 0 0 L 2048 0 L 2048 1153 L 0 1153 L 0 0 z"));
     // The report has to stay openable from an offline results directory. Links to
     // the project are fine; loading a resource is not.
     for tag in ["<link", "<script", "<img"] {
