@@ -257,12 +257,18 @@ code {
   flex-wrap: wrap;
 }
 
+/* flex-basis follows the main axis, so a 480px basis became a 480px *height* the
+   moment .banner-inner stacked (narrow screens and print), leaving a page-tall
+   gap under the title. Keep the basis on the width instead. */
 .banner-brand {
   display: flex;
   align-items: flex-start;
   gap: var(--space-4);
   min-width: 0;
-  flex: 1 1 480px;
+  flex: 1 1 auto;
+  flex-basis: auto;
+  width: min(480px, 100%);
+  max-width: 100%;
 }
 
 /* The logo artwork is a 16:9 wordmark on an opaque white plate, so the tile keeps
@@ -556,7 +562,7 @@ code {
   gap: var(--space-3);
 }
 
-@media (min-width: 760px) {
+@media screen and (min-width: 760px) {
   .stat-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -1882,7 +1888,7 @@ footer code {
 }
 
 /* ===== Responsive ===== */
-@media (max-width: 1100px) {
+@media screen and (max-width: 1100px) {
   .explorer-controls {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
@@ -1891,7 +1897,7 @@ footer code {
   }
 }
 
-@media (max-width: 820px) {
+@media screen and (max-width: 820px) {
   .viewer-body {
     flex-direction: column;
   }
@@ -1901,7 +1907,7 @@ footer code {
   }
 }
 
-@media (max-width: 900px) {
+@media screen and (max-width: 900px) {
   main {
     padding: var(--space-6) var(--space-4) var(--space-10);
   }
@@ -1935,19 +1941,120 @@ footer code {
 }
 
 @media print {
-  body {
-    background: white;
+  /* Reports get printed and pasted into supplementary material, so force the
+     light palette even if the reader is in dark mode. Without this a dark-theme
+     reader prints a solid black page. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-elev: #ffffff;
+    --bg-subtle: #f5f5f4;
+    --bg-hover: #f5f5f4;
+    --panel: #ffffff;
+    --ink: #18181b;
+    --ink-soft: #3f3f46;
+    --muted: #52525b;
+    --subtle: #3f3f46;
+    --faint: #71717a;
+    --line: #d4d4d8;
+    --line-strong: #a1a1aa;
+    --soft-line: #e4e4e7;
+    --absent: #ffffff;
+    --absent-stroke: #d4d4d8;
+    --shadow-1: none;
+    --shadow-2: none;
+    --shadow-3: none;
   }
+
+  /* Bars, swatches and matrix cells carry the meaning here, and browsers drop
+     backgrounds when printing unless told otherwise. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    background: #ffffff;
+    font-size: 11pt;
+  }
+
+  main {
+    max-width: none;
+    padding: 0;
+    gap: 16px;
+  }
+
+  /* Paper is narrower than a desktop window. Stack the banner instead of letting
+     the meta column wrap and leave a page-tall void beside the title. */
+  .banner-inner {
+    max-width: none;
+    padding: 0 0 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .banner-brand,
+  .banner-tagline {
+    width: 100%;
+    max-width: none;
+  }
+
+  .banner-meta {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .stat-grid,
+  .headline-grid,
+  .section-grid,
+  .files {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .executive {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .nav-bar,
   .banner-actions,
   .toolbar,
-  .viewer-controls {
+  .viewer-controls,
+  .split-handle,
+  .matrix-status {
     display: none !important;
   }
+
   .panel,
   .stat,
-  .file {
+  .file,
+  .bar-row,
+  .mech-row,
+  tr {
     box-shadow: none;
     break-inside: avoid;
+  }
+
+  section[id] {
+    break-inside: auto;
+  }
+
+  h2 {
+    break-after: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  /* The viewer scrolls on screen; on paper print whatever fits on one page
+     rather than clipping it to the on-screen pane height. */
+  .viewer-body {
+    height: auto !important;
+    max-height: 620px;
+    overflow: hidden;
   }
 }
