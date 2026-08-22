@@ -176,6 +176,19 @@
   margin-top: 1.6rem;
 }
 
+/* The reference pages separate their sections with a markdown rule, written
+ * when the headings had no rule of their own. Now that h2 draws one, the pair
+ * renders as two hairlines with a band of nothing between them. The heading's
+ * rule is the one that keeps its spacing, so the loose one goes. */
+.md-typeset hr + h2 {
+  border-top: none;
+  padding-top: 0;
+}
+
+.md-typeset hr:has(+ h2) {
+  display: none;
+}
+
 .md-typeset h3 {
   font-size: 1.05rem;
   font-weight: 600;
