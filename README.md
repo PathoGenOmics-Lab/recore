@@ -829,21 +829,38 @@ evidence tables.
 
 ## Documentation
 
-Full documentation: **<https://pathogenomics-lab.github.io/recore/>**
+Every page below is a markdown file in this repository and reads here on GitHub.
 
 | Page | Description |
 |------|-------------|
-| [Quick start](https://pathogenomics-lab.github.io/recore/getting-started/quickstart/) | the run most people want, and what to read first |
-| [Parameters](https://pathogenomics-lab.github.io/recore/guide/parameters/) | complete parameter guide |
-| [Matrix policies](https://pathogenomics-lab.github.io/recore/guide/matrix-policies/) | which evidence reaches the binary matrix |
-| [Output files](https://pathogenomics-lab.github.io/recore/guide/outputs/) | output schemas and coordinate conventions |
-| [Run report](https://pathogenomics-lab.github.io/recore/guide/report/) | the self-contained HTML viewer |
-| [How it works](https://pathogenomics-lab.github.io/recore/how-it-works/algorithm/) | pipeline phases, data structures, and complexity |
-| [Rescue types](https://pathogenomics-lab.github.io/recore/how-it-works/rescue-types/) | rescue classes and biological interpretation |
+| [Tutorial](docs/getting-started/tutorial.md) | a full run on a generated dataset with known answers |
+| [Installation](docs/getting-started/installation.md) | requirements, from source, and pre-built binaries |
+| [Quick start](docs/getting-started/quickstart.md) | the run most people want, and what to read first |
+| [Inputs](docs/getting-started/inputs.md) | what each input is, and how names have to match |
+| [Parameters](docs/guide/parameters.md) | complete parameter guide |
+| [Matrix policies](docs/guide/matrix-policies.md) | which evidence reaches the binary matrix |
+| [Output files](docs/guide/outputs.md) | output schemas and coordinate conventions |
+| [Run report](docs/guide/report.md) | the self-contained HTML viewer |
+| [How it works](docs/how-it-works/algorithm.md) | pipeline phases, data structures, and complexity |
+| [Evidence states](docs/how-it-works/evidence-states.md) | the ten states of the multistate matrix |
+| [Rescue types](docs/how-it-works/rescue-types.md) | rescue classes and biological interpretation |
+| [Limits and comparisons](docs/how-it-works/limits.md) | what Recore does not claim, and how it differs from Panaroo refinding |
 | [benchmarks/README.md](benchmarks/README.md) | synthetic benchmark design and reproduction |
 
-The pages live in [`docs/`](docs/) and build with `mkdocs serve` after
-`pip install -r requirements-docs.txt`.
+The same pages build into a searchable site with cross-references, an example
+report you can open, and a dark theme:
+
+```bash
+pip install -r requirements-docs.txt
+mkdocs serve
+```
+
+> [!NOTE]
+> The site is built and deployed to `gh-pages` on every push to `main`, but it is
+> not served yet: GitHub Pages needs the repository to be public, or the
+> organisation to be on a paid plan. Until one of those changes,
+> <https://pathogenomics-lab.github.io/recore/> returns 404 and the table above
+> is the way in.
 
 ## Changelog
 

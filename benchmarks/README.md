@@ -167,7 +167,7 @@ benchmark table.
 ## Tutorial dataset
 
 `make_tutorial_dataset.py` writes the small input set the documentation
-[tutorial](https://pathogenomics-lab.github.io/recore/getting-started/tutorial/)
+[tutorial](../docs/getting-started/tutorial.md)
 walks through: twelve MTBC-style genomes, twenty-four clusters, GFF3
 annotations, a Newick tree, and eleven false absences planted on purpose in four
 flavours (dropped gene, missing CDS, pseudogene, and a diverged copy that must

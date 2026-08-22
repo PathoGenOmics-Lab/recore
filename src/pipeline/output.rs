@@ -1486,7 +1486,12 @@ fn file_link_html(path: &str, description: &str) -> String {
 }
 
 const RECORE_REPO_URL: &str = "https://github.com/PathoGenOmics-Lab/recore";
-const RECORE_DOCS_URL: &str = "https://pathogenomics-lab.github.io/recore/";
+// The documentation button in the report. The MkDocs site is built and deployed
+// on every push to main, but Pages will not serve it while the repository is
+// private on a free plan, so this points at the pages in the repository, which
+// render on GitHub and resolve today. Once the site is live, this is the one
+// line to change.
+const RECORE_DOCS_URL: &str = "https://github.com/PathoGenOmics-Lab/recore/tree/main/docs";
 const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
 const REPORT_CSS: &str = include_str!("report_assets/report.css");
 const REPORT_UI_JS: &str = include_str!("report_assets/report-ui.js");
