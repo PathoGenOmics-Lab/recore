@@ -1,0 +1,242 @@
+name: Bug report
+description: Recore crashed, refused to run, or produced something that is plainly wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > **Is this a question rather than a defect?**
+        >
+        > The test is not how serious it is, it is what you are saying. If you can
+        > show the tool is wrong, this is the right form. If you are asking
+        > *whether* it is wrong, or why it decided what it decided, that is a
+        > question and it belongs in [Q&A](https://github.com/PathoGenOmics-Lab/recore/discussions/categories/q-a), where the answer gets marked as
+        > the answer and the next person finds it.
+        >
+        > A question filed here gets an answer that only you ever see.
+
+        Thanks for taking the time to report this.
+
+        One thing worth knowing before you fill this in, because it is the most
+        common report that turns out not to be a defect: Recore is deliberately
+        conservative, and a cell with real sequence evidence behind it can still
+        stay `0` in `gene_presence_absence_recore.csv`. Partial homology,
+        pseudogenes, unvalidated missing CDSs and paralog hits are held out of
+        the binary matrix on purpose and kept visible in the audit outputs
+        instead. `orthology_evidence.tsv` records which of those happened and
+        why, which is why this form asks for the row.
+
+        If the run finished and you disagree with a call, that goes to
+        [Q&A](https://github.com/PathoGenOmics-Lab/recore/discussions/categories/q-a) as well, with the evidence row and the command that produced it.
+
+  - type: input
+    id: version
+    attributes:
+      label: Recore version
+      description: >-
+        The output of `recore --version`. If you built from a branch rather than
+        a tag, add the commit too: there is one tag so far and `main` moves, so
+        the version string alone does not identify the code you ran.
+      placeholder: recore 0.2.0 (main, 4f9a1c2)
+    validations:
+      required: true
+
+  - type: input
+    id: minimap2
+    attributes:
+      label: minimap2 version
+      description: >-
+        The output of `minimap2 --version`. This is not background information.
+        Recore shells out to minimap2 for every search and reads its PAF, so the
+        aligner is part of the result: a hit that changes between versions
+        changes the identity, the coverage and therefore the decision. Write
+        `not installed` if the failure is that Recore cannot find it.
+      placeholder: 2.28-r1209
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      description: >-
+        There is no conda package for Recore itself. Conda is only ever a way to
+        get minimap2 and MMseqs2, so if that is what you did, the answer here is
+        still one of the two below.
+      options:
+        - Built from source (cargo build --release)
+        - Binary from the Releases page
+        - Other (say which under "What happened")
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: >-
+        Linux and macOS are the built and tested targets. Windows is not one, so
+        pick Other and say whether you were in WSL, a container, or something
+        else.
+      options:
+        - Linux
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Other (say which under "What happened")
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      description: >-
+        The whole command, exactly as run, with every flag. Which flags were on
+        changes what Recore is even allowed to conclude: without `-a` there is no
+        annotation context, without `--synteny` there is no locus check to
+        override a weak sequence score, and `--matrix-policy` decides which
+        classes of evidence may reach the binary matrix at all. A report without
+        the flags is a report about a different run.
+      render: shell
+      placeholder: |
+        recore \
+          -p gene_presence_absence.csv \
+          -r pan_genome_reference.fa \
+          -g genomes/ \
+          -a annotations/ \
+          --synteny --multi-allele \
+          --matrix-policy balanced \
+          --reference-genome AS00146 \
+          -t 8 -o recore_output/
+    validations:
+      required: true
+
+  - type: textarea
+    id: scale
+    attributes:
+      label: Matrix and genome counts
+      description: >-
+        How many genome columns and how many clusters. Nearly everything Recore
+        does is per absent cell, and the product of those two numbers is what
+        sets the memory, the runtime and the number of chances a rare edge case
+        gets to appear. A failure that only shows up at ninety thousand cells
+        cannot be reproduced on the twelve-genome tutorial dataset, and knowing
+        that in advance saves a round trip. Say roughly how far the run got, too.
+      placeholder: |
+        Genome columns: 412
+        Clusters (matrix rows): 8914
+        Absent cells: about 96000
+        Threads: 8
+        Got as far as: the minimap2 batch search, roughly 40 minutes in
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Error message or output
+      description: >-
+        Everything the tool printed, including the warnings before the failure.
+        Those are usually where the answer is, because Recore warns and keeps
+        going for the things that most often explain a strange result: genome
+        columns with no matching FASTA, GFF seqids remapped onto contig names,
+        clusters skipped under `--min-prevalence`. If the plain output is not
+        enough, re-run with `-v`, which prints the sample matches, the GFF
+        parsing and the synteny decisions.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: The row from orthology_evidence.tsv
+      description: >-
+        Fill this in whenever the complaint is about a call rather than a crash.
+        It is the single most useful thing in the whole report, because that file
+        is the record of the decision rather than a summary of it.
+        `evidence_state` says what Recore thought it had found,
+        `matrix_action` says what it did about it and distinguishes
+        `audit_only_policy` (your `--matrix-policy` excluded this class) from
+        `audit_only_quality` (the class was allowed, the evidence was not good
+        enough), `adaptive_identity_floor` and `adaptive_coverage_floor` say what
+        this particular cluster had to clear rather than what the global
+        `--min-identity` and `--min-coverage` asked for,
+        `adaptive_sequence_pass` says whether it did,
+        `orthology_confidence_tier` and `risk_flags` say what was counted against
+        it. Without the row, a rescue that was wrongly withheld and the guard
+        doing exactly its job are indistinguishable from the outside, and the
+        first reply is just a request for this.
+
+
+        Paste the header line as well. There are thirty-five columns and the row
+        is unreadable without it, so `head -1 recore_output/orthology_evidence.tsv`
+        and then a `grep` for your cluster and genome is the quickest way to get
+        both. The example below is a run without `-a`, which is why its synteny
+        columns are empty; yours will have more in them if you passed
+        annotations.
+      render: text
+      placeholder: |
+        decision	orthology_status	evidence_state	matrix_action	publication_status	evidence_strength	recommended_wording	gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	adaptive_identity_floor	adaptive_coverage_floor	adaptive_sequence_pass	orthology_confidence_score	orthology_confidence_tier	risk_flags	synteny	synteny_score	synteny_support_n	synteny_reference_contexts	synteny_neighbors	synteny_upstream_matches	synteny_downstream_matches	orf_integrity_signal	annotation_match	annotation_cluster	rejection_reason	fragment_note
+        accepted	accepted_sequence_evidence	SEQUENCE_ONLY	audit_only_quality	corrected_but_review_for_publication	moderate	Treat as sequence-supported presence; review if used as a key claim.	group_0187	L4_AS00146	DROPPED	93.4	88.0	L4_AS00146	1203401	1203802	+	0.822	95.0	85.0	false	0.642	review	adaptive_sequence_below_floor;synteny_not_tested								in_frame_span				
+
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Where your inputs came from
+      description: >-
+        What produced them matters more than how large they are. Name the
+        pangenome pipeline behind the matrix and the mode it ran in, the
+        assembler behind the genome FASTAs, the annotator behind the GFFs, and
+        say whether the matrix genome columns match the FASTA and GFF file stems
+        exactly or only through an embedded `ASxxxxx` identifier. That last one
+        is worth stating even when you are sure: name matching is where most
+        failed runs come from, and a column that quietly matches nothing looks
+        from the output like a genome with no evidence in it.
+      placeholder: |
+        Matrix: Panaroo 1.5.0, --clean-mode moderate
+        Pan reference: pan_genome_reference.fa from the same Panaroo run
+        Genomes: SPAdes 3.15 assemblies, one FASTA per column
+        Annotations: Bakta 1.9, one GFF3 per column
+        Column names: L4_AS00146 style, file stems match exactly
+        Tree: IQ-TREE 2, rooted on the L8 outgroup
+    validations:
+      required: true
+
+  - type: textarea
+    id: records
+    attributes:
+      label: The records involved, if you can share them
+      description: >-
+        For a call you disagree with, three things usually reproduce it without
+        the dataset: the matrix row for the cluster, the pan-reference sequence
+        for that cluster, and the GFF lines covering the hit region in that
+        genome. Leave this empty if the data cannot be shared.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and did not find this one.
+          required: true
+        - label: I checked that this still happens on the current `main`. There is one tag so far and fixes land on `main` first, so that is the version worth checking against.
+          required: false
+        - label: minimap2 is on `PATH` and `minimap2 --version` prints a version.
+          required: false

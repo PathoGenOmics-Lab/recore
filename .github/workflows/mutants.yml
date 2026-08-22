@@ -1,0 +1,127 @@
+name: Mutation testing (advisory)
+
+# `cargo mutants` changes the source (flips a comparison, replaces a function
+# body with a default) and reports whether the test suite notices. A surviving
+# mutant is a piece of logic no test distinguishes: either a test is missing, or
+# the logic does nothing, and both are worth knowing.
+#
+# It is run by hand rather than on every push, because it builds and tests once
+# per mutant. It never fails the build: a surviving mutant is a question to look
+# at, not a defect.
+#
+# Scope, test selection and timeouts live in `.cargo/mutants.toml` so a local
+# run matches this one. Two choices in that file decide what this job needs, and
+# both are worth knowing before reading the steps:
+#
+#   * Only the in-crate unit tests run, `cargo test --lib`. The one test that
+#     needs minimap2 lives in tests/integration.rs and is compiled but never
+#     run here, so this job installs no minimap2 and does not set
+#     RECORE_REQUIRE_MINIMAP2. That variable exists to turn the end-to-end
+#     test's silent skip into a failure, which is the right thing for the CI job
+#     that runs it and a lie here, where the test is out of scope on purpose.
+#   * The explorer payload size test is skipped, because it costs thirteen
+#     seconds in a debug build and would be paid once per mutant.
+#
+# The run is split across shards because the whole of it does not fit in one
+# job. The numbers below were measured on this repository, not carried over from
+# elsewhere: `cargo mutants --list` reports 1717 mutants for the configured
+# scope, and a mutant costs about 1.4 seconds on a warm laptop (nine of them run
+# serially in eighteen seconds, five of which were the baseline build before any
+# mutant was tried). That is roughly forty minutes of laptop time. A two-core
+# hosted runner is several times slower per mutant, since the cost is almost
+# entirely an incremental rebuild of an 18,000 line crate, so a single job would
+# run for hours. Eight shards of about 215 mutants each is the compromise: on a
+# runner three to four times slower than the laptop that is fifteen to twenty
+# minutes of testing per shard, which leaves the rest of the 45 minutes for
+# checkout, the toolchain and building cargo-mutants itself. Four shards would
+# not fit: 429 mutants each is half an hour of testing before any of the setup,
+# and the setup is not small.
+#
+# The repository is private, so every shard-minute is billed against the
+# account's Actions allowance rather than being free the way a public repository
+# would be. That is the second reason this is dispatch-only, and a standing
+# reason to keep the scope in .cargo/mutants.toml narrow: a wider scope is not
+# only a longer wait, it is a bill.
+
+on:
+  workflow_dispatch:
+
+# It reads the repository, mutates a copy of the source in a scratch directory
+# and uploads a report as an artifact. It writes nothing back here.
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    name: Shard ${{ matrix.shard }} of 0 to 7
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Zero-indexed, which the flag's own help does not say: it gives `1/4`
+        # as the example. Numbering these 1 to 8 would quietly skip shard 0 and
+        # run an empty shard 8, covering part of the set while reporting a full
+        # sweep. Checked rather than assumed, by listing each shard: the eight
+        # below hold 215 mutants each except the last, which holds 212, and they
+        # add up to 1717 with no duplicates, which is the whole set.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v7
+      # Stable, not the 1.70 in `rust-version`. This job asks which logic the
+      # tests pin down, not which compiler the crate still supports. The MSRV
+      # would belong to a job that checks the MSRV, and this repository does not
+      # have one: nothing in CI currently builds against 1.70, so `rust-version`
+      # in Cargo.toml is a claim rather than a verified fact.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+      - name: Run mutation testing
+        # Surviving mutants exit non-zero; that is a report, not a failure.
+        continue-on-error: true
+        run: cargo mutants --no-shuffle --shard ${{ matrix.shard }}/8
+      - name: Upload this shard's report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-report-${{ matrix.shard }}
+          path: mutants.out/
+          retention-days: 30
+
+  summary:
+    name: Surviving mutants, all shards
+    needs: mutants
+    # The shards are advisory and one may fail on its own; the report is still
+    # worth assembling from the ones that finished, and it says which did not.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Collect the shard reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: mutants-report-*
+          path: shards
+      - name: Write the summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Surviving mutants"
+            echo
+            arrived=$(find shards -maxdepth 1 -type d -name 'mutants-report-*' | wc -l)
+            echo "Reports from ${arrived} of 8 shards."
+            echo
+            # Sorted so the same set of survivors reads the same way between
+            # runs: the shards finish in whatever order they finish.
+            if find shards -name missed.txt -size +0 | read -r _; then
+              echo "Logic no test distinguishes. Each line is a question: is a test"
+              echo "missing, or does the code not do anything?"
+              echo
+              echo '```'
+              find shards -name missed.txt -exec cat {} + | LC_ALL=C sort
+              echo '```'
+            else
+              echo "None: every mutant in the examined code was caught."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

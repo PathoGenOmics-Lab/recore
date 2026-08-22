@@ -1,0 +1,109 @@
+name: CodeQL
+
+# Static analysis over everything this repository is written in. Nothing else
+# here looks at the code this way: clippy checks the shape of a line and the
+# test suite checks the answer, while these queries follow a value across
+# functions and files and ask where an unchecked one arrives somewhere it
+# matters.
+#
+# Four languages, which is all of them:
+#
+#   rust                   src/, the rescue engine and the CLI, the bulk of the
+#                          repository by far
+#   javascript-typescript  src/pipeline/report_assets/*.js, the HTML report's
+#                          viewer, roughly 3300 lines
+#   python                 benchmarks/ and tools/, the benchmark runners, the
+#                          run comparison and the logo generator
+#   actions                the workflows themselves, including this one
+#
+# The report viewer earns its place rather than being swept in for completeness.
+# explorer.js and report-ui.js are compiled into the binary with include_str!
+# and then handed strings that came out of somebody else's pangenome: gene
+# names, sample identifiers, cluster names, file paths. All of it reaches the
+# DOM of a file a person opens in a browser. Nothing else in this repository
+# runs a single check over that code, because it never passes through a bundler
+# or a linter on its way into the binary, so the taint queries here are the only
+# thing that will ever notice a name being written as markup.
+#
+# `actions` is not a curiosity either. These queries know about script injection
+# through untrusted context values interpolated into a `run:` block, and about
+# what the `pull_request_target` trigger hands to a workflow that then checks
+# out a fork's branch. Reasoning that a workflow is safe is exactly the kind of
+# reasoning worth having checked by something that is not the person who wrote
+# it.
+#
+# On pushes to main and on pull requests, with no schedule. GitHub's own default
+# setup adds a weekly run; this does not, in keeping with every other workflow
+# here except the issue sweep, which has nothing but time to hang off. Analysis
+# that only tells you something when the code changes should run when the code
+# changes.
+#
+# `build-mode: none` reads the source without compiling it. It is what makes
+# this take a couple of minutes rather than a full release build for the Rust
+# half, and it is the documented mode for the interpreted languages and for the
+# compiled ones that support it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push makes an older analysis irrelevant, the same as CI.
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyse ${{ matrix.language }}
+    # Code scanning is free on public repositories and needs a paid Advanced
+    # Security seat on private ones. While this repository is private on a free
+    # plan there is nowhere for the results to go, and the analyse step would
+    # fail on every single pull request for a reason nobody can fix from inside
+    # the repository. A red check that nobody can act on is a check people learn
+    # to scroll past, and then the ones that mean something get scrolled past
+    # too, so the job stands down instead. It comes back by itself the day the
+    # repository is made public. Nothing here needs editing for that to happen.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # docs/assets/example-report.html is a report recore generated, with
+          # the whole of explorer.js inlined into it, committed so the docs can
+          # link to a real one. Left in, every finding in the viewer arrives
+          # twice: once against the source anyone can fix and once against a
+          # generated copy nobody edits. The source is already in the analysis
+          # on its own account, so only the copy is excluded.
+          config: |
+            paths-ignore:
+              - docs/assets/example-report.html
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

@@ -1,0 +1,54 @@
+name: Dependency review
+
+# Stops a pull request that would bring in a dependency with a known
+# vulnerability, which is the half of the problem Dependabot does not cover.
+# Dependabot tells you about a vulnerable dependency you already have; this
+# refuses the one you are about to add, while refusing it is still free and
+# nothing has been written against it yet.
+#
+# It compares the dependency graph of the base against the head, so it only ever
+# has an opinion about what the pull request itself introduces. Everything
+# already in the tree is somebody else's conversation, and Dependabot is the one
+# having it.
+#
+# What it can see here is Cargo.lock and requirements-docs.txt. The lockfile is
+# committed, so the comparison is against the exact transitive versions the
+# build actually uses rather than whatever the ranges in Cargo.toml would
+# resolve to today. There is deliberately no package.json to review: the report
+# viewer in src/pipeline/report_assets is written by hand and baked into the
+# binary with include_str!, so the one part of recore that is JavaScript has no
+# supply chain to check. That is the point of it being written that way.
+#
+# `moderate` rather than the default `low`: a low severity advisory on a
+# transitive build dependency is worth reading and is not worth blocking a merge
+# on, and a gate that blocks for things nobody acts on stops being read.
+
+on:
+  pull_request
+
+permissions:
+  contents: read
+  # For the summary comment it leaves when it refuses one.
+  pull-requests: write
+
+jobs:
+  review:
+    name: No new dependency with a known vulnerability
+    # The dependency review API answers for public repositories and for private
+    # ones with a paid Advanced Security seat. This repository is private on a
+    # free plan, so the action would get a refusal from the API and fail every
+    # pull request for a reason that has nothing to do with the pull request.
+    # Same reasoning as the CodeQL workflow: rather than teach everyone that a
+    # red check here means nothing, the job stands down, and it starts working
+    # on its own the day the repository is made public.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          # Only when it has something to say. A summary on every pull request
+          # is a summary nobody reads by the third one.
+          comment-summary-in-pr: on-failure

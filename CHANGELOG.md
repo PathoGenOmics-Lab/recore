@@ -136,6 +136,19 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- The automation the other tools in the lab run, adapted to what Recore is:
+  CodeQL over Rust, the report's JavaScript, the Python in `benchmarks/` and the
+  workflows themselves; dependency review on pull requests; Dependabot for cargo
+  and actions with auto-merge for routine updates once CI is green; path-based
+  pull request labelling; and mutation testing on demand with its scope in
+  `.cargo/mutants.toml`. The issue sweep is on `workflow_dispatch` rather than
+  the weekly cron get_MNV gives it: a workflow that fires on a timer is one
+  nobody is watching when it goes wrong.
+- Community files: contributing, code of conduct, security policy, a pull
+  request template, issue forms and a Q&A discussion template. The bug form asks
+  for the row of `orthology_evidence.tsv` behind the call, which carries the
+  evidence state, the adaptive floors, the confidence tier and the risk flags
+  that explain what Recore decided and why.
 - The README is a front door rather than a manual: 891 lines to 155. Everything
   it duplicated now lives only in the documentation, and everything it was the
   only copy of was moved there first.
@@ -147,6 +160,15 @@ and Recore uses semantic versioning.
 - The pipeline diagram, the benchmark results and its figure moved into the
   documentation, which had described the benchmark without ever reporting a
   number.
+- CI runs once per commit instead of twice. `push` fired on every branch, so a
+  commit on a branch with a pull request open ran the whole suite twice against
+  itself; it is restricted to `main` now, with a concurrency group that cancels
+  a superseded pull request run.
+- Every workflow declares its token permissions and every job a timeout. The
+  default is six hours, and the question that matters is not how long a job
+  takes but how long a stuck one takes to say so.
+- The first-party actions are on one major across all nine workflows; three were
+  still on `checkout@v5` and `artifact@v4`.
 - The README links the documentation pages in the repository rather than the
   published site, and the report's documentation button points at the same
   place. The site is built and deployed on every push to main, but GitHub Pages
