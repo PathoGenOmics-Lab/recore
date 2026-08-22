@@ -1505,55 +1505,12 @@ const dark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').
 document.documentElement.setAttribute('data-theme',stored||(dark?'dark':'light'));\
 }catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script>";
 
-/// Remove `name="..."` from the opening tag of an inline SVG.
-fn strip_svg_attribute(tag: &str, name: &str) -> String {
-    let needle = format!("{name}=\"");
-    let Some(start) = tag.find(&needle) else {
-        return tag.to_string();
-    };
-    let value_start = start + needle.len();
-    let Some(offset) = tag[value_start..].find('"') else {
-        return tag.to_string();
-    };
-    let mut out = String::with_capacity(tag.len());
-    out.push_str(&tag[..start]);
-    out.push_str(tag[value_start + offset + 1..].trim_start());
-    out.trim_end().to_string()
-}
-
-/// The exported artwork sits inside a 2048x1153 canvas on an opaque white plate,
-/// and the wordmark itself only covers the middle 65%. Inlined as-is the mark
-/// renders two thirds the size of the box it is given, which is why it read as a
-/// stamp rather than a brand.
-///
-/// Bounding box of every drawn element except the plate, measured from the
-/// rendered asset. Only applied when the source still declares the viewBox it was
-/// measured against, so replacing the logo falls back to the untouched artwork.
-const LOGO_SOURCE_VIEWBOX: &str = "0 0 2048 1153";
-const LOGO_CONTENT_VIEWBOX: &str = "216 159 1717 810";
-const LOGO_PLATE_PATH: &str =
-    "<path transform=\"translate(0,0)\" fill=\"rgb(255,255,255)\" d=\"M 0 0 L 2048 0 L 2048 1153 L 0 1153 L 0 0 z\"/>";
-
-/// The exported logo carries a fixed pixel size and `preserveAspectRatio="none"`,
-/// which lets any CSS box stretch it out of shape. Drop those, crop the canvas to
-/// the wordmark and drop the white plate so the mark fills whatever box it is
-/// given and inherits the page background.
+/// The mark ships web-ready: `tools/make_logo_variants.py` crops it to the
+/// artwork, strips the export's fixed size and `preserveAspectRatio="none"`, and
+/// writes the dark-background twin whose inks the stylesheet applies. So there is
+/// nothing to do here but hand it to the page.
 fn report_logo_svg() -> String {
-    let body = REPORT_LOGO.replacen(LOGO_PLATE_PATH, "", 1);
-    let Some(tag_end) = body.find('>') else {
-        return body;
-    };
-    let (tag, rest) = body.split_at(tag_end);
-    let mut opening = tag.to_string();
-    for attr in ["width", "height", "preserveAspectRatio", "style"] {
-        opening = strip_svg_attribute(&opening, attr);
-    }
-    opening = opening.replace(
-        &format!("viewBox=\"{LOGO_SOURCE_VIEWBOX}\""),
-        &format!("viewBox=\"{LOGO_CONTENT_VIEWBOX}\""),
-    );
-    opening.push_str(" preserveAspectRatio=\"xMidYMid meet\" focusable=\"false\"");
-    format!("{opening}{rest}")
+    REPORT_LOGO.trim().to_string()
 }
 
 fn mechanism_color(name: &str) -> &'static str {

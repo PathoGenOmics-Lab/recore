@@ -5,7 +5,8 @@ hide:
 
 <div class="hero" markdown>
 
-![Recore](assets/recore_logo.svg){ .hero-logo }
+![Recore](assets/recore_logo.svg){ .hero-logo .on-light }
+![Recore](assets/recore_logo_dark.svg){ .hero-logo .on-dark }
 
 # Recore
 

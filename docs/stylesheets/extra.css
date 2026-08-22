@@ -29,6 +29,8 @@
   padding: 0.2rem 0.4rem 0.2rem 0;
 }
 
+/* The header bar is the same indigo in both schemes, and neither page variant
+   reads against it, so the mark keeps the light plate there. */
 .md-header__button.md-logo img {
   width: auto;
   height: 1.5rem;
@@ -103,14 +105,13 @@
   margin: 0 auto;
 }
 
-/* The counters of the e and the o are drawn in white so they read as holes on
-   paper. On a dark page they read as white blobs instead, so the mark gets the
-   light plate it was drawn against. */
-[data-md-color-scheme="slate"] .hero .hero-logo {
-  box-sizing: content-box;
-  background: #ffffff;
-  border-radius: 0.6rem;
-  padding: 1rem 1.4rem;
+/* Two files rather than one filtered file: three of the mark's six inks sit
+   below 2.3:1 against a dark page, which no filter fixes without flattening the
+   ramp. The site's theme is a toggle, not the OS preference, so the swap is
+   keyed on Material's scheme attribute rather than on a media query. */
+[data-md-color-scheme="default"] .hero .on-dark,
+[data-md-color-scheme="slate"] .hero .on-light {
+  display: none;
 }
 
 .md-typeset .hero h1 {
