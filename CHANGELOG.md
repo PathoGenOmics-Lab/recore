@@ -136,6 +136,12 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- The documentation site takes the design the other PathoGenOmics tools use: a
+  neutral masthead with a hairline instead of a saturated band, one accent colour
+  that only ever means "this is a link or a control", hairlines instead of boxes
+  on code, tables and callouts, headings that carry the structure, and the four
+  nav groups always open as small-caps landmarks. IBM Plex, breadcrumbs, and edit
+  and view actions on every page.
 - Dark-background variants of the wordmark and the benchmark figure. Three of
   the mark's six inks sit between 1.8:1 and 2.3:1 against GitHub's dark canvas,
   under the 3:1 WCAG asks of a non-text graphic, and the figure was a white slab.
