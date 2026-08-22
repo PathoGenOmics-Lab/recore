@@ -13,7 +13,7 @@ trail that explains every corrected cell.
 
 <div class="rc-hero__actions" markdown>
 [Start here](getting-started/tutorial.md){ .md-button .md-button--primary }
-[Install](getting-started/installation.md){ .md-button }
+[See a real report](assets/example-report.html){ .md-button target=_blank }
 </div>
 
 </div>
