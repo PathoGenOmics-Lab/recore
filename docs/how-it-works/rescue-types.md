@@ -8,7 +8,7 @@ Examples below show the core `rescue_report.tsv` columns; see [Output files](../
 
 ## DROPPED
 
-**What it means:** The gene is physically present in the genome but was removed by Panaroo during graph cleaning. Panaroo's graph-based cleaning can over-aggressively trim genes that are divergent or connected to fragmented paths in the de Bruijn graph.
+**What it means:** The gene is physically present in the genome but is absent from the matrix, typically because graph cleaning dropped it or because annotation transfer never placed it. Panaroo's graph-based cleaning can over-aggressively trim genes that are divergent or connected to fragmented paths in the de Bruijn graph.
 
 **Evidence:** Full-coverage hit (≥80%) with no overlapping GFF gene assigned to a different cluster.
 

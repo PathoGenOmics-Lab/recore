@@ -1,0 +1,69 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1120' height='520' viewBox='0 0 1120 520'>
+<rect width='100%' height='100%' fill='white'/>
+<style>text{font-family:DejaVu Sans,Arial,sans-serif;fill:#101828}.title{font-size:22px;font-weight:700}.subtitle{font-size:13px;fill:#475467}.section{font-size:12px;font-weight:700;letter-spacing:.08em;fill:#667085}.label{font-size:13px;font-weight:700}.small{font-size:12px}.tiny{font-size:11px}.muted{fill:#667085}.white{fill:white}.strong{font-weight:700}.row{fill:#f8fafc;stroke:#eaecf0;stroke-width:1}.balanced{fill:#ecfdf3;stroke:#079455;stroke-width:1.5}</style>
+<text x='42' y='38' class='title'>Synthetic benchmark: matrix policy trade-off</text>
+<text x='42' y='61' class='subtitle'>Full-length false absences should be rescued; partial pseudogenes should remain audit-only in the binary matrix.</text>
+<text x='42' y='101' class='section'>GROUND TRUTH</text>
+<rect x='42' y='115' width='1036' height='82' rx='12' fill='#f8fafc' stroke='#eaecf0'/>
+<rect x='70' y='139' width='16' height='16' rx='4' fill='#079455'/>
+<text x='96' y='148' class='label'>5 intact false absences</text>
+<text x='96' y='170' class='small muted'>binary positives: should become present</text>
+<rect x='420' y='139' width='16' height='16' rx='4' fill='#dc6803'/>
+<text x='446' y='148' class='label'>2 partial pseudogene traps</text>
+<text x='446' y='170' class='small muted'>biological evidence, not clean binary presence</text>
+<rect x='802' y='139' width='16' height='16' rx='4' fill='#98a2b3'/>
+<text x='828' y='148' class='label'>8 true absences</text>
+<text x='828' y='170' class='small muted'>binary negatives: should stay absent</text>
+<text x='42' y='235' class='section'>POLICY PERFORMANCE</text>
+<text x='70' y='262' class='tiny muted'>Policy</text>
+<text x='350' y='262' class='tiny muted'>Precision</text>
+<text x='545' y='262' class='tiny muted'>Recall</text>
+<text x='740' y='262' class='tiny muted'>F1</text>
+<text x='940' y='262' class='tiny muted'>Confusion</text>
+<rect x='42' y='278' width='1036' height='54' rx='12' class='row'/>
+<text x='70' y='301' class='label'>strict</text>
+<text x='70' y='320' class='tiny muted'>annotation/synteny-grade only</text>
+<rect x='350' y='299' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='350' y='299' width='0.0' height='14' rx='6' fill='#d0d5dd'/>
+<text x='486' y='310' class='tiny strong'>NA</text>
+<rect x='545' y='299' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='545' y='299' width='0.0' height='14' rx='6' fill='#d92d20'/>
+<text x='681' y='310' class='tiny strong'>0.00</text>
+<rect x='740' y='299' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='740' y='299' width='0.0' height='14' rx='6' fill='#d92d20'/>
+<text x='876' y='310' class='tiny strong'>0.00</text>
+<text x='940' y='304' class='small strong'>TP 0  FP 0  FN 5</text>
+<text x='940' y='322' class='tiny muted'>TN 10</text>
+<rect x='42' y='346' width='1036' height='54' rx='12' class='balanced'/>
+<text x='70' y='369' class='label'>balanced</text>
+<text x='70' y='388' class='tiny muted'>paper-ready binary matrix</text>
+<rect x='190' y='358' width='104' height='22' rx='11' fill='#079455'/>
+<text x='242' y='373' text-anchor='middle' class='tiny white'>recommended</text>
+<rect x='350' y='367' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='350' y='367' width='126.0' height='14' rx='6' fill='#079455'/>
+<text x='486' y='378' class='tiny strong'>1.00</text>
+<rect x='545' y='367' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='545' y='367' width='126.0' height='14' rx='6' fill='#079455'/>
+<text x='681' y='378' class='tiny strong'>1.00</text>
+<rect x='740' y='367' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='740' y='367' width='126.0' height='14' rx='6' fill='#079455'/>
+<text x='876' y='378' class='tiny strong'>1.00</text>
+<text x='940' y='372' class='small strong'>TP 5  FP 0  FN 0</text>
+<text x='940' y='390' class='tiny muted'>TN 10</text>
+<rect x='42' y='414' width='1036' height='54' rx='12' class='row'/>
+<text x='70' y='437' class='label'>sensitive</text>
+<text x='70' y='456' class='tiny muted'>exploratory, accepts partial evidence</text>
+<rect x='350' y='435' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='350' y='435' width='126.0' height='14' rx='6' fill='#079455'/>
+<text x='486' y='446' class='tiny strong'>1.00</text>
+<rect x='545' y='435' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='545' y='435' width='126.0' height='14' rx='6' fill='#079455'/>
+<text x='681' y='446' class='tiny strong'>1.00</text>
+<rect x='740' y='435' width='126' height='14' rx='6' fill='#eaecf0'/>
+<rect x='740' y='435' width='126.0' height='14' rx='6' fill='#079455'/>
+<text x='876' y='446' class='tiny strong'>1.00</text>
+<text x='940' y='440' class='small strong'>TP 5  FP 0  FN 0</text>
+<text x='940' y='458' class='tiny muted'>TN 10</text>
+<line x1='42' x2='1078' y1='494' y2='494' stroke='#eaecf0'/>
+<text x='42' y='512' class='tiny muted'>Generated by benchmarks/synthetic_benchmark.py. The balanced policy preserves disrupted homologues in the multistate audit instead of the binary matrix.</text>
+</svg>

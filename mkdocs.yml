@@ -153,6 +153,7 @@ nav:
       - how-it-works/algorithm.md
       - how-it-works/evidence-states.md
       - how-it-works/rescue-types.md
+      - how-it-works/evolutionary-events.md
       - how-it-works/limits.md
   - About:
       - about/changelog.md

@@ -1,5 +1,30 @@
 # Algorithm
 
+## The pipeline at a glance
+
+```mermaid
+flowchart LR
+    A["Inputs<br/>PA matrix + pan-ref FASTA + assemblies + optional GFF"] --> B["Find matrix gaps"]
+    B --> C["Batch minimap2<br/>primary indexed target"]
+    C --> C2["Exact no-CDS pass<br/>GFF + synteny mode"]
+    C2 --> D["Classify evidence<br/>full, missing CDS, split, fragment, pseudogene, paralog"]
+    D --> E{"Orthology support?"}
+    E -->|annotation / synteny / alias| F["Accepted evidence"]
+    E -->|incompatible context| G["Rejected audit-only"]
+    F --> H{"Matrix policy"}
+    H -->|strict / balanced / sensitive| I["Corrected binary matrix"]
+    F --> J["Multistate matrix<br/>and evidence tables"]
+    G --> J
+    J --> L["Optional audits<br/>reference genome + NSC + tree + mobile elements"]
+    I --> K["Reports + optional corrected GFF"]
+    L --> K
+    J --> K
+```
+
+The corrected binary matrix is not the only output. Recore also keeps the
+evidence trail that explains why a cell was corrected, retained as audit-only,
+or rejected.
+
 ## Overview
 
 Recore rescues falsely absent genes from pangenome matrices produced by Panaroo (or Roary). It takes a gene presence/absence CSV, the pan-genome reference FASTA, individual genome FASTAs, and (optionally) GFF annotations, then identifies genes that are physically present in genomes but missing from the matrix.
@@ -237,7 +262,7 @@ Optional (`--nscluster`). Detects Panaroo clusters that are distinct at the prot
 
 4. **Clustering**: Union-Find with path compression and union-by-rank. Pairs above threshold (default 0.8) are merged.
 
-5. **Representative selection**: Within each merged group, the cluster with highest prevalence becomes the representative. Others are removed from the output, and their presences are unioned into the representative.
+5. **Representative selection**: Within each merged group, the cluster with highest prevalence becomes the representative. Others are removed from the output, and their presences are unioned into the representative. The union is taken over the **corrected** matrix, not the input one, so the representative can receive merged presence support that Recore itself rescued in a member cluster.
 
 ### MMseqs2 engine (optional, exact)
 

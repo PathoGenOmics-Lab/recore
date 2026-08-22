@@ -2,6 +2,14 @@
 
 All output files are written to the directory specified by `-o` (default: `recore_output/`).
 
+Two guarantees hold for every table here. TSV outputs are written as
+**single-line records**: tabs, line breaks and null characters inside
+annotation-derived text are normalised to spaces, so a GFF product, note or
+alias cannot corrupt a downstream table. And when an **output directory is
+reused**, Recore clears the known optional reports before writing the new run,
+so a stale `reference_*`, rejected-evidence, NSC, synteny or corrected-GFF file
+from a previous run cannot be mistaken for a current result.
+
 ---
 
 ## rescue_report.tsv
@@ -102,7 +110,7 @@ or paralog candidate.
 | `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
 | `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `MISSING_CDS_UNVALIDATED`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
 | `matrix_action` | `correct_presence` for accepted rescues, `audit_only_quality` for accepted evidence that fails the adaptive guard, `audit_only_policy` for accepted evidence excluded by policy, or `audit_only` for rejected candidates |
-| `publication_status` | Conservative publication-level interpretation of the evidence |
+| `publication_status` | Conservative publication-level interpretation: whether the cluster can be justified as `present`, `partial/disrupted`, `possible paralog`, or `not supported` |
 | `evidence_strength` | `high`, `moderate`, `review`, or `low` |
 | `recommended_wording` | Short text for how to describe the event in downstream tables/manuscripts |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
@@ -198,7 +206,7 @@ corrected binary state for each cluster.
 | `carrier_monophyly`, `max_carrier_clade_fraction` | Whether all carrier tips form one pure carrier-only clade, and the largest carrier-only clade fraction |
 | `carrier_mrca_tips`, `carrier_mrca_purity` | Size and carrier purity of the smallest tree clade containing all carrier tips; low purity means a single-gain story would require many internal losses |
 | `molecular_mechanism` | Best conservative mechanism call: reference-derived allele, IS interruption, pseudogenization, fragmentation, duplication/paralog expansion, context shift, acquisition/insertion candidate, deletion/loss candidate, homoplastic/unstable signal, ancestral retention, or unresolved |
-| `mechanism_detail`, `support_level`, `evolutionary_signal_score`, `highlight_priority`, `recommended_wording` | Evidence summary, integrated prioritization, and publication-facing interpretation |
+| `mechanism_detail`, `support_level`, `evolutionary_signal_score`, `highlight_priority`, `recommended_wording` | Evidence summary, integrated prioritization, and publication-facing interpretation. With `--nscluster`, `mechanism_detail` also carries `nsc_representative` on the cluster that receives the merged support and `nsc_member_merged_into_representative` on each redundant member |
 | `cluster_component_id`, `cluster_component_size`, `cluster_component_role`, `cluster_component_relations`, `cluster_component_recommendation` | Connected-component context for split, annotation-matched, NSC, and paralog-linked clusters |
 | `is_interruption_supported`, `mobile_element_*` | Nearby mobile element signal. `mobile_element_source=sequence` comes from `--mobile-element-reference` alignments and is name-agnostic; `mobile_element_source=annotation` is the fallback from GFF labels/products/notes. IS calls are conservative and require sequence support or an insertion-sequence-like label within 250 bp of a fragmented/disrupted rescue |
 | `reference_event_class`, `target_reference_cluster`, `target_reference_gene` | Reference-derived event evidence when available |

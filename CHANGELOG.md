@@ -136,6 +136,17 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- The README is a front door rather than a manual: 891 lines to 155. Everything
+  it duplicated now lives only in the documentation, and everything it was the
+  only copy of was moved there first.
+- `docs/how-it-works/evolutionary-events.md`: how a mechanism is called. The
+  ten-step evidence ladder, the fifteen `molecular_mechanism` values with the
+  trigger for each and how to word it, and which calls are safe to highlight in
+  a manuscript versus which need a locus reviewed first. None of it was in the
+  documentation; the enum strings a reader greps for appeared nowhere at all.
+- The pipeline diagram, the benchmark results and its figure moved into the
+  documentation, which had described the benchmark without ever reporting a
+  number.
 - The README links the documentation pages in the repository rather than the
   published site, and the report's documentation button points at the same
   place. The site is built and deployed on every push to main, but GitHub Pages
