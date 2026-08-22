@@ -136,6 +136,11 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- The README links the documentation pages in the repository rather than the
+  published site, and the report's documentation button points at the same
+  place. The site is built and deployed on every push to main, but GitHub Pages
+  will not serve it while the repository is private on a free plan, so those
+  links were 404s.
 - The documentation site takes the design the other PathoGenOmics tools use: a
   neutral masthead with a hairline instead of a saturated band, one accent colour
   that only ever means "this is a link or a control", hairlines instead of boxes
