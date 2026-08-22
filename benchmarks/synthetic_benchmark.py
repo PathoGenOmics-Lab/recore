@@ -32,6 +32,36 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "recore_synthetic_benchmark"
 DEFAULT_METRICS = ROOT / "benchmarks" / "synthetic_benchmark_metrics.tsv"
 DEFAULT_PLOT = ROOT / "assets" / "synthetic_benchmark_precision_recall.svg"
+DEFAULT_PLOT_DARK = ROOT / "assets" / "synthetic_benchmark_precision_recall_dark.svg"
+
+# The plot is drawn once on paper colours and then recoloured for dark pages.
+# GitHub picks between the two with <picture media="(prefers-color-scheme: dark)">,
+# so the figure stops being a white slab on a dark README. Neutrals invert;
+# the semantic accents keep their hue and are lifted just enough to clear the
+# 4.5:1 they need against #0d1117.
+DARK_PALETTE = {
+    "white": "#0d1117",   # page
+    "#f8fafc": "#151b23",  # panel
+    "#ecfdf3": "#132d21",  # highlighted row
+    "#eaecf0": "#2a313c",  # hairlines and bar tracks
+    "#101828": "#e6edf3",  # body text
+    "#475467": "#a8b0ba",  # subtitle
+    "#667085": "#9aa4b0",  # muted labels
+    "#d0d5dd": "#4d5866",  # "not applicable" bar
+    "#98a2b3": "#8b95a3",  # true-absence swatch
+    "#079455": "#3fb950",  # good
+    "#7f56d9": "#a879f5",  # partial
+    "#dc6803": "#e8912a",  # weak
+    "#d92d20": "#f85149",  # bad
+}
+
+
+def recolour_for_dark(svg: str) -> str:
+    """Swap the paper palette for the dark one, longest keys first so that a
+    colour which is a prefix of another cannot be half-replaced."""
+    for old, new in sorted(DARK_PALETTE.items(), key=lambda kv: -len(kv[0])):
+        svg = svg.replace(f"'{old}'", f"'{new}'").replace(f":{old}", f":{new}")
+    return svg
 POLICIES = ("strict", "balanced", "sensitive")
 GENOMES = ("s1", "s2", "s3", "s4")
 
@@ -544,6 +574,11 @@ def parse_args() -> argparse.Namespace:
         help="Output SVG plot for README embedding.",
     )
     parser.add_argument(
+        "--plot-dark",
+        default=str(DEFAULT_PLOT_DARK),
+        help="Output SVG plot recoloured for dark backgrounds.",
+    )
+    parser.add_argument(
         "--skip-build",
         action="store_true",
         help="Use the existing target/debug/recore binary without running cargo build.",
@@ -574,9 +609,11 @@ def main() -> int:
 
     write_metrics(metrics, Path(args.metrics))
     render_svg(metrics, Path(args.plot))
+    Path(args.plot_dark).write_text(recolour_for_dark(Path(args.plot).read_text()))
 
     print(f"Wrote metrics: {args.metrics}")
     print(f"Wrote plot: {args.plot}")
+    print(f"Wrote dark plot: {args.plot_dark}")
     print(f"Workdir: {workdir}")
     return 0
 

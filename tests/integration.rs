@@ -249,9 +249,15 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(html_report.contains("id='genomeDetails'"));
     assert!(html_report.contains("id='overviewCanvas'"));
     assert!(html_report.contains("id='treeScaleBar'"));
-    // The logo ships cropped to the wordmark, without its opaque plate.
-    assert!(html_report.contains("viewBox=\"216 159 1717 810\""));
-    assert!(!html_report.contains("M 0 0 L 2048 0 L 2048 1153 L 0 1153 L 0 0 z"));
+    // The mark ships web-ready from tools/make_logo_variants.py: cropped to the
+    // artwork, and free of the export's fixed size and preserveAspectRatio="none",
+    // which would let any CSS box stretch it out of shape.
+    assert!(html_report.contains("viewBox=\"98 120 1857 854\""));
+    assert!(!html_report.contains("preserveAspectRatio=\"none\""));
+    assert!(!html_report.contains("sodipodi"));
+    // Nothing in the mark is painted white any more, so it needs no plate and
+    // reads as holes rather than blobs on a dark panel.
+    assert!(!html_report.contains("fill=\"rgb(255,255,255)\""));
     // The report has to stay openable from an offline results directory. Links to
     // the project are fine; loading a resource is not.
     for tag in ["<link", "<script", "<img"] {

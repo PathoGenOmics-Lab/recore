@@ -136,6 +136,25 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- The documentation site takes the design the other PathoGenOmics tools use: a
+  neutral masthead with a hairline instead of a saturated band, one accent colour
+  that only ever means "this is a link or a control", hairlines instead of boxes
+  on code, tables and callouts, headings that carry the structure, and the four
+  nav groups always open as small-caps landmarks. IBM Plex, breadcrumbs, and edit
+  and view actions on every page.
+- Dark-background variants of the wordmark and the benchmark figure. Three of
+  the mark's six inks sit between 1.8:1 and 2.3:1 against GitHub's dark canvas,
+  under the 3:1 WCAG asks of a non-text graphic, and the figure was a white slab.
+  The README picks between them with `<picture>` and `prefers-color-scheme`; the
+  documentation keys the swap on its own theme toggle instead, because that is
+  what the reader actually set; and the report, which inlines the mark, repaints
+  its inks in CSS rather than carrying a second copy of a 30 KB asset.
+- `tools/make_logo_variants.py` derives all of that from one source file: it
+  crops the export to the artwork, strips the editor metadata and the fixed size
+  and `preserveAspectRatio="none"` that let any CSS box stretch the mark, lifts
+  each ink to a contrast floor with its hue fixed, and writes the report's
+  override rules between markers so they cannot drift from the dark file.
+
 - Documentation site built with MkDocs Material, published from `docs/` to
   GitHub Pages. The four reference documents are now the deep half of a site
   with a landing page, installation, quick start, inputs, matrix policies, the
@@ -188,8 +207,8 @@ and Recore uses semantic versioning.
 - The tree scale bar chose its step from a quarter of the tree depth, which in a
   narrow pane rounded to a bar just under the display threshold, so no bar
   appeared at all.
-- In dark mode the white counters of the logo's `e` and `o` read as blobs rather
-  than as holes; they are repainted to the panel colour.
+- The wordmark's counters are real holes now rather than white paint, so the
+  mark sits on any background without a plate behind it.
 - The lineage strip beside the tree was blanked on every frame: `render()` called
   its draw function a second time with no arguments, after `renderTree()` had
   already drawn it with the correct window, which sized its canvas to 0 by 0.

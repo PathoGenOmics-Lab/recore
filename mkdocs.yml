@@ -13,54 +13,69 @@ copyright: Copyright &copy; PathoGenOmics Lab &middot; GPL-3.0
 
 theme:
   name: material
+  # The wordmark is 2.2:1 wide, so Material's square logo slot sets it in type
+  # too small to read. The stylesheet gives it the width it needs and swaps the
+  # light and dark files on the reader's chosen scheme, because three of the
+  # mark's inks fall under 3:1 on a black masthead.
   logo: assets/recore_logo.svg
   favicon: assets/recore_logo.svg
   language: en
   font:
-    text: Inter
-    code: JetBrains Mono
+    text: IBM Plex Sans
+    code: IBM Plex Mono
   icon:
     repo: fontawesome/brands/github
     edit: material/pencil
-    admonition:
-      note: material/dna
+  features:
+    # Fourteen pages in four groups fit in one sidebar, so they are all shown at
+    # once as always-open sections. `navigation.tabs` moves the groups into the
+    # header and leaves the sidebar showing only the group you are in, which on
+    # a site this size hides three quarters of the map to save nothing.
+    - navigation.sections
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    # A breadcrumb above each page title, so a reader arriving from search knows
+    # where they landed.
+    - navigation.path
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    # Numbered notes anchored inside a code block, so a long command can be
+    # explained flag by flag without repeating it underneath.
+    - content.code.annotate
+    - content.code.select
+    - content.tabs.link
+    # Abbreviations and links get a real tooltip instead of the browser's.
+    - content.tooltips
+    - content.action.edit
+    - content.action.view
+    - toc.follow
+  # Three states rather than two: the site follows the reader's system setting
+  # until they choose otherwise, and their choice is remembered. The masthead is
+  # neutral in both, so the page is one sheet with a hairline across it rather
+  # than a saturated band above the content.
   palette:
     - media: "(prefers-color-scheme)"
-      primary: custom
-      accent: custom
       toggle:
         icon: material/brightness-auto
         name: Switch to light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: custom
-      accent: custom
+      primary: white
+      accent: teal
       toggle:
-        icon: material/brightness-7
+        icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: custom
-      accent: custom
+      primary: black
+      accent: teal
       toggle:
-        icon: material/brightness-4
+        icon: material/brightness-auto
         name: Switch to system preference
-  features:
-    - navigation.tabs
-    - navigation.tabs.sticky
-    - navigation.sections
-    - navigation.top
-    - navigation.footer
-    - navigation.indexes
-    - navigation.tracking
-    - toc.follow
-    - search.suggest
-    - search.highlight
-    - search.share
-    - content.code.copy
-    - content.code.annotate
-    - content.tabs.link
-    - content.tooltips
 
 # Broken cross-references and dead anchors become warnings, which `mkdocs build
 # --strict` in CI turns into a failed build.

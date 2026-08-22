@@ -62,6 +62,28 @@ pip install -r requirements-docs.txt
 mkdocs serve
 ```
 
+`docs/assets/example-report.html` is the report the [Run report](../guide/report.md)
+page links to. It is the tutorial run's own output, so regenerate it whenever the
+viewer changes:
+
+```bash
+python3 benchmarks/make_tutorial_dataset.py --out tutorial_data
+recore -p tutorial_data/gene_presence_absence.csv \
+       -r tutorial_data/pan_genome_reference.fa \
+       -g tutorial_data/genomes -a tutorial_data/annotations \
+       --synteny --multi-allele --matrix-policy balanced \
+       --reference-genome L4_AS00401 --tree tutorial_data/species.tree \
+       --write-html-report -o tutorial_out/
+cp tutorial_out/recore_report.html docs/assets/example-report.html
+```
+
+The two logo variants and the report's dark-mode colour overrides all come from
+one source file, so regenerate those together rather than editing either by hand:
+
+```bash
+python3 tools/make_logo_variants.py
+```
+
 CI builds with `mkdocs build --strict`, so a broken internal link or a page
 missing from the nav fails the build rather than shipping a dead link.
 

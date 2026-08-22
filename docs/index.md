@@ -1,16 +1,20 @@
----
-hide:
-  - navigation
----
+<div class="rc-hero" markdown>
 
-<div class="hero" markdown>
-
-![Recore](assets/recore_logo.svg){ .hero-logo }
+![Recore](assets/recore_logo.svg#only-light){ .rc-wordmark }
+![Recore](assets/recore_logo_dark.svg#only-dark){ .rc-wordmark }
 
 # Recore
 
+<p class="rc-hero__lead">
 Post-hoc rescue, audit, and quality control of pangenome presence/absence
-matrices.
+matrices. Recovers false absences with sequence evidence, and keeps the evidence
+trail that explains every corrected cell.
+</p>
+
+<div class="rc-hero__actions" markdown>
+[Start here](getting-started/tutorial.md){ .md-button .md-button--primary }
+[See a real report](assets/example-report.html){ .md-button target=_blank }
+</div>
 
 </div>
 

@@ -9,6 +9,13 @@ co-author.
 recore ... --tree species.tree --write-html-report -o recore_output/
 ```
 
+[Open an example report](../assets/example-report.html){ .md-button .md-button--primary target=_blank }
+
+That one is the output of the [tutorial](../getting-started/tutorial.md) run:
+twelve genomes, twenty-four clusters, eleven planted false absences. It is the
+whole file, opened straight from this page, which is the point of it being
+self-contained.
+
 Without `--tree` the report is still written, but it is the run-details document
 only. The phylogeny, matrix and synteny workspace needs a tree, because the tree
 is what orders the rows.

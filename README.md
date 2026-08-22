@@ -1,5 +1,8 @@
 <div align="center">
-  <img src="assets/recore_logo.svg" alt="Recore logo" width="450">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/recore_logo_dark.svg">
+    <img src="assets/recore_logo.svg" alt="Recore" width="450">
+  </picture>
   <p><strong>Post-hoc rescue, audit, and quality control of pangenome presence/absence matrices.</strong></p>
 
   <p>
@@ -178,7 +181,10 @@ Recore includes a synthetic benchmark that creates known false absences, true
 absences, and partial pseudogenes, then computes precision/recall/F1 from the
 actual corrected matrices.
 
-![Synthetic benchmark precision/recall](assets/synthetic_benchmark_precision_recall.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/synthetic_benchmark_precision_recall_dark.svg">
+  <img src="assets/synthetic_benchmark_precision_recall.svg" alt="Synthetic benchmark precision/recall">
+</picture>
 
 Current synthetic benchmark:
 
