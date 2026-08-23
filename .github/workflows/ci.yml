@@ -1,23 +1,64 @@
 name: CI
 
+# The quality gate. Runs once on a pull request, and again on main after the
+# merge.
+#
+# `push` is restricted to main rather than firing on every branch. With it open,
+# every commit on a branch that has a pull request open ran the whole suite
+# twice against the same commit: two jobs where one answers the question, and
+# two notifications for one result. The cost is that a branch pushed without a
+# pull request is not checked, which is the right trade: nothing reaches main
+# except through a pull request, and the `pull_request` run is what reports on
+# that.
+
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A second push to a pull request makes the first run's answer irrelevant, so
+# stop it rather than pay for it. Runs on main are left alone: those record
+# whether a merged commit is sound, and a cancelled one records nothing.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# This job reads the repository, builds it and runs tests. It writes no comment,
+# label, release or commit. Without this block it would run with whatever the
+# repository default grants, which is more than that and grows silently if the
+# default is ever widened.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   test:
+    name: Build, test, clippy, fmt
     runs-on: ubuntu-latest
+    # The default is six hours. The distinction that matters is not how long a
+    # job takes but how long a stuck one takes to say so: this one runs in about
+    # two minutes, and the limit sits far above that so a cold cache is not
+    # mistaken for a hang.
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Install minimap2
         run: sudo apt-get update && sudo apt-get install -y minimap2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked --all-targets
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy (deny warnings)
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --all-targets
         env:
           # Fail instead of silently skipping the end-to-end test if the
-          # dependency is missing from the runner image.
+          # dependency is missing from the runner image. Without this the test
+          # returns early and the suite goes green having never run it, which is
+          # how it sat unexecuted for a long time.
           RECORE_REQUIRE_MINIMAP2: "1"

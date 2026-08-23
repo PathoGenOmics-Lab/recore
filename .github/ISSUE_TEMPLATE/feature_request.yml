@@ -1,0 +1,86 @@
+name: Feature request
+description: Suggest something Recore should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!TIP]
+        > If you are not sure whether Recore already does this, ask in
+        > [Q&A](https://github.com/PathoGenOmics-Lab/recore/discussions/categories/q-a) first. It is a shorter path to an answer than a feature
+        > request for something that turns out to be a flag, and Recore has a lot
+        > of flags: `--synteny`, `--multi-allele`, `--matrix-policy`,
+        > `--reference-genome`, `--tree`, `--nscluster` and
+        > `--mobile-element-reference` each change what the run is able to
+        > conclude.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >-
+        The analysis you are trying to carry out, and where Recore stops being
+        able to help. Describing the problem rather than the solution usually
+        leads somewhere better, and here it also matters for a specific reason:
+        Recore's central design choice is that sequence evidence is not
+        automatically presence. A request that would quietly turn more evidence
+        into presence calls will be judged against that, and knowing what you
+        need the numbers for is what decides whether the right answer is a new
+        policy, a new audit column, or nothing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which part this concerns
+      description: >-
+        A rough guess is fine. These match the areas the repository labels pull
+        requests by, so picking one is what routes the request rather than what
+        commits you to anything.
+      options:
+        - Command line and parameters
+        - Rescue, evidence classification, or synteny
+        - Matrix policies and the corrected matrix
+        - Pipeline outputs (the TSV and CSV tables)
+        - HTML run report and its viewer
+        - Benchmarks
+        - Documentation
+        - Packaging, releases, or CI
+        - Something else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: matrix-effect
+    attributes:
+      label: Would this change the corrected binary matrix
+      description: >-
+        Asked separately because it is the question that decides how carefully a
+        change has to be reviewed. Anything that adds a presence call to
+        `gene_presence_absence_recore.csv` changes published core-genome counts
+        downstream of it; anything that only adds a column to an audit table
+        does not.
+      options:
+        - "No: audit output, report, or documentation only"
+        - "Yes: it would change which cells are corrected"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: >-
+        Any workaround you use now, whether that is post-processing
+        `orthology_evidence.tsv` yourself or another tool that does this. Both
+        help judge how the feature should behave, and a workaround that already
+        works is often the shape the feature should take.

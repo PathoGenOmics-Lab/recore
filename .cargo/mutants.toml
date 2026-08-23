@@ -1,0 +1,177 @@
+# Mutation testing configuration.
+#
+# `cargo mutants` changes the source (flips a comparison, replaces a function
+# body with a default) and reports whether the test suite notices. A surviving
+# mutant is a piece of logic no test distinguishes: either a test is missing, or
+# the logic does not do anything, and both are worth knowing.
+#
+# It is advisory. A surviving mutant is a question, not a defect, and it never
+# fails CI.
+
+# The code that decides what the corrected matrix says.
+#
+# A mutant in `rescue` changes which absences get called false and on what
+# evidence: the ORF check that says a hit is a pseudogene, the synteny check
+# that says a hit sits where the gene belongs, the conflict resolution that
+# picks between two clusters claiming the same locus. A mutant in `parser`
+# changes what counted as an absence in the first place. A mutant in `search`
+# changes which minimap2 hits clear the identity and coverage floors, which is
+# the same decision one step earlier. A mutant in `nscluster` changes which
+# clusters get merged, and therefore how large the accessory genome looks.
+# Those are the numbers that end up in a paper.
+#
+# `pipeline/quality.rs` is here for the reason a module usually gets left out:
+# almost nothing tests it. Three tests call into it, two of its own and one in
+# pipeline/tests.rs, against 150 mutants, and what it decides is whether a
+# rescue is allowed to change the matrix at all. Least-tested and most
+# consequential is exactly the combination mutation testing exists to expose.
+#
+# `pipeline/cellcodec.rs` sits under the HTML report, and report code is
+# normally out of scope as formatting. This is not formatting. It is a varint,
+# complement and bitset encoding, and a flipped comparison in it changes which
+# genomes the explorer draws as rescued while every file on disk stays right,
+# which is the worst way for a bug to present itself.
+examine_globs = [
+    "src/rescue/**/*.rs",
+    "src/rescue.rs",
+    "src/parser.rs",
+    "src/search.rs",
+    "src/nscluster.rs",
+    "src/pipeline/evolution.rs",
+    "src/pipeline/quality.rs",
+    "src/pipeline/cellcodec.rs",
+]
+
+# What is deliberately not examined, and why:
+#
+#   * `pipeline/output.rs`, `relationships.rs`, `pipeline/reference_audit.rs`
+#     build reports. relationships.rs says so in its own module doc: it "does
+#     not change the corrected matrix". Mutants there move columns and labels
+#     around, and the suite is not designed to pin a report down cell by cell.
+#   * `pipeline.rs` is orchestration. `run` needs real genome FASTAs, a real
+#     GFF set and minimap2, so no test that runs here could kill a mutant in it.
+#   * `cli.rs`, `types.rs`, `main.rs` are clap derive, index newtypes, and a
+#     main that calls into the library.
+
+# Test code. Mutating a test file asks nothing about the tool. rescue/tests.rs
+# is matched by the rescue glob above and has to be named; pipeline/tests.rs is
+# not matched today and is named anyway, so that widening the globs later does
+# not quietly start mutating the tests.
+exclude_globs = [
+    "src/rescue/tests.rs",
+    "src/pipeline/tests.rs",
+]
+
+# Functions that shell out to another program, or that only run once one has.
+#
+# `batch_search` builds a minimap2 index and streams PAF back from a child
+# process; `search_mobile_element_reference` reaches it in turn;
+# `run_nscluster_mmseqs2` does the same with mmseqs2, which is not even
+# installed in CI. The only test that drives any of this is the end-to-end test
+# in tests/integration.rs, which does not run here (see the test arguments
+# below), so a mutant in these functions could not be killed by anything on
+# offer. Leaving them in scope would fill the report with survivors that nothing
+# can ever catch, and those hide the ones that mean something.
+#
+# The PAF parsing that happens once the child process has spoken is a different
+# matter and stays in scope: `parse_paf_line`, `hit_from_paf_fields` and the
+# identity, coverage and score arithmetic are pure functions with sixteen tests
+# behind them.
+#
+# The three `write_*` functions are TSV writers in evolution.rs. Their inputs
+# are the classifications above, which are examined; what the writers add is
+# column order and formatting.
+#
+# `load_phylo_tree` is here for a smaller reason: strip out `fs::read_to_string`
+# and the two warnings about unmatched tips and nothing is left of it. The work
+# it delegates to, `NewickParser::parse` and `resolve_phylo_tips`, stays in
+# scope and has tests.
+exclude_re = [
+    "batch_search",
+    "search_mobile_element_reference",
+    "run_nscluster_mmseqs2",
+    "load_phylo_tree",
+    "write_evolutionary_events",
+    "write_cluster_locus_contexts",
+    "write_cluster_synteny_blocks",
+]
+
+# Two decisions, both about what a single mutant is allowed to cost.
+#
+# `--lib` runs the 142 in-crate unit tests and nothing else. The end-to-end test
+# in tests/integration.rs is the only test that needs minimap2: it skips itself
+# when minimap2 is not on PATH, unless RECORE_REQUIRE_MINIMAP2 is set, which is
+# what CI does so that a runner image missing the dependency fails loudly
+# instead of passing quietly. None of that belongs in a mutation run. It would
+# mean installing minimap2 and paying a whole pipeline, index build included,
+# once per mutant, and it would make the timeout depend on how fast an external
+# aligner feels today. So minimap2 is simply not part of this: the job that runs
+# mutants installs nothing and leaves RECORE_REQUIRE_MINIMAP2 unset, because
+# here the test is out of scope on purpose rather than skipped by accident.
+# (`cargo mutants` still compiles the integration test as part of building the
+# targets; compiling it costs nothing and running it is what `--lib` prevents.)
+# The price of leaving it out is paid in the exclusions above, which name the
+# code that only the end-to-end test can reach.
+#
+# The `--skip` is one test, and it is worth naming. The unit suite takes 13.5
+# seconds, of which 13.47 belong to
+# `cellcodec::tests::payload_stays_small_for_a_realistic_pangenome`: it encodes
+# 30,000 clusters over 10,000 genomes in a debug build to prove the explorer
+# payload stays under twelve megabytes. Without it the same 141 tests finish in
+# 0.07 seconds. Multiplied by every mutant that one test is the difference
+# between a mutant costing about fifteen seconds and about 1.4, which is the
+# difference between a run that fits in CI and one that does not.
+#
+# What that costs: correctness is untouched, the other six tests round-trip
+# every mode, and one of them, `alternating_cluster_falls_back_to_bitset`, also
+# pins the bitset fallback by size at 2,000 genomes. What goes away with the
+# skip is the only check that the economy still holds at real scale, 10,000
+# genomes by 30,000 clusters, where sparse and complement have to pay for
+# themselves. A mutant that keeps the round trip honest and only makes the
+# encoding fatter can survive here, so a survivor in `encode_set` or
+# `sparse_len` is worth re-running against the whole suite by hand before it is
+# believed.
+additional_cargo_test_args = [
+    "--lib",
+    "--",
+    "--skip",
+    "payload_stays_small_for_a_realistic_pangenome",
+]
+
+# With the size guard skipped the unit tests finish in under a tenth of a
+# second, so anything still running after a minute is a mutant that made the
+# code loop, not one being tested.
+timeout_multiplier = 5.0
+minimum_test_timeout = 60
+
+# Measured on this scope rather than guessed, because the workflow's shard count
+# is derived from it: `cargo mutants --list` reports 1717 mutants, spread as
+# evolution 489, rescue.rs 263, parser 254, quality 150, nscluster 131,
+# rescue/synteny 125, rescue/gff 78, cellcodec 73, search 66, and the rest of
+# rescue below forty each. A mutant costs about 1.4 seconds on a warm laptop,
+# measured serially. .github/workflows/mutants.yml splits that eight ways for
+# the runner.
+#
+# There is no survivor inventory here yet, and there should be. get_MNV's copy
+# of this file lists its survivors one by one, sorted into unreachable,
+# equivalent, and genuine gap, and that list is worth more than all the config
+# above it. Writing recore's takes a full run, and the only run so far was
+# stopped part way through, at 443 of the 1717. What it had finished by then:
+#
+#   * parser.rs, all 254 mutants: 61 survive.
+#   * nscluster.rs, all 131: 39 survive. The MinHash internals survive nearly as
+#     a block, sketching, band hashing and candidate pairs alike, because the
+#     twelve tests there work at the extremes, identical sequences against very
+#     different ones, and both verdicts hold whatever the sketch geometry does.
+#     The clearest of them: replacing the `/` in
+#     `const ROWS_PER_BAND: usize = SKETCH_SIZE / NUM_BANDS` with `%` leaves zero
+#     rows per band, and nothing notices.
+#   * rescue.rs, 58 of its 263: 27 survive.
+#   * Four mutants hit the timeout. Against a suite that finishes in 0.07
+#     seconds, a mutant still running at sixty is one that made the code loop,
+#     which is the timeout above earning its place.
+#
+# So the first full report will be long rather than empty. Dispatch the
+# workflow, read the summary, and replace this with what it found: which
+# survivors are unreachable from `--lib`, which are equivalent, and which are
+# tests worth writing.

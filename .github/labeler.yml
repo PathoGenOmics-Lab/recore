@@ -1,0 +1,150 @@
+# Which part of the project a pull request touches, worked out from the files it
+# changes. The labels exist so that "what is broken in the report viewer" is a
+# question the issue list can answer; applying them by hand is how they stop
+# being applied.
+#
+# The labels these rules emit, so they can be created in Settings -> Labels with
+# a colour and a description chosen on purpose instead of whatever the first
+# automatic application leaves behind:
+#
+#   cli            the binary's own surface: arguments, help text, entry point
+#   matrix         reading, merging and describing the presence/absence matrix
+#   rescue         the rescue calls themselves and the alignment evidence behind them
+#   pipeline       the run: staging, quality tiers, evolutionary events, reference audit
+#   report         what the HTML and Markdown reports are built out of
+#   viewer         the JavaScript and CSS that ship inside the HTML report
+#   tests          the test suites
+#   benchmarks     the Python benchmark harnesses and the numbers they produce
+#   documentation  the MkDocs site, the README, the changelog, the figures
+#   packaging      what a release is made of: crate metadata, lockfile, licence
+#   ci             everything under .github, plus the repository's own scripts
+#
+# The issue forms carry their own labels, so this file only has to cover pull
+# requests.
+#
+# Format is actions/labeler v5, which is not v4's: a bare list of globs under
+# the label name silently matches nothing.
+
+cli:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/main.rs"
+          - "src/lib.rs"
+          - "src/cli.rs"
+
+# Everything that turns a Panaroo run into the table Recore works on, and
+# everything that reports on the table afterwards without correcting it.
+# nscluster.rs shells out to mmseqs, which makes it as much an integration point
+# as a matrix module, but a change there is nearly always about what ends up
+# merged, so it lives here.
+matrix:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/parser.rs"
+          - "src/types.rs"
+          - "src/nscluster.rs"
+          - "src/relationships.rs"
+
+# search.rs is the minimap2 call and the PAF it parses. It is filed under rescue
+# rather than on its own because the hits exist for one reason: they are the
+# evidence a rescue decision is made from, and a change to either side is
+# usually a change to both.
+rescue:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/rescue.rs"
+          - "src/rescue/**"
+          - "src/search.rs"
+
+# The pipeline proper, minus the parts that exist to produce the report. Those
+# are listed under `report` and `viewer` instead, so a pull request that only
+# touches the viewer does not arrive claiming it changed how the run decides
+# anything.
+pipeline:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/pipeline.rs"
+          - "src/pipeline/evolution.rs"
+          - "src/pipeline/quality.rs"
+          - "src/pipeline/reference_audit.rs"
+
+# cellcodec.rs is here rather than under `pipeline` because it exists only to
+# make the matrix small enough for the report to open. assets/recore_logo.svg is
+# here because output.rs inlines it with include_str!, so editing that file
+# changes the binary, not just a picture in the docs.
+report:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/pipeline/output.rs"
+          - "src/pipeline/cellcodec.rs"
+          - "assets/recore_logo.svg"
+          - "docs/assets/example-report.html"
+
+# The only JavaScript in the repository. It is compiled into the binary with
+# include_str! and runs in whatever browser opens the report, which means it
+# gets none of the compiler's help and all of the browser's variety, so it is
+# worth being able to see at a glance that a pull request went near it.
+viewer:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/pipeline/report_assets/**"
+
+# The two tests.rs files are the in-crate suites; tests/ is the end-to-end one,
+# which needs minimap2 on PATH and skips itself without it unless
+# RECORE_REQUIRE_MINIMAP2 is set, as CI sets it.
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tests/**"
+          - "src/pipeline/tests.rs"
+          - "src/rescue/tests.rs"
+
+# The Python harnesses and the metric tables they write. The tables are checked
+# in on purpose, so a pull request that moves the numbers shows the movement in
+# the diff rather than in a claim about a run nobody else made.
+benchmarks:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "benchmarks/**"
+          - "assets/synthetic_benchmark*.svg"
+          - "docs/assets/synthetic_benchmark*.svg"
+
+# assets/** is here wholesale because every file in it is a figure that shows up
+# in the site, the README or the report. The two that also mean something else,
+# the inlined logo and the benchmark plots, pick up their second label from the
+# rules above; a pull request carrying both labels is telling the truth.
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "assets/**"
+          - "mkdocs.yml"
+          - "README.md"
+          - "CHANGELOG.md"
+          - "requirements-docs.txt"
+
+# No CITATION.cff and no archived record to keep in step with either, so unlike
+# other repositories in the lab there is nothing else to list here. The lockfile
+# counts: release builds are `--locked`, so changing it changes what ships.
+packaging:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "Cargo.toml"
+          - "Cargo.lock"
+          - ".github/workflows/release.yml"
+          - "LICENSE"
+
+# Everything under .github, not a list of the files there. Naming them one by
+# one would leave `.github/labeler.yml` itself uncovered, so the pull request
+# adding a rule to this file would arrive with no label, which is a small thing
+# that says exactly how such a list would age. tools/ joins it: those scripts
+# maintain the repository rather than build anything Recore ships.
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "tools/**"
+          # .cargo/mutants.toml is the scope file mutants.yml reads. Without
+          # this, a pull request changing what mutation testing covers arrives
+          # with no label, which is the gap the wildcard above exists to close.
+          - ".cargo/**"

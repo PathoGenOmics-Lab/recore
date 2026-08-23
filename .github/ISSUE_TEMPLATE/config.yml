@@ -1,0 +1,37 @@
+# Blank issues stay available. The forms cover the reports that arrive most
+# often, but a small tool gets questions that fit no form, and having nowhere to
+# put them is worse than an unstructured issue.
+blank_issues_enabled: true
+
+# The documentation links point at the markdown files in this repository rather
+# than at the built site. The MkDocs site exists and CI builds it on every push
+# to main, but GitHub Pages needs a public repository or a paid plan, and this
+# repository is private on the free plan, so the published URL would be a dead
+# link on the busiest page in the tracker. GitHub renders these files in place,
+# so the links work today and can be swapped for the site URL the day Pages is
+# available.
+contact_links:
+  - name: Ask a question
+    url: https://github.com/PathoGenOmics-Lab/recore/discussions/categories/q-a
+    about: >-
+      Questions about how to run it, or about why a cell came out the way it did.
+      Answers there get marked as answers, so the next person finds them.
+  - name: Documentation
+    url: https://github.com/PathoGenOmics-Lab/recore/tree/main/docs
+    about: The tutorial, the parameter reference, every output column, and the run report.
+  - name: Why a cell with evidence is still absent
+    url: https://github.com/PathoGenOmics-Lab/recore/blob/main/docs/guide/matrix-policies.md
+    about: >-
+      Worth a look first. Recore separates sequence evidence from presence on
+      purpose, and this page says which evidence each policy lets into the binary
+      matrix and which stays audit-only.
+  - name: Inputs and name matching
+    url: https://github.com/PathoGenOmics-Lab/recore/blob/main/docs/getting-started/inputs.md
+    about: >-
+      Read this before reporting a run that found nothing. Matrix columns that do
+      not match a genome FASTA or GFF stem are where most failed runs come from.
+  - name: Report a security vulnerability
+    url: https://github.com/PathoGenOmics-Lab/recore/security/policy
+    about: >-
+      Please report vulnerabilities privately by email rather than in a public
+      issue. The policy says what to send.

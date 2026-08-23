@@ -1,0 +1,97 @@
+name: Close abandoned issues
+
+# Marks issues nobody has touched in three months, and closes them a month after
+# that if still nothing. The point is not tidiness: an issue list where half the
+# entries are questions someone stopped caring about is a list nobody reads, and
+# then the real reports get missed too.
+#
+# This is the only scheduled workflow here, and it is deliberate. Everything else
+# runs on a push, a pull request or by hand, because a workflow that fires on a
+# timer is one nobody is watching when it goes wrong. A stale sweep has nothing
+# to hang off except time, so it gets the exception rather than the rule getting
+# dropped.
+#
+# The tracker is short today because this repository is private, and a sweep over
+# a short list mostly finds nothing. That is a reason to set it up now rather than
+# later: the timings and the exemptions get settled while there is nothing at
+# stake, instead of being switched on for the first time over a backlog that
+# matters.
+#
+# It is set up so that being wrong is cheap:
+#
+#   * Three months of silence, then another month before anything closes. A
+#     report from someone who is waiting on a reply is not abandoned.
+#   * Anything labelled `bug`, `security`, `pinned`, `good first issue` or
+#     `help wanted` is never touched. A confirmed defect does not stop existing
+#     because nobody commented on it, and an issue held open for a newcomer is
+#     held open on purpose.
+#   * Pull requests are left alone entirely.
+#   * A closed issue can be reopened by anyone with a comment, and the message
+#     says so.
+#
+# Discussions are enabled on this repository, so both messages point there. A
+# question about running Recore that went quiet is usually a question that was
+# filed in the wrong place, and a sweep that only closes things teaches people
+# nothing about where to put the next one.
+#
+# Run by hand, not on a timer. get_MNV runs the same sweep weekly and writes down
+# why it is the one exception to the no-schedule rule; this repository does not
+# take that exception, because a workflow that fires on a timer is one nobody is
+# watching when it goes wrong, and an issue tracker this young has nothing to
+# sweep yet. To put it on a schedule later, add:
+#
+#     schedule:
+#       - cron: "0 6 * * 1"    # Mondays 06:00 UTC
+#
+# and nothing else here needs to change.
+
+on:
+  workflow_dispatch:
+
+# Marking, commenting and closing are all writes to issues. Pull requests are
+# read so the action can work out it has nothing to do with them, and it never
+# writes one.
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  stale:
+    name: Sweep issues nobody has touched
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+          days-before-issue-stale: 90
+          days-before-issue-close: 30
+          stale-issue-label: stale
+          exempt-issue-labels: "bug,security,pinned,good first issue,help wanted"
+
+          # Pull requests are out of scope. The ones that arrive here are mostly
+          # dependency bumps that are merged or closed within the day; a sweep
+          # would only ever catch one a person is still working on.
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+
+          stale-issue-message: >
+            No activity here for three months, so this is marked stale. If it is
+            still relevant, a comment is enough to keep it open, and it will be
+            closed in a month otherwise. Nothing labelled bug, security, pinned, good first
+            issue or help wanted is ever marked this way, so if this is a defect that was never
+            labelled as one, say so and it will be. If this was a question about
+            running Recore rather than a defect report, Discussions is a better
+            home for it and nothing there is ever swept.
+
+          close-issue-message: >
+            Closed after four months without activity. This is housekeeping and
+            not a judgement, and the history stays here either way. Reopening it
+            takes the reopen control rather than a comment, so say the word if
+            it should not have been closed. If the question behind it is still open, Discussions is
+            the place to pick it up again.
+
+          # The default. Small enough that a bad configuration cannot sweep the
+          # whole tracker before anyone notices.
+          operations-per-run: 30

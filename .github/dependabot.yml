@@ -1,0 +1,129 @@
+# Dependency updates.
+#
+# Nothing configured this before, which is not the same as nothing needing it:
+# security advisories already open their own pull requests, and the lockfile
+# drifts whether or not anyone is watching. What was missing was the routine
+# half. The reason to write it down instead of switching Dependabot on with its
+# defaults is that the defaults are the noisy shape, weekly, one pull request
+# per dependency, majors mixed in with patches, and noise of that shape gets
+# closed unread, which is worse than no updates because it looks like updates.
+# This one keeps the updates and drops the noise:
+#
+#   * monthly, not weekly
+#   * grouped, so one pull request carries a whole ecosystem's routine bumps
+#   * majors kept apart, in their own single pull request, because those are the
+#     ones that change APIs and want a person
+#
+# The minor and patch group is merged automatically once CI passes; see
+# .github/workflows/dependabot-auto-merge.yml. The major group never is.
+#
+# `schedule` here is Dependabot's own timer, not a cron in GitHub Actions: no
+# workflow in this repository runs on a schedule, save the stale sweep, which
+# has nothing to hang off but time.
+#
+# Security updates are a separate mechanism, enabled in the repository settings,
+# and are unaffected by any of this: a vulnerable dependency still gets its own
+# pull request the day the advisory lands, major or not.
+
+version: 2
+
+updates:
+  # The crate. One Cargo.toml at the root, one lockfile, nine direct
+  # dependencies and a long tail of transitive ones that only ever move in
+  # Cargo.lock.
+  #
+  # The group that merges itself is still the one worth reading, for a reason
+  # particular to this dependency list. Three of the direct dependencies are
+  # pre-1.0, `ahash` 0.8, `log` 0.4 and `env_logger` 0.11, and for those Cargo
+  # treats the minor position as the breaking one while Dependabot reads the version number
+  # the ordinary way. `ahash` 0.8 to 0.9 is reported as
+  # `version-update:semver-minor`, so it lands in `cargo-routine` and merges
+  # itself if CI is green. That is mostly all right, because a broken API does
+  # not compile and CI compiles, clippies with warnings denied, and runs the
+  # tests: what survives that is a change in behaviour that still typechecks. If
+  # one ever does, the fix is an `ignore` entry here for that one crate's
+  # semver-minor updates, not turning the group off.
+  #
+  # The other thing a green run does not tell you: Cargo.toml declares
+  # rust-version 1.70, and a dependency raising its own minimum compiler is an
+  # ordinary minor release. A build on stable will not notice, and the first
+  # report will come from someone on an older toolchain.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "rust"]
+    commit-message:
+      prefix: "cargo"
+    groups:
+      cargo-routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      cargo-major:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  # The documentation site's build dependencies.
+  #
+  # The directory is "/" and not "/docs" because that is where
+  # `requirements-docs.txt` actually lives. Dependabot finds it by reading the
+  # requirements-shaped `.txt` files in the directory rather than by matching a
+  # fixed filename, so the name being unusual costs nothing, but the directory
+  # being wrong would cost everything: a `pip` entry pointed at a directory with
+  # no requirements file in it does not fail, it simply never opens anything.
+  #
+  # This is the one ecosystem whose pull requests are checked by the docs build
+  # as well as by CI, because `requirements-docs.txt` is in the path filter of
+  # .github/workflows/docs.yml. The pin is `>=9.6,<10`, so mkdocs-material 10
+  # arrives as a major that widens that range, and a major of the theme is
+  # exactly the change that turns `mkdocs build --strict` red over a renamed
+  # option. That one waits for a person; the 9.x releases do not.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "documentation"]
+    commit-message:
+      prefix: "docs"
+    groups:
+      docs-routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      docs-major:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  # The actions the workflows themselves pin. These go stale silently: a
+  # deprecated runner image, or a Node version dropped from an action, is only
+  # noticed when a job starts warning, or fails.
+  #
+  # Worth knowing before writing a new `uses:` line, because this entry is what
+  # makes it true: Dependabot rewrites the ref after the `@`. A branch name such
+  # as `dtolnay/rust-toolchain@stable` stays where it is. A ref that looks like a
+  # version does not. Pinning the crate's minimum supported Rust as
+  # `dtolnay/rust-toolchain@1.70` would be "updated" here to whatever the next
+  # release is called, and a job whose whole purpose is to prove that recore
+  # still builds on its declared minimum would go on passing while proving it
+  # about some other compiler. Nobody would see it: the diff says the toolchain
+  # action moved, which is what this entry is for. The MSRV belongs in the
+  # action's `toolchain:` input, where nothing in this file can reach it.
+  #
+  # Pull requests from this group can touch docs.yml, which is in that
+  # workflow's own path filter, so they are checked by the docs build too.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "actions"
+    groups:
+      actions-routine:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-major:
+        patterns: ["*"]
+        update-types: ["major"]
