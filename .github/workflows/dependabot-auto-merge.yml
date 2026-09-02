@@ -30,6 +30,24 @@ permissions:
   # mixed list of check runs and commit statuses, so it asks for both.
   checks: read
   statuses: read
+  # For the workflow name attached to each check run, and it is not optional.
+  #
+  # `gh pr view --json statusCheckRollup` asks for that name through
+  # `checkSuite.workflowRun.workflow.name`, which sits behind `actions: read`.
+  # Without this line the field is refused, and GitHub answers a partial
+  # result: the data is there, alongside one error per check run. `gh` treats
+  # any GraphQL error as a failed call and exits non-zero, so the poll below
+  # read it as the transient API failure it guards against and tried again,
+  # fifty times, for the full twenty-five minutes. Pull request #9 sat there
+  # with every check green underneath it.
+  #
+  # The give-away in that job's log is the resource named in the error, which
+  # is the field and not the pull request:
+  #
+  #   GraphQL: Resource not accessible by integration
+  #     (repository.pullRequest.statusCheckRollup.nodes.0.commit
+  #      .statusCheckRollup.contexts.nodes.0.checkSuite.workflowRun)
+  actions: read
 
 # One waiter per pull request. Dependabot force-pushes when it rebases, and each
 # push starts this workflow again; without this, the run watching the commit
@@ -135,6 +153,7 @@ jobs:
           set -euo pipefail
 
           rollup="$(mktemp)"
+          gherr="$(mktemp)"
 
           # missing, pending, success or failure, for one named job of one named
           # workflow. Statuses and conclusions are compared upper-cased because
@@ -166,7 +185,22 @@ jobs:
             # `set -e` an unguarded call here would end the job in a way that
             # skips the steps below, so the pull request would be left with no
             # merge and no comment saying why.
-            if ! gh pr view "$PR_URL" --json statusCheckRollup > "$rollup"; then
+            #
+            # The exit code is not the question, though; the payload is. A
+            # partial GraphQL result carries the checks *and* an error beside
+            # them, and `gh` exits non-zero for the error having already
+            # written a perfectly usable answer. Judging the call by its exit
+            # code alone is what turned one refused subfield into twenty-five
+            # minutes of retries above. So the file is asked whether it parses,
+            # and an empty or unparseable one is the only thing that counts as
+            # a failed read. The error text is printed either way, because the
+            # reason this took a log dive to find was that nothing recorded it.
+            gh pr view "$PR_URL" --json statusCheckRollup > "$rollup" 2> "$gherr" || true
+            if [ -s "$gherr" ]; then
+              echo "the checks API complained:"
+              sed 's/^/  /' "$gherr"
+            fi
+            if ! jq -e 'has("statusCheckRollup")' "$rollup" > /dev/null 2>&1; then
               echo "could not read the checks this time, trying again"
             else
               read_once=true
