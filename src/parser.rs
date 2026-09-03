@@ -514,7 +514,7 @@ pub fn load_genome_contigs(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
     let mut current_seq = Vec::new();
 
     for line_result in reader.lines() {
-        let line = line_result?;
+        let line = line_result.with_context(|| format!("Cannot read {}", path.display()))?;
         if let Some(header) = line.strip_prefix('>') {
             if let Some(name) = current_name.take() {
                 contigs.insert(name, std::mem::take(&mut current_seq));
@@ -538,7 +538,7 @@ pub fn load_genome_contig_names(path: &Path) -> Result<Vec<String>> {
     let reader = open_maybe_gzip(path)?;
     let mut names = Vec::new();
     for line_result in reader.lines() {
-        let line = line_result?;
+        let line = line_result.with_context(|| format!("Cannot read {}", path.display()))?;
         if let Some(header) = line.strip_prefix('>') {
             let id = header.split_whitespace().next().unwrap_or(header);
             names.push(id.to_string());
@@ -583,11 +583,42 @@ pub fn normalize_gff_records_to_fasta(
 
 /// Open a file with transparent gzip decompression.
 /// If the path ends with `.gz`, decompresses on-the-fly via flate2.
+///
+/// This is the only place in the crate that decides whether a file is
+/// compressed. It used to be one of three, each with its own copy of the
+/// extension test and its own decoder, and two of the three were wrong in the
+/// same way for the same reason.
+///
+/// `MultiGzDecoder`, not `GzDecoder`. A gzip file is allowed to be a run of
+/// concatenated members, and BGZF, what bgzip, samtools, bcftools and tabix
+/// write, is exactly that: one member per 64 KB block, so a real bgzipped
+/// genome holds hundreds of them. `GzDecoder` decodes the first member and then
+/// reports a clean EOF, which handed this tool a fraction of the assembly and
+/// no error at all. Measured on a bgzipped FASTA: 65,259 bytes of 848,890, and
+/// a run that exited 0 with a summary asserting a core genome it had never
+/// seen. A gene absent because its contig was never read is precisely the
+/// artefact Recore exists to remove.
+///
+/// The cost is real and worth stating rather than discovering. This is stricter
+/// than what came before: `MultiGzDecoder` refuses trailing bytes after the
+/// final member, where `GzDecoder` ignored them. NUL padding, a stray newline,
+/// appended junk, and one byte is enough. Such a file was read yesterday and
+/// now fails. A user who wants to know in advance can ask `gzip -t`, which
+/// prints "trailing garbage ignored" and exits 2, so the check does catch it.
+/// Python's `gzip` is the one that will not warn them: it reads NUL padding in
+/// silence and only raises on the junk-suffixed shape.
+///
+/// That is the intended direction even so. A hard error beats a silently
+/// partial genome in a tool whose output is a scientific claim, and the failure
+/// now names the file that caused it. If tolerating trailing bytes ever matters
+/// more than refusing them, the shape that buys both is a loop over
+/// `flate2::bufread::GzDecoder` that peeks for the gzip magic at each member
+/// boundary, at the price of owning a decoder loop here.
 pub(crate) fn open_maybe_gzip(path: &Path) -> Result<Box<dyn std::io::BufRead>> {
     use std::io::BufReader;
     let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     if path.extension().is_some_and(|e| e == "gz") {
-        let decoder = flate2::read::GzDecoder::new(file);
+        let decoder = flate2::read::MultiGzDecoder::new(file);
         Ok(Box::new(BufReader::new(decoder)))
     } else {
         Ok(Box::new(BufReader::new(file)))
@@ -601,7 +632,7 @@ pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
 
     let mut genes = Vec::new();
     for line_result in reader.lines() {
-        let line = line_result?;
+        let line = line_result.with_context(|| format!("Cannot read {}", path.display()))?;
         if line.starts_with('#') || !line.contains('\t') {
             continue;
         }
@@ -888,6 +919,22 @@ mod tests {
         f
     }
 
+    /// Write a gzip file made of one member per element, which is the shape
+    /// bgzip writes: one member per block, hundreds of them in a real genome.
+    /// Two members is the smallest fixture that can tell the difference, and it
+    /// has to be built by hand because a single `GzEncoder` never produces one.
+    fn write_multi_member_gzip(path: &Path, members: &[&str]) {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let mut file = std::fs::File::create(path).unwrap();
+        for member in members {
+            let mut gz = GzEncoder::new(Vec::new(), Compression::fast());
+            gz.write_all(member.as_bytes()).unwrap();
+            file.write_all(&gz.finish().unwrap()).unwrap();
+        }
+    }
+
     #[test]
     fn test_parse_pa() {
         let csv = write_temp(
@@ -1169,6 +1216,57 @@ mod tests {
         assert_eq!(contigs.len(), 2);
         assert_eq!(contigs["contig1"], b"ATCGATCG");
         assert_eq!(contigs["contig2"], b"GGGGAAAA");
+    }
+
+    /// The regression test for the multi-member case. Its single-member twin
+    /// below passed throughout, which is the whole reason the defect survived:
+    /// the only compressed fixture in the project was the one shape that
+    /// `GzDecoder` reads correctly.
+    #[test]
+    fn test_load_genome_contigs_multi_member_gz() {
+        let dir = tempfile::tempdir().unwrap();
+        let gz_path = dir.path().join("genome.fasta.gz");
+        write_multi_member_gzip(&gz_path, &[">ctg1\nATCGATCG\n", ">ctg2\nTTTTCCCC\n"]);
+
+        let contigs = load_genome_contigs(&gz_path).unwrap();
+        assert_eq!(contigs.len(), 2);
+        assert_eq!(contigs["ctg1"], b"ATCGATCG");
+        assert_eq!(contigs["ctg2"], b"TTTTCCCC");
+    }
+
+    /// Pinned at the source as well as at the callers, so that rerouting a
+    /// caller cannot quietly undo it.
+    #[test]
+    fn test_open_maybe_gzip_reads_every_member() {
+        use std::io::BufRead;
+
+        let dir = tempfile::tempdir().unwrap();
+        let gz_path = dir.path().join("genome.fasta.gz");
+        write_multi_member_gzip(&gz_path, &[">ctg1\nATCGATCG\n", ">ctg2\nTTTTCCCC\n"]);
+
+        let reader = open_maybe_gzip(&gz_path).unwrap();
+        let lines: Vec<String> = reader.lines().map(|line| line.unwrap()).collect();
+
+        assert_eq!(lines, vec![">ctg1", "ATCGATCG", ">ctg2", "TTTTCCCC"]);
+    }
+
+    /// Annotations take the same path, and a truncated GFF is worse than a
+    /// short one: the run kept its rescues and silently reclassified them.
+    #[test]
+    fn test_parse_gff_genes_multi_member_gz() {
+        let dir = tempfile::tempdir().unwrap();
+        let gz_path = dir.path().join("annotation.gff3.gz");
+        write_multi_member_gzip(
+            &gz_path,
+            &[
+                "##gff-version 3\nchr\tRefSeq\tCDS\t10\t99\t.\t+\t0\tID=first;locus_tag=first\n",
+                "chr\tRefSeq\tCDS\t200\t299\t.\t+\t0\tID=second;locus_tag=second\n",
+            ],
+        );
+
+        let genes = parse_gff_genes(&gz_path).unwrap();
+        let ids: Vec<&str> = genes.iter().map(|gene| gene.4.as_str()).collect();
+        assert_eq!(ids, vec!["first", "second"]);
     }
 
     #[test]

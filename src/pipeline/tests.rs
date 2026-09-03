@@ -1323,6 +1323,43 @@ fn gff_copy_helper_splits_fasta_tail() {
     assert!(tail_text.starts_with("##FASTA"));
 }
 
+/// The corrected GFF3 writer reads the user's source annotation itself, so it
+/// truncated a bgzipped one exactly the way the parser did, and separately.
+/// Every other test of this helper hands it a `NamedTempFile`, whose generated
+/// name has no extension at all, so the compressed branch was never once
+/// executed. Without this the production half of the fix can be reverted and
+/// the suite stays green, which is the blindness that let the defect live.
+#[test]
+fn gff_copy_helper_reads_every_member_of_a_multi_member_gz() {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+
+    let dir = tempfile::tempdir().unwrap();
+    let gz_path = dir.path().join("annotation.gff3.gz");
+    let members = [
+        "##gff-version 3\nchr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1;Name=gene1\n",
+        "chr1\tAMAP\tCDS\t200\t290\t.\t+\t0\tID=gene2;Name=gene2\n",
+    ];
+    {
+        let mut file = std::fs::File::create(&gz_path).unwrap();
+        for member in members {
+            let mut gz = GzEncoder::new(Vec::new(), Compression::fast());
+            gz.write_all(member.as_bytes()).unwrap();
+            file.write_all(&gz.finish().unwrap()).unwrap();
+        }
+    }
+
+    let mut output = Vec::new();
+    copy_gff_records_before_fasta_with_header(&gz_path, &mut output).unwrap();
+    let text = String::from_utf8(output).unwrap();
+
+    assert!(text.contains("ID=gene1"), "first member missing: {text}");
+    assert!(
+        text.contains("ID=gene2"),
+        "second member dropped, the file was truncated: {text}"
+    );
+}
+
 #[test]
 fn reference_audit_quality_guard_keeps_weak_sequence_only_ambiguous() {
     let mut rescue = rescue_with_type(RescueType::Dropped, None);

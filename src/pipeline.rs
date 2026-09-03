@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cli::{Args, MatrixPolicy};
@@ -259,7 +259,16 @@ pub fn run(args: &Args) -> Result<()> {
                                 }
                             }
                             Err(e) => {
-                                warn!("Cannot read FASTA contig names for {}: {}", genome_name, e)
+                                // `{:#}` and not `{}`: anyhow's plain Display
+                                // prints only the outermost context, so once
+                                // the reader started naming the file this line
+                                // said the path and dropped the reason, which
+                                // is the half a reader needs. The alternate
+                                // form walks the chain.
+                                warn!(
+                                    "Cannot read FASTA contig names for {}: {:#}",
+                                    genome_name, e
+                                )
                             }
                         }
                     }
@@ -282,7 +291,11 @@ pub fn run(args: &Args) -> Result<()> {
                     data.insert(gi, GffIndex::build_with_aliases_and_labels(genes));
                     gff_paths.insert(gi, path.clone());
                 }
-                Err(e) => warn!("Cannot parse GFF for {}: {}", genome_name, e),
+                // `{:#}` for the same reason as the FASTA warning above, and it
+                // matters more here: this is the one line telling a reader that
+                // a genome just lost its whole annotation, and the run goes on
+                // to a different answer without it.
+                Err(e) => warn!("Cannot parse GFF for {}: {:#}", genome_name, e),
             }
         }
         let loaded = data.len();

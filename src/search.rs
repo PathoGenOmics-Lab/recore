@@ -141,7 +141,12 @@ pub fn batch_search(
 
             let mut reader = open_maybe_gzip(fasta_path)
                 .with_context(|| format!("Cannot open genome {}", fasta_path.display()))?;
-            write_prefixed_fasta(&mut reader, &mut writer, genome_name)?;
+            // Context on the read as well as on the open. A compressed file
+            // fails while being decoded, long after it opened cleanly, and
+            // "unexpected end of file" with no path is close to useless to
+            // somebody holding five thousand genomes.
+            write_prefixed_fasta(&mut reader, &mut writer, genome_name)
+                .with_context(|| format!("Cannot read genome {}", fasta_path.display()))?;
             genomes_written += 1;
         }
         writer.flush()?;

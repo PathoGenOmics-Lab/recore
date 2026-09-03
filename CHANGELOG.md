@@ -9,6 +9,12 @@ and Recore uses semantic versioning.
 
 ### Changed
 
+- Gzip inputs are now read strictly: bytes after the final gzip member are an
+  error instead of being ignored, so a `.gz` file carrying NUL padding, a stray
+  newline or appended junk is refused where it used to be read as far as its
+  first member. `gzip -t` reports such a file as "trailing garbage ignored" and
+  exits 2, so it can be checked for in advance; recompress it if Recore reports
+  `unexpected end of file`.
 - Presence/absence storage now uses compact indexed vectors instead of a
   per-cluster hash set, reducing memory overhead and making matrix lookups
   cache-friendly.
@@ -204,6 +210,17 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- Gzipped inputs are read to the end of the file instead of stopping at the
+  first gzip member. `bgzip`, which is what samtools, bcftools and tabix write,
+  emits one member per block, so a bgzipped genome or annotation reached the
+  pipeline as a fraction of itself, with no error and exit code 0. On the
+  tutorial dataset that turned 11 rescues into 8 and a core genome of 14 to 17
+  into 14 to 16. The corrected GFF3 writer read its source annotation through a
+  second copy of the same mistake and dropped records the same way; there is
+  now one place in the crate that decides whether a file is compressed.
+- A read that fails partway through a file now says which file it was reading.
+  A compressed input opens cleanly and only fails while being decoded, so the
+  error used to be a bare "unexpected end of file" with nothing to act on.
 - The HTML report no longer requests a remote webfont stylesheet, so it renders
   identically on offline and air-gapped machines and makes no network request
   when opened.
