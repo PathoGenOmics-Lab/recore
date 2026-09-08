@@ -260,12 +260,10 @@ pub(super) fn copy_text_maybe_gzip_with_header(
     path: &std::path::Path,
     writer: &mut impl Write,
 ) -> Result<()> {
-    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
-    let mut reader: Box<dyn BufRead> = if path.extension().is_some_and(|e| e == "gz") {
-        Box::new(BufReader::new(flate2::read::GzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    // Test-only, and it goes through the shared opener too. A test helper that
+    // reads gzip differently from the code under test is a helper that can hide
+    // the very defect it is meant to exercise.
+    let mut reader: Box<dyn BufRead> = crate::parser::open_maybe_gzip(path)?;
 
     let mut prefix = Vec::with_capacity(256);
     let mut line = Vec::with_capacity(4096);
@@ -318,12 +316,11 @@ pub(super) fn copy_gff_records_before_fasta_with_header(
     path: &std::path::Path,
     writer: &mut impl Write,
 ) -> Result<Option<Vec<u8>>> {
-    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
-    let mut reader: Box<dyn BufRead> = if path.extension().is_some_and(|e| e == "gz") {
-        Box::new(BufReader::new(flate2::read::GzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    // Through the shared opener rather than a second copy of the same decision.
+    // This function held its own extension test and its own `GzDecoder`, so a
+    // bgzipped annotation was truncated here as well, and the corrected GFF3
+    // this writes kept the records of the first member and dropped the rest.
+    let mut reader: Box<dyn BufRead> = crate::parser::open_maybe_gzip(path)?;
 
     let mut prefix = Vec::with_capacity(256);
     let mut line = Vec::with_capacity(4096);
