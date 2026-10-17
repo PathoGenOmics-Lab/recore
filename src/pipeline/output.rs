@@ -1580,6 +1580,29 @@ fn pretty_label(value: &str) -> String {
     value.replace('_', " ")
 }
 
+/// JSON made safe to sit inside a `<script>` element.
+///
+/// In JSON these characters can only occur inside strings, so writing them as
+/// `\uXXXX` leaves every value exactly as it was. Escaping only `</` was not
+/// enough: `<!--` followed by `<script` anywhere in a genome name or an
+/// annotation switches the HTML parser into the script's escaped state, the
+/// closing tag is never seen, and the whole report stayed blank without an
+/// error.
+pub(super) fn script_safe_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len() + json.len() / 64);
+    for ch in json.chars() {
+        match ch {
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn json_script_escape(value: &str) -> String {
     json_escape(value).replace("</", "<\\/")
 }
@@ -2148,7 +2171,7 @@ fn explorer_workspace_html(
     html.push_str("<footer class='statusbar'><span id='matrixStatus'></span><span class='status-hint'><kbd>&#8984;K</kbd> find<span class='dot'></span><kbd>?</kbd> shortcuts</span></footer>");
 
     html.push_str("<script id='explorerData' type='application/json'>");
-    html.push_str(&data_json);
+    html.push_str(&script_safe_json(&data_json));
     html.push_str(
         "</script><script>window.recoreExplorerData=JSON.parse(document.getElementById('explorerData').textContent);</script><script>",
     );

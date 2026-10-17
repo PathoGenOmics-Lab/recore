@@ -2233,3 +2233,16 @@ fn parsimony_is_independent_of_sibling_order() {
     assert!(outcomes.windows(2).all(|w| w[0] == w[1]), "{outcomes:?}");
     assert_eq!(outcomes[0].0, 2, "two losses, a and b");
 }
+
+/// "<!--" followed by "<script" in any name or annotation switched the HTML
+/// parser into the script's escaped state and left the report blank. In JSON
+/// these characters only occur inside strings, so escaping them keeps every
+/// value as it was.
+#[test]
+fn report_payload_is_safe_inside_a_script_element() {
+    let json = "{\"a\":\"<!--<script>\",\"b\":\"x & y > z\",\"c\":\"line\u{2028}sep\"}";
+    let safe = output::script_safe_json(json);
+    assert!(!safe.contains('<') && !safe.contains('>') && !safe.contains('&'));
+    assert!(!safe.contains('\u{2028}'));
+    assert!(safe.contains("\\u003c!--\\u003cscript\\u003e"));
+}
