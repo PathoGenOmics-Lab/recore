@@ -18,8 +18,9 @@ fails when it drifts. This does, in four parts:
            columns of src/pipeline.rs;
   readme   README.md's links land, in the repository and on the website with
            their anchors, its recore commands use options that exist, and its
-           Try-it block and counts are the website's, and every page of the
-           website cites Recore the way the README does;
+           Try-it block and counts are the website's, every page of the
+           website cites Recore the way the README does, and no <picture> sits
+           inside a link, where GitHub breaks it;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -354,6 +355,12 @@ def check_readme(pages: dict[str, Page], recore: str) -> list[str]:
                 problems.append(f"README.md: link to {url}, which no heading has")
         elif not re.match(r"^(https?:|mailto:)", url) and not Path(url.partition("#")[0]).exists():
             problems.append(f"README.md: links to {url}, which does not exist")
+
+    # GitHub splits a <picture> inside a link: the <img> lands outside it, so
+    # the image stops following the reader's theme and opens the file.
+    for link in re.findall(r"<a\b[^>]*>((?:(?!</a>).)*)</a>", prose, flags=re.S):
+        if "<picture" in link:
+            problems.append("README.md: a <picture> inside a link; GitHub moves its image out and it stops following the theme")
 
     longs, shorts, _ = help_options(recore)
     named: set[str] = set()

@@ -74,6 +74,11 @@ two in step. `tools/check_site.py` checks the README's links into the
 repository and into the website, the options of its `recore` commands, and that
 its Try-it block and counts are the website's.
 
+A picture that follows the reader's theme, like the logo and the How it works
+preview, is a bare `<picture>` with a `_dark` source: put inside a link, GitHub
+moves the image out of it and the image stops following the theme. The check
+fails on that too.
+
 The Docs tab is these markdown pages. `tools/build_docs.py` turns each one into
 an `.html` page next to it, with the site's header, sidebar, contents and
 search, and writes `docs/documentation.html` and the search index. The pages
