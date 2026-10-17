@@ -6,15 +6,20 @@ function readVar(name, fallback) {
   return value || fallback;
 }
 function refreshThemeColors() {
-  colors.P = readVar("--present", "#155eef");
-  colors.R = readVar("--rescue", "#12b76a");
-  colors.N = readVar("--nsc", "#7a5af8");
-  colors.K = readVar("--kept", "#dc6803");
-  colors.A = readVar("--absent", "#ffffff");
+  colors.P = readVar("--present", "#b3bbc7");
+  colors.R = readVar("--rescue", "#0f6fd6");
+  colors.N = readVar("--nsc", "#e07b00");
+  colors.K = readVar("--kept", "#c01048");
+  colors.A = readVar("--absent", "#f4f5f7");
   strokes.P = colors.P;
   strokes.R = colors.R;
   strokes.N = colors.N;
+  strokes.K = colors.K;
   strokes.A = readVar("--absent-stroke", "#d0d5dd");
+  for (const family of Object.keys(mechanismFamilyColors)) {
+    mechanismFamilyColors[family] = readVar(`--mech-${family}`, mechanismFamilyColors[family]);
+  }
+  burdenLow = readVar("--line", "#e4e4e7");
   panelBg = readVar("--panel", "#ffffff");
   headerBg = readVar("--bg-subtle", "#f8fafc");
   hoverColTint = readVar("--warning-soft", "#fff7ed");
@@ -26,8 +31,9 @@ function refreshThemeColors() {
   labelInk = readVar("--subtle", "#475467");
 }
 const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
-const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", K:"#dc6803", A:"#ffffff"};
-const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
+const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7"};
+const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd"};
+let burdenLow = "#e4e4e7";
 let panelBg = "#ffffff";
 let headerBg = "#f8fafc";
 let hoverColTint = "#fff7ed";
@@ -37,24 +43,52 @@ let selectColTint = "#eef4ff";
 let selectStroke = "#1d4ed8";
 let gridStroke = "#98a2b3";
 let labelInk = "#475467";
-const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC", A:"absent"};
-const processColors = {
-  clade_associated_gain:"#079455",
-  ancestral_retained_no_disruption:"#155eef",
-  duplication_or_paralog_expansion:"#7a5af8",
-  deletion_loss_candidate:"#b42318",
-  reference_or_lineage_loss_candidate:"#d92d20",
-  clean_insertion_or_acquisition_candidate:"#079455",
-  IS_interruption_supported:"#f79009",
-  pseudogenization:"#b54708",
-  gene_fragmentation_or_structural_break:"#dc6803",
-  partial_reference_homology:"#0e9384",
-  reference_gene_allelic_derivative:"#2970ff",
-  reference_gene_disruption_or_truncation:"#c11574",
-  translocation_or_context_shift_candidate:"#9e77ed",
-  annotation_or_clustering_artifact:"#667085",
-  unstable_or_homoplastic_accessory_signal:"#dd2590",
-  unresolved_accessory_variation:"#475467",
+const labels = {P:"present in input", R:"corrected by Recore", N:"supported by NSC", K:"found, kept out of matrix", A:"absent"};
+const shortLabels = {P:"input", R:"corrected", N:"NSC", K:"kept out", A:"absent"};
+const stateDefinitions = {
+  P:"Present in the input matrix.",
+  R:"Absent in the input. Recore found the gene in this genome and corrected the cell.",
+  N:"Absent in the input. Near-identical clusters were merged (NSC), and the merged cluster is present here.",
+  K:"Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix. Click the cell for the reason.",
+  A:"Absent, and Recore found no evidence for it.",
+};
+/* Sixteen mechanisms cannot get sixteen colours anyone can tell apart, so they
+   are drawn in six families. The family hues stay off the cell-state hues and
+   apart from each other under deutan and protan vision; the inspector and the
+   legend still name the exact mechanism. */
+const mechanismFamilies = {
+  ancestral_retained_no_disruption:"retained",
+  clade_associated_gain:"gain",
+  clean_insertion_or_acquisition_candidate:"gain",
+  deletion_loss_candidate:"loss",
+  reference_or_lineage_loss_candidate:"loss",
+  IS_interruption_supported:"disruption",
+  pseudogenization:"disruption",
+  gene_fragmentation_or_structural_break:"disruption",
+  reference_gene_disruption_or_truncation:"disruption",
+  duplication_or_paralog_expansion:"paralog",
+  translocation_or_context_shift_candidate:"paralog",
+  partial_reference_homology:"paralog",
+  reference_gene_allelic_derivative:"paralog",
+  annotation_or_clustering_artifact:"unresolved",
+  unstable_or_homoplastic_accessory_signal:"unresolved",
+  unresolved_accessory_variation:"unresolved",
+};
+const mechanismFamilyLabels = {
+  retained:"retained",
+  gain:"gain or insertion",
+  loss:"loss or deletion",
+  disruption:"disruption",
+  paralog:"paralog or context change",
+  unresolved:"artifact or unresolved",
+};
+const mechanismFamilyColors = {
+  retained:"#667085",
+  gain:"#4ca30d",
+  loss:"#7a2e0e",
+  disruption:"#fac515",
+  paralog:"#15b79e",
+  unresolved:"#1d2939",
 };
 const processDescriptions = {
   clade_associated_gain:"Legacy label for a clade-associated accessory gain; inspect current mechanism fields for final wording.",
@@ -156,6 +190,7 @@ const exportButton = document.getElementById("exportView");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
 const lineageLegend = document.getElementById("lineageLegend");
+const cellLegend = document.getElementById("cellLegend");
 const status = document.getElementById("matrixStatus");
 const headerCanvas = document.getElementById("columnHeaderCanvas");
 const headerCtx = headerCanvas.getContext("2d");
@@ -225,6 +260,7 @@ const LABEL_BAND_H_FLAT = 26;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 const defaultStatus = "Hover a cell for genome, cluster and evidence state. Wheel over the column header zooms columns, over the tree zooms rows. Drag the seams between panes to resize.";
 let selected = 0;
+let selectedGenome = -1;
 let hoverRow = -1;
 let hoverCol = -1;
 let leafOrder = [];
@@ -234,6 +270,7 @@ let rowOfGenome = new Int32Array(0);
 let visibleClusters = [];
 let genomeStats = [];
 let maxGenomeStats = {R:1, N:1, A:1, correction:1};
+let anyKeptOut = false;
 let maxDepth = 0;
 let maxDistance = 0;
 let treeHeight = 0;
@@ -295,6 +332,156 @@ function decodeBase64(text) {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+/* ---- Per-cell evidence ----------------------------------------------------
+   The rows of orthology_evidence.tsv, one base64 string per cluster, decoded
+   only for the clusters someone looks at. */
+const evidenceData = data.evidence && data.evidence.byCluster ? data.evidence : null;
+const evidenceCache = new Map();
+function clusterEvidence(clusterIdx) {
+  if (!evidenceData) return [];
+  const cached = evidenceCache.get(clusterIdx);
+  if (cached) return cached;
+  const encoded = evidenceData.byCluster[clusterIdx] || "";
+  const rows = [];
+  if (encoded) {
+    const bytes = decodeBase64(encoded);
+    let pos = 0;
+    const next = () => {
+      let value = 0;
+      let scale = 1;
+      for (;;) {
+        const byte = bytes[pos++];
+        value += (byte & 0x7f) * scale;
+        if (!(byte & 0x80)) return value;
+        scale *= 128;
+      }
+    };
+    const strings = evidenceData.strings;
+    const count = next();
+    let genome = 0;
+    for (let i = 0; i < count; i += 1) {
+      genome += next();
+      const profile = evidenceData.profiles[next()] || [];
+      const row = {genome};
+      evidenceData.profileColumns.forEach((column, j) => { row[column] = strings[profile[j]] || ""; });
+      evidenceData.textColumns.forEach(column => { row[column] = strings[next()] || ""; });
+      const start = next();
+      const end = next();
+      const identity = next();
+      const coverage = next();
+      row.start = start ? start - 1 : null;
+      row.end = end ? end - 1 : null;
+      row.identity = identity ? (identity - 1) / 10 : null;
+      row.coverage = coverage ? (coverage - 1) / 10 : null;
+      rows.push(row);
+    }
+  }
+  if (evidenceCache.size >= 64) evidenceCache.delete(evidenceCache.keys().next().value);
+  evidenceCache.set(clusterIdx, rows);
+  return rows;
+}
+/** Evidence rows for one cell; rows are sorted by genome. */
+function cellEvidence(clusterIdx, genomeIdx) {
+  const rows = clusterEvidence(clusterIdx);
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].genome < genomeIdx) lo = mid + 1;
+    else hi = mid;
+  }
+  const out = [];
+  while (lo < rows.length && rows[lo].genome === genomeIdx) out.push(rows[lo++]);
+  return out;
+}
+const MATRIX_ACTION_TEXT = {
+  correct_presence:"used in the corrected matrix",
+  audit_only_policy:"kept out by the matrix policy",
+  audit_only_quality:"kept out by a quality floor",
+  audit_only:"not used: rejected",
+};
+const PUBLICATION_TEXT = {
+  publication_ready_correction:"ready for publication",
+  corrected_but_review_for_publication:"corrected; review before publishing",
+  corrected_paralog_review:"corrected; paralog review",
+  corrected_review:"corrected; review",
+  audit_only_not_corrected:"audit only, not corrected",
+};
+function evidenceTypeLabel(row) {
+  return (row.rescue_type || row.evidence_state || "evidence").split(/[:(]/)[0].trim();
+}
+function pctText(value) {
+  return value === null || value === undefined ? "n/a" : `${value.toFixed(1)}%`;
+}
+function evidenceLocus(row) {
+  if (!row.contig) return "";
+  const span = row.start !== null && row.end !== null ? `:${formatCoord(row.start)}-${formatCoord(row.end)}` : "";
+  return `${row.contig}${span}${row.strand ? ` (${row.strand})` : ""}`;
+}
+/** One line for the tooltip and the changed-cells list. */
+function evidenceSummary(row) {
+  return `${evidenceTypeLabel(row)}, ${pctText(row.identity)} identity, ${pctText(row.coverage)} coverage`;
+}
+function evidenceRowHtml(row) {
+  const accepted = row.decision === "accepted";
+  const why = row.rejection_reason ? `; ${row.rejection_reason.replace(/_/g, " ")}` : "";
+  const facts = [];
+  if (row.synteny) facts.push(`synteny ${escapeHtml(row.synteny)}${row.synteny_score ? ` (${escapeHtml(row.synteny_score)})` : ""}`);
+  if (row.orf_integrity_signal) facts.push(`ORF ${escapeHtml(row.orf_integrity_signal.replace(/_?orf_?/gi, " ").replace(/_/g, " ").trim())}`);
+  if (row.orthology_confidence_tier) facts.push(`${escapeHtml(row.orthology_confidence_tier.replace(/_confidence$/, "").replace(/_/g, " "))} confidence`);
+  const notes = [];
+  if (row.risk_flags) notes.push(`<dt>Flags</dt><dd>${escapeHtml(row.risk_flags.replace(/;/g, "; ").replace(/_/g, " "))}</dd>`);
+  if (row.fragment_note) notes.push(`<dt>Note</dt><dd>${escapeHtml(row.fragment_note.replace(/_/g, " "))}</dd>`);
+  if (row.annotation_match) notes.push(`<dt>Annotated as</dt><dd>${escapeHtml(row.annotation_match)}${row.annotation_cluster ? ` (${escapeHtml(row.annotation_cluster)})` : ""}</dd>`);
+  if (row.recommended_wording) notes.push(`<dt>Wording</dt><dd>${escapeHtml(row.recommended_wording)}</dd>`);
+  return `<div class="evidence-row${accepted ? "" : " rejected"}">` +
+    `<div class="ev-head"><span class="ev-type">${escapeHtml(row.rescue_type || row.evidence_state || "evidence")}</span>` +
+    `<span class="ev-action">${escapeHtml(MATRIX_ACTION_TEXT[row.matrix_action] || row.matrix_action || row.decision)}${escapeHtml(why)}</span></div>` +
+    (evidenceLocus(row) ? `<div class="ev-locus mono">${escapeHtml(evidenceLocus(row))}</div>` : "") +
+    `<div class="ev-metrics num">${pctText(row.identity)} identity &middot; ${pctText(row.coverage)} coverage</div>` +
+    (facts.length ? `<div class="ev-facts">${facts.join(" &middot; ")}</div>` : "") +
+    (row.publication_status ? `<div class="ev-pub">Publication: ${escapeHtml(PUBLICATION_TEXT[row.publication_status] || row.publication_status.replace(/_/g, " "))}</div>` : "") +
+    (notes.length ? `<dl class="cluster-dl ev-notes">${notes.join("")}</dl>` : "") +
+    `</div>`;
+}
+function emptyCellText(state) {
+  if (state === "P") return "Present in the input matrix. Recore had nothing to correct here.";
+  if (state === "N") return "Merged into a near-identical cluster by NSC; no search evidence row.";
+  return "No evidence row. Either Recore searched this gap and found nothing, or the gap was outside the search (see the prevalence filter in Run details).";
+}
+/** The selected cell: what it is, and every evidence row behind it. */
+function cellCardHtml() {
+  if (selectedGenome < 0 || !data.clusters[selected]) return "";
+  const state = stateAt(selected, selectedGenome);
+  const rows = cellEvidence(selected, selectedGenome);
+  const body = rows.length
+    ? rows.map(evidenceRowHtml).join("")
+    : `<p class="muted cell-empty">${escapeHtml(emptyCellText(state))}</p>`;
+  return `<section class="cell-card" aria-label="Selected cell">` +
+    `<div class="cell-card-head"><span class="card-title">Cell</span>` +
+    `<button type="button" class="icon-btn ghost-icon cell-close" data-clear-cell="1" aria-label="Clear the selected cell" data-tip="Clear the selected cell">&times;</button></div>` +
+    `<p class="cell-name"><button type="button" class="link-btn" data-find-tip="${selectedGenome}">${escapeHtml(data.genomes[selectedGenome] || "")}</button></p>` +
+    `<p class="cell-state"><i class="sw ${state.toLowerCase()}"></i>${escapeHtml(labels[state])}</p>` +
+    body + `</section>`;
+}
+/** The cells Recore changed in this cluster, findings first. */
+const CHANGED_CELLS_SHOWN = 20;
+function changedCellsHtml(clusterIdx) {
+  const rows = clusterEvidence(clusterIdx);
+  if (!rows.length) return "";
+  const rank = row => (row.matrix_action === "correct_presence" ? 0 : row.decision === "accepted" ? 1 : 2);
+  const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || (rowOfGenome[a.genome] - rowOfGenome[b.genome]));
+  const items = sorted.slice(0, CHANGED_CELLS_SHOWN).map(row => {
+    const state = stateAt(clusterIdx, row.genome);
+    return `<li><button type="button" class="changed-cell" data-cell-genome="${row.genome}">` +
+      `<i class="sw ${state.toLowerCase()}"></i><span class="changed-genome">${escapeHtml(data.genomes[row.genome] || "")}</span>` +
+      `<small>${escapeHtml(evidenceSummary(row))}</small></button></li>`;
+  }).join("");
+  const more = sorted.length > CHANGED_CELLS_SHOWN
+    ? `<p class="muted changed-more">and ${plural(sorted.length - CHANGED_CELLS_SHOWN, "more row")} in orthology_evidence.tsv</p>`
+    : "";
+  return `<div class="card-title">Evidence rows (${formatInt(rows.length)})</div><ul class="changed-cells">${items}</ul>${more}`;
 }
 function decodeClusterSets(encoded, nGenomes) {
   const sets = [EMPTY_SET, EMPTY_SET, EMPTY_SET, EMPTY_SET];
@@ -522,6 +709,7 @@ function computeGenomeStats() {
     const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0];
     return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4]};
   });
+  anyKeptOut = genomeStats.some(s => s.K > 0);
   maxGenomeStats = genomeStats.reduce((acc, s) => ({
     R: Math.max(acc.R, s.R),
     N: Math.max(acc.N, s.N),
@@ -538,13 +726,16 @@ function gradientColor(value, maxValue, low, high) {
   const rgb = a.map((v, i) => Math.round(v + (b[i] - v) * t));
   return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
+function mechanismFamily(mechanism) {
+  return mechanismFamilies[mechanism] || "unresolved";
+}
+/** Canvas colour of a mechanism, read from the theme tokens. */
 function processColor(mechanism) {
-  if (processColors[mechanism]) return processColors[mechanism];
-  let hash = 0;
-  const text = mechanism || "unresolved_accessory_variation";
-  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  const hue = hash % 360;
-  return `hsl(${hue} 58% 43%)`;
+  return mechanismFamilyColors[mechanismFamily(mechanism)];
+}
+/** The same colour for markup, so it follows a theme change without a rebuild. */
+function processCss(mechanism) {
+  return `var(--mech-${mechanismFamily(mechanism)})`;
 }
 function processKind(cluster) {
   return (cluster && cluster.mechanism) || "unresolved_accessory_variation";
@@ -568,9 +759,55 @@ function lineageLabel(lineage) {
   const description = lineageDescriptions[lineage] || "";
   return description ? `${lineage} - ${description}` : lineage;
 }
+/* The cell legend says what the matrix is drawing now: the states this run
+   has in evidence mode, the mechanism families in view in mechanism mode. It
+   was static markup, so in mechanism mode green read as "rescued". */
+let cellLegendKey = "";
+function renderCellLegend() {
+  if (!cellLegend) return;
+  const byProcess = matrixColorMode.value === "process";
+  const key = byProcess ? `m|${visibleClusters.length}|${mechanismFilterKey()}` : `s|${anyKeptOut}|${data.nscEnabled}`;
+  if (key === cellLegendKey) return;
+  cellLegendKey = key;
+  const item = (cls, style, label, tip) =>
+    `<span class="key" data-tip="${escapeHtml(tip)}"><i class="sw ${cls}"${style ? ` style="${style}"` : ""}></i>${escapeHtml(label)}</span>`;
+  if (!byProcess) {
+    cellLegend.innerHTML = shownStates()
+      .map(state => item(state.toLowerCase(), "", shortLabels[state], stateDefinitions[state]))
+      .join("");
+    return;
+  }
+  const families = new Map();
+  for (const idx of visibleClusters) {
+    const family = mechanismFamily(processKind(data.clusters[idx]));
+    families.set(family, (families.get(family) || 0) + 1);
+  }
+  // Six families do not fit a pane header, so they share one key that opens
+  // the full, filterable list in the matrix menu.
+  const present = Object.keys(mechanismFamilyLabels).filter(family => families.has(family));
+  const tip = present
+    .map(family => `${mechanismFamilyLabels[family]}: ${plural(families.get(family), "cluster")}`)
+    .join("; ");
+  const stack = present.map(family => `<i class="sw" style="background:var(--mech-${family})"></i>`).join("");
+  const keys = [`<button type="button" class="key key-btn" data-open-mechanisms="1" data-tip="${escapeHtml(`Input cells take the colour of their cluster's mechanism family. ${tip}. Click for the list and filters.`)}"><span class="sw-stack">${stack}</span>mechanism</button>`];
+  keys.push(item("r", "", shortLabels.R, stateDefinitions.R));
+  if (anyKeptOut) keys.push(item("k", "", shortLabels.K, stateDefinitions.K));
+  cellLegend.innerHTML = keys.join("");
+}
 function renderLineageLegend() {
   if (!lineageLegend) return;
-  if (colorMode.value !== "lineage") {
+  const mode = colorMode.value;
+  if (mode === "rescue" || mode === "absence" || mode === "correction") {
+    // Burden modes are a ramp: say where it starts and what its top means.
+    const [, max, high, noun] = burdenOf(mode, {R: 0, N: 0, A: 0});
+    lineageLegend.style.display = "flex";
+    lineageLegend.innerHTML = `<span class="lineage-title">Tips coloured by ${escapeHtml(noun)} per genome</span>` +
+      `<span class="lineage-chip"><i class="ramp-zero"></i><small>0</small></span>` +
+      `<span class="burden-ramp" style="background:linear-gradient(90deg, ${burdenLow}, ${high})"></span>` +
+      `<span class="lineage-chip"><small>${formatInt(max)}</small></span>`;
+    return;
+  }
+  if (mode !== "lineage") {
     lineageLegend.innerHTML = "";
     lineageLegend.style.display = "none";
     return;
@@ -582,7 +819,7 @@ function renderLineageLegend() {
   });
   const items = lineageOrder
     .filter(lineage => counts.has(lineage))
-    .map(lineage => `<span class="lineage-chip"><i style="background:${lineageColor(lineage)}"></i><strong>${escapeHtml(lineage)}</strong><small>${counts.get(lineage)} tips</small></span>`)
+    .map(lineage => `<span class="lineage-chip"><i style="background:${lineageColor(lineage)}"></i><strong>${escapeHtml(lineage)}</strong><small>${plural(counts.get(lineage), "tip")}</small></span>`)
     .join("");
   lineageLegend.style.display = "flex";
   lineageLegend.innerHTML = `<span class="lineage-title">MTBC lineage colors</span>${items}`;
@@ -608,14 +845,14 @@ function renderProcessLegend() {
   const cluster = data.clusters[selected] || {};
   const selectedMechanism = processKind(cluster);
   const filterLabel = mechanismFilters.size
-    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing ${escapeHtml(mechanismFilterSummary())} (${visibleClusters.length} clusters). Clear filters</button>`
+    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing ${escapeHtml(mechanismFilterSummary())} (${plural(visibleClusters.length, "cluster")}). Clear filters</button>`
     : `<span>Click mechanism cards to add/remove matrix-column filters.</span>`;
   const items = visibleProcessCounts().map(([mechanism, row]) => {
     const active = mechanism === selectedMechanism ? " active" : "";
     const filtered = mechanismFilters.has(mechanism) ? " filtered" : "";
-    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${plural(row.clusters, "cluster")}; ${plural(row.present, "present cell")}. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
+    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processCss(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${plural(row.clusters, "cluster")}; ${plural(row.present, "present cell")}. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
   }).join("");
-  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
+  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processCss(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
 }
 function tipStyle(genomeIdx) {
   const mode = colorMode.value;
@@ -628,9 +865,9 @@ function tipStyle(genomeIdx) {
     const state = stateAt(selected, genomeIdx);
     const mechanism = processKind(cluster);
     const color = processColor(mechanism);
-    return state === "A"
-      ? {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)} absent`}
-      : {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
+    if (state === "A") return {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)}; absent`};
+    if (state === "R" || state === "K") return {fill: colors[state], stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`};
+    return {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
   }
   if (mode === "lineage") {
     const genome = data.genomes[genomeIdx] || "";
@@ -639,14 +876,17 @@ function tipStyle(genomeIdx) {
     return {fill: color, stroke: color, title: lineageLabel(lineage)};
   }
   const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
-  if (mode === "rescue") {
-    return {fill: gradientColor(stats.R, maxGenomeStats.R, "#e0f2fe", "#0369a1"), stroke: "#0369a1", title: `rescued cells ${stats.R}`};
-  }
-  if (mode === "absence") {
-    return {fill: gradientColor(stats.A, maxGenomeStats.A, "#f8fafc", "#b42318"), stroke: "#b42318", title: `absent cells ${stats.A}`};
-  }
-  const correction = stats.R + stats.N;
-  return {fill: gradientColor(correction, maxGenomeStats.correction, "#ecfdf3", "#067647"), stroke: "#067647", title: `corrected/NSC cells ${correction}`};
+  const [value, max, high, noun] = burdenOf(mode, stats);
+  // Zero is a hollow ring, so "none" never passes for a pale "some" in either
+  // theme, and the ramp runs from the line colour to the state's own colour.
+  if (!value) return {fill: panelBg, stroke: gridStroke, title: `${noun}: 0`};
+  return {fill: gradientColor(value, max, burdenLow, high), stroke: high, title: `${noun}: ${formatInt(value)}`};
+}
+/** The value a burden tip mode shows, its maximum, its colour and its name. */
+function burdenOf(mode, stats) {
+  if (mode === "rescue") return [stats.R, maxGenomeStats.R, colors.R, "corrected cells"];
+  if (mode === "absence") return [stats.A, maxGenomeStats.A, labelInk, "absent cells"];
+  return [stats.R + stats.N, maxGenomeStats.correction, colors.R, "corrected or NSC cells"];
 }
 function subtreeLineage(node) {
   if (node._subtreeLineage !== undefined) return node._subtreeLineage;
@@ -830,8 +1070,8 @@ function populateOptions() {
   if (clusterPosition) {
     const at = visibleClusters.indexOf(selected);
     clusterPosition.textContent = at < 0
-      ? `0 / ${visibleClusters.length}`
-      : `${at + 1} / ${visibleClusters.length}`;
+      ? `0 / ${formatInt(visibleClusters.length)}`
+      : `${formatInt(at + 1)} / ${formatInt(visibleClusters.length)}`;
   }
   if (omnibox) {
     omnibox.setAttribute(
@@ -933,8 +1173,22 @@ function formatBranchLength(value) {
   if (Math.abs(n) < 0.001) return n.toExponential(2);
   return n.toPrecision(4);
 }
+/* One number format for the whole page, matching the Rust side: integers
+   grouped with commas whatever the reader's locale, coordinates never grouped.
+   A Spanish locale printed 12.715 for a coordinate next to 0.005 subs/site. */
+function formatInt(value) {
+  return Number(value).toLocaleString("en-US");
+}
+/** A share that never rounds a real count to 0% or 100%. */
+function formatPct(value, total) {
+  if (!total) return "0%";
+  const pct = value / total * 100;
+  if (value > 0 && pct < 0.1) return "<0.1%";
+  if (value < total && pct > 99.9) return ">99.9%";
+  return `${pct.toFixed(1)}%`;
+}
 function plural(count, noun) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return `${formatInt(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
@@ -1148,7 +1402,7 @@ function niceScaleBp(raw) {
   return step * magnitude;
 }
 function formatBp(bp) {
-  if (bp >= 1000) return `${(bp / 1000).toLocaleString(undefined, {maximumFractionDigits: 1})} kb`;
+  if (bp >= 1000) return `${(bp / 1000).toFixed(1).replace(/\.0$/, "")} kb`;
   return `${Math.round(bp)} bp`;
 }
 function renderSyntenyPanel() {
@@ -1421,7 +1675,7 @@ function renderSyntenyPanel() {
 function formatCoord(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  return n.toLocaleString();
+  return String(Math.round(n));
 }
 function loadLayout() {
   try {
@@ -1629,10 +1883,10 @@ function updateTopBarMeta() {
   if (topTreeMeta) {
     // Short in the header, full text on hover: the caption is the first thing
     // that should give way when the pane narrows.
-    topTreeMeta.textContent = `${leafOrder.length} tips`;
-    topTreeMeta.setAttribute("data-tip", `${leafOrder.length} matched tips · ${treeCaption()}`);
+    topTreeMeta.textContent = plural(leafOrder.length, "tip");
+    topTreeMeta.setAttribute("data-tip", `${plural(leafOrder.length, "matched tip")} · ${treeCaption()}`);
   }
-  if (topMatrixMeta) topMatrixMeta.textContent = `${visibleClusters.length} / ${data.clusters.length} clusters`;
+  if (topMatrixMeta) topMatrixMeta.textContent = `${formatInt(visibleClusters.length)} / ${plural(data.clusters.length, "cluster")}`;
   if (topSyntenyMeta) {
     const cluster = data.clusters[selected];
     const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
@@ -1763,6 +2017,14 @@ function renderMatrix(scrollToSelected) {
 
   const left = matrixScrollLeft();
   const top = matrixScrollTop();
+  // Absent cells have their own fill, so the matrix has an edge and an empty
+  // run does not look like an empty pane.
+  const dataW = Math.min(view.w, virtualW - left);
+  const dataH = Math.min(view.h, virtualH - top);
+  if (rows && cols && dataW > 0 && dataH > 0) {
+    ctx.fillStyle = colors.A;
+    ctx.fillRect(0, 0, dataW, dataH);
+  }
   const [firstCol, lastCol] = visibleColumnRange(view.w);
   const [firstRow, lastRow] = visibleRowRange(view.h);
   // Cells never shrink below a hairline, so a dense matrix stays legible instead
@@ -1826,7 +2088,10 @@ function renderMatrix(scrollToSelected) {
       for (const state of states) {
         const set = sets[state];
         if (set.kind === "list" && !set.idx.length) continue;
-        ctx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
+        // In mechanism mode the input cells take the mechanism's colour, and
+        // the cells Recore changed keep theirs, so they still read as findings.
+        const own = colors[STATE_CODES[state]] || colors.A;
+        ctx.fillStyle = processFill && (state === 0 || state === 2) ? processFill : own;
         paintSet(set, rowsets[state], x);
       }
     }
@@ -1834,9 +2099,15 @@ function renderMatrix(scrollToSelected) {
 
   if (gutterRows) {
     ctx.fillStyle = panelBg;
-    const gutterW = Math.min(view.w, virtualW - left);
     for (let r = firstRow; r < lastRow; r += 1) {
-      ctx.fillRect(0, r * cellH - top + drawH, gutterW, cellH - drawH);
+      ctx.fillRect(0, r * cellH - top + drawH, dataW, cellH - drawH);
+    }
+  }
+  if (drawW < cellW) {
+    // Column gutters too, or absent cells would run together into a band.
+    ctx.fillStyle = panelBg;
+    for (let c = firstCol; c < lastCol; c += 1) {
+      ctx.fillRect(c * cellW - left + drawW, 0, cellW - drawW, dataH);
     }
   }
   if (rows === 0 || cols === 0) {
@@ -2164,17 +2435,32 @@ function renderLineageStrip(viewH, top, firstRow, lastRow) {
 
 /** One labelled count with its share, used by both inspector tabs. */
 function countRow(label, value, total, key) {
-  const share = total ? `${(value / total * 100).toFixed(1)}%` : "0%";
+  const share = formatPct(value, total);
   return `<div class="count-row"><span class="sw ${key}"></span>` +
     `<span class="count-name">${escapeHtml(label)}</span>` +
-    `<b class="num">${value.toLocaleString()}</b><small class="num">${share}</small></div>`;
+    `<b class="num">${formatInt(value)}</b><small class="num">${share}</small></div>`;
 }
 
+/** The states this run can have, in drawing order. NSC only when it ran, and
+    kept-out evidence only when there is any: a row of zeros for a step that
+    never ran reads as a result. */
+function shownStates() {
+  const states = ["P", "R"];
+  if (data.nscEnabled) states.push("N");
+  if (anyKeptOut) states.push("K");
+  states.push("A");
+  return states;
+}
+function stateCountRows(counts, total) {
+  return shownStates()
+    .map(state => countRow(labels[state], counts[state] || 0, total, state.toLowerCase()))
+    .join("");
+}
 /** Prevalence as a bar, because "16 / 16" and "3 / 16" should not look alike. */
 function prevalenceBar(present, total, pct) {
   const width = total ? Math.max(1, Math.round(present / total * 100)) : 0;
   return `<div class="prevalence-bar"><i style="width:${width}%"></i></div>` +
-    `<p class="prevalence num">${present.toLocaleString()} / ${total.toLocaleString()} genomes &middot; ${pct}</p>`;
+    `<p class="prevalence num">${formatInt(present)} / ${plural(total, "genome")} &middot; ${pct}</p>`;
 }
 
 /* The inspector reflects the selected cluster; keyed so it is not rebuilt on
@@ -2182,15 +2468,15 @@ function prevalenceBar(present, total, pct) {
 function renderClusterDetails() {
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
-    ? `${selected}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
+    ? `${selected}|${selectedGenome}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
     : "none";
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
     const mechanism = processKind(cluster);
     const mechanismLabel = processLabel(mechanism);
     const mechanismDescription = processDescription(mechanism);
-    const mechanismColor = processColor(mechanism);
-    const prevalencePct = `${Math.round(cluster.prevalence * 1000) / 10}%`;
+    const mechanismColor = processCss(mechanism);
+    const prevalencePct = formatPct(cluster.present, data.genomes.length);
     const refRow = referenceMechanismRow(cluster);
     const supportRow = cluster.support
       ? `<dt>Support tier</dt><dd>${escapeHtml(cluster.support)}</dd>`
@@ -2205,19 +2491,15 @@ function renderClusterDetails() {
       ? `<dt>Recommended wording</dt><dd><span class="process-wording">${escapeHtml(cluster.wording)}</span></dd>`
       : "";
     const total = Math.max(1, data.genomes.length);
-    details.innerHTML = `
+    details.innerHTML = `${cellCardHtml()}
       <div class="cluster-head">
         <h3>${escapeHtml(cluster.name)}</h3>
         <p class="annotation">${escapeHtml(cluster.annotation || "No annotation provided")}</p>
       </div>
       ${prevalenceBar(cluster.present, total, prevalencePct)}
-      <div class="card-title">Evidence in ${total.toLocaleString()} genomes</div>
-      <div class="count-rows">
-        ${countRow("present in input", counts.P, total, "p")}
-        ${countRow("rescued by Recore", counts.R, total, "r")}
-        ${countRow("supported by NSC", counts.N, total, "n")}
-        ${countRow("absent", counts.A, total, "a")}
-      </div>
+      <div class="card-title">Evidence in ${plural(total, "genome")}</div>
+      <div class="count-rows">${stateCountRows(counts, total)}</div>
+      ${changedCellsHtml(selected)}
       <div class="card-title">Mechanism</div>
       <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
       <p class="process-wording">${escapeHtml(mechanismDescription)}</p>
@@ -2245,6 +2527,7 @@ function render(scrollToSelected = false) {
   renderSyntenyPanel();
   renderTree();
   renderLineageLegend();
+  renderCellLegend();
   renderTreeScaleBar();
   renderOverview();
   updateTopBarMeta();
@@ -2474,9 +2757,17 @@ paneMenus.forEach(({menu, button}) => {
   });
   menu.addEventListener("click", event => event.stopPropagation());
 });
+if (cellLegend) {
+  cellLegend.addEventListener("click", event => {
+    if (!event.target.closest("[data-open-mechanisms]")) return;
+    event.stopPropagation();
+    setPaneMenu(matrixMenu, true);
+    if (processLegend) processLegend.scrollIntoView({block: "nearest"});
+  });
+}
 document.addEventListener("pointerdown", event => {
   if (!anyPaneMenuOpen()) return;
-  if (event.target.closest(".pane-menu, #treeMenuBtn, #matrixMenuBtn")) return;
+  if (event.target.closest(".pane-menu, #treeMenuBtn, #matrixMenuBtn, [data-open-mechanisms]")) return;
   setPaneMenu(null, false);
 });
 
@@ -2740,15 +3031,32 @@ matrixPane.addEventListener("mousemove", event => {
   const state = stateAt(clusterIdx, genomeIdx);
   const cluster = data.clusters[clusterIdx];
   const mechanism = processKind(cluster);
-  setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}; ${processLabel(mechanism)}`);
-  const paneRect = matrixPane.getBoundingClientRect();
+  // The cell's own evidence first, the cluster's mechanism after and labelled as
+  // the cluster's, so it does not read as the reason for this cell.
+  const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
+  const stateLine = evidence ? `${labels[state]}: ${evidenceSummary(evidence)}` : labels[state];
+  setHover(r, c, `${data.genomes[genomeIdx]} / ${cluster.name}: ${stateLine}`);
+  const key = `${clusterIdx}|${genomeIdx}`;
+  if (tooltip.dataset.key !== key) {
+    tooltip.dataset.key = key;
+    tooltip.innerHTML = `<strong>${escapeHtml(data.genomes[genomeIdx])}</strong> / ${escapeHtml(cluster.name)}` +
+      `<span class="tt-state"><i class="sw ${state.toLowerCase()}"></i>${escapeHtml(stateLine)}</span>` +
+      `<span class="tt-mech">Cluster mechanism: ${escapeHtml(processLabel(mechanism))}</span>`;
+  }
   tooltip.style.display = "block";
-  tooltip.style.left = `${Math.min(event.clientX - paneRect.left + 14, paneRect.width - 300)}px`;
-  tooltip.style.top = `${event.clientY - paneRect.top + 14}px`;
-  tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(processLabel(mechanism))}</span><br><span>${escapeHtml(cluster.annotation || "")}</span>`;
+  // Below and right of the pointer, flipped at the pane edges.
+  const paneRect = matrixPane.getBoundingClientRect();
+  const x = event.clientX - paneRect.left;
+  const y = event.clientY - paneRect.top;
+  const w = tooltip.offsetWidth;
+  const h = tooltip.offsetHeight;
+  const left = x + 14 + w > paneRect.width ? Math.max(4, x - 14 - w) : x + 14;
+  const top = y + 14 + h > paneRect.height ? Math.max(4, y - 14 - h) : y + 14;
+  tooltip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
 });
 matrixPane.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
+  tooltip.dataset.key = "";
   setHover(-1, -1, defaultStatus);
 });
 matrixPane.addEventListener("click", event => {
@@ -2896,8 +3204,6 @@ function rootOnGenome(genomeIdx) {
    A plain tip click used to reroot the whole tree, which is a big move to
    trigger by accident and left no way to simply ask about a genome. Click now
    inspects; Alt-click reroots. */
-let selectedGenome = -1;
-
 function setInspectorTab(name) {
   const wantGenome = name === "genome";
   if (clusterTab) {
@@ -2913,6 +3219,25 @@ function setInspectorTab(name) {
 }
 
 if (clusterTab) clusterTab.addEventListener("click", () => setInspectorTab("cluster"));
+if (details) {
+  details.addEventListener("click", event => {
+    if (event.target.closest("[data-clear-cell]")) {
+      selectedGenome = -1;
+      highlightedRows = new Set();
+      render(false);
+      return;
+    }
+    const cell = event.target.closest("[data-cell-genome]");
+    if (cell) {
+      // A row of the evidence list opens that cell and brings its tip into view.
+      selectedGenome = Number(cell.getAttribute("data-cell-genome"));
+      scrollToGenome(selectedGenome);
+      return;
+    }
+    const findTip = event.target.closest("[data-find-tip]");
+    if (findTip) scrollToGenome(Number(findTip.getAttribute("data-find-tip")));
+  });
+}
 if (genomeTab) genomeTab.addEventListener("click", () => setInspectorTab("genome"));
 
 function inspectGenome(genomeIdx, {focus = true} = {}) {
@@ -2929,8 +3254,8 @@ function renderGenomeDetails() {
     return;
   }
   const name = data.genomes[selectedGenome] || "";
-  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, A: 0};
-  const assessed = totals.P + totals.R + totals.N + totals.A;
+  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, K: 0, A: 0};
+  const assessed = totals.P + totals.R + totals.N + totals.K + totals.A;
   const lineage = lineageOfGenomeName(name);
   const node = findLeafByGenome(treeRoot, selectedGenome);
   const state = stateAt(selected, selectedGenome);
@@ -2945,15 +3270,13 @@ function renderGenomeDetails() {
     <p class="muted">Tip ${row >= 0 ? row + 1 : "?"} of ${leafOrder.length}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
     <dl class="cluster-dl">
       <dt>In the selected cluster</dt>
-      <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong></dd>
+      <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong>${(() => {
+        const row = cluster ? cellEvidence(selected, selectedGenome)[0] : null;
+        return row ? `<br><span class="muted">${escapeHtml(evidenceSummary(row))}</span>` : "";
+      })()}</dd>
     </dl>
-    <div class="card-title">Cluster content across ${assessed.toLocaleString()} clusters</div>
-    <div class="count-rows">
-      ${countRow("present in input", totals.P, assessed, "p")}
-      ${countRow("rescued by Recore", totals.R, assessed, "r")}
-      ${countRow("supported by NSC", totals.N, assessed, "n")}
-      ${countRow("absent", totals.A, assessed, "a")}
-    </div>
+    <div class="card-title">Cluster content across ${plural(assessed, "cluster")}</div>
+    <div class="count-rows">${stateCountRows(totals, assessed)}</div>
     <dl class="cluster-dl">
       <dt>Position on the tree</dt>
       <dd>${node
@@ -3133,8 +3456,8 @@ function refreshPalette() {
   }
   if (paletteCount) {
     paletteCount.textContent = total > rows.length
-      ? `${rows.length} of ${total.toLocaleString()}`
-      : `${total.toLocaleString()} result${total === 1 ? "" : "s"}`;
+      ? `${formatInt(rows.length)} of ${formatInt(total)}`
+      : plural(total, "result");
   }
 }
 

@@ -62,12 +62,22 @@
   --info-soft: #ecfeff;
   --violet: #8b5cf6;
   --violet-soft: #f5f3ff;
-  --rescue: #059669;
-  --present: #6366f1;
-  --nsc: #8b5cf6;
-  --kept: #dc6803;
-  --absent: #ffffff;
+  /* Cell states. Input presence is the quiet grey background of the matrix,
+     so what Recore found (corrected, kept out) is what draws the eye. Every
+     pair stays apart under deutan and protan vision (dE00 >= 14). */
+  --present: #b3bbc7;
+  --rescue: #0f6fd6;
+  --nsc: #e07b00;
+  --kept: #c01048;
+  --absent: #f4f5f7;
   --absent-stroke: #d4d4d8;
+  /* Mechanism families, kept off the cell-state hues and CVD-checked. */
+  --mech-retained: #667085;
+  --mech-gain: #4ca30d;
+  --mech-loss: #7a2e0e;
+  --mech-disruption: #fac515;
+  --mech-paralog: #15b79e;
+  --mech-unresolved: #1d2939;
 
   --link: #4f46e5;
   --link-hover: #4338ca;
@@ -106,12 +116,18 @@
   --info-soft: rgba(34, 211, 238, 0.14);
   --violet: #a78bfa;
   --violet-soft: rgba(167, 139, 250, 0.14);
-  --rescue: #34d399;
-  --present: #818cf8;
-  --nsc: #a78bfa;
-  --kept: #fdb022;
-  --absent: #18181b;
+  --present: #525a68;
+  --rescue: #4ea1ff;
+  --nsc: #f5a524;
+  --kept: #fd6f8e;
+  --absent: #1f2026;
   --absent-stroke: #3f3f46;
+  --mech-retained: #667085;
+  --mech-gain: #66c61c;
+  --mech-loss: #b54708;
+  --mech-disruption: #fef08a;
+  --mech-paralog: #2ed3b7;
+  --mech-unresolved: #f2f4f7;
 
   --link: #a5b4fc;
   --link-hover: #c7d2fe;
@@ -633,9 +649,55 @@ td a {
   justify-content: flex-end;
 }
 
-.legend span {
+.legend {
+  align-items: center;
+}
+
+/* A swatch sits closer to its own label than to the next key, so each pair
+   reads as one. */
+.legend .key {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.legend .key-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.legend .key-btn:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.sw-stack {
+  display: inline-flex;
+}
+
+.sw-stack .sw {
+  width: 7px;
+  margin-right: 0;
+  border-radius: 0;
+}
+
+.sw-stack .sw:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.sw-stack .sw:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.legend .key .sw {
+  margin-right: 0;
+  vertical-align: 0;
+  flex: 0 0 auto;
 }
 
 .sw {
@@ -650,6 +712,7 @@ td a {
 .sw.p { background: var(--present); }
 .sw.r { background: var(--rescue); }
 .sw.n { background: var(--nsc); }
+.sw.k { background: var(--kept); }
 .sw.a {
   background: var(--absent);
   border: 1px solid var(--absent-stroke);
@@ -938,6 +1001,21 @@ td a {
 .lineage-chip small {
   font-size: 12px;
   color: var(--muted);
+}
+
+.lineage-chip i.ramp-zero {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--faint);
+  background: var(--panel);
+}
+
+.burden-ramp {
+  display: inline-block;
+  width: 120px;
+  height: 9px;
+  border-radius: 2px;
 }
 
 /* ===== Drag handles between panes =====
@@ -1552,13 +1630,15 @@ kbd {
 }
 
 .readout.pos b { color: var(--positive); }
+.readout.rescue b { color: var(--rescue); }
+.readout.kept b { color: var(--kept); }
 .readout.warn b { color: var(--warning); }
 
 /* Chrome is one row now, so it gives things up in a deliberate order rather than
    overflowing: policy first, then the derived figures, then the title, then the
    readout entirely. What is dropped is always still in the details drawer. */
 @media (max-width: 1560px) {
-  .readout:nth-child(7) { display: none; }
+  .readout:nth-child(8) { display: none; }
 }
 
 /* The annotation is a courtesy preview; the cluster name is the answer. */
@@ -1572,7 +1652,8 @@ kbd {
 }
 
 @media (max-width: 1340px) {
-  .readout:nth-child(5) { display: none; }
+  .readout:nth-child(6),
+  .readout:nth-child(7) { display: none; }
 }
 
 @media (max-width: 1240px) {
@@ -2242,6 +2323,206 @@ input.switch:focus-visible {
   color: var(--faint);
 }
 
+/* ===== Cell readout =====
+   The tooltip follows the pointer over the matrix; it was unstyled, so it sat
+   static and transparent under the scroller and nobody ever saw it. */
+.matrix-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  display: none;
+  max-width: 300px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: var(--bg-elev);
+  box-shadow: var(--shadow-3);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+  will-change: transform;
+}
+
+.matrix-tooltip strong {
+  font-weight: 600;
+}
+
+.matrix-tooltip .tt-state,
+.matrix-tooltip .tt-mech {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.matrix-tooltip .tt-mech {
+  color: color-mix(in srgb, var(--bg-elev) 70%, var(--ink));
+}
+
+.matrix-tooltip .sw {
+  margin-right: 0;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-elev) 40%, transparent);
+}
+
+.cell-card {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.cell-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cell-card-head .card-title {
+  margin-top: 0;
+}
+
+.cell-close {
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cell-name {
+  margin: 2px 0 0;
+  font-weight: 600;
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.cell-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.cell-state .sw,
+.changed-cell .sw {
+  margin-right: 0;
+  flex: 0 0 auto;
+}
+
+.cell-empty {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+}
+
+.evidence-row {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.evidence-row.rejected {
+  opacity: 0.85;
+}
+
+.ev-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.ev-type {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ev-action {
+  color: var(--muted);
+}
+
+.ev-locus {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.ev-metrics,
+.ev-facts,
+.ev-pub {
+  margin-top: 2px;
+}
+
+.ev-notes {
+  margin-top: var(--space-2);
+}
+
+.changed-cells {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changed-cell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changed-cell:hover,
+.changed-cell:focus-visible {
+  background: var(--bg-hover);
+}
+
+.changed-cell small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.changed-genome {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changed-more {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
 .prevalence-bar {
   height: 6px;
   margin-top: var(--space-3);
@@ -2422,8 +2703,10 @@ input.switch:focus-visible {
 .pane-head .legend {
   margin-left: auto;
   font-size: 12px;
-  gap: var(--space-2);
-  flex: 0 0 auto;
+  gap: 12px;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .tree-pane {
@@ -2906,8 +3189,18 @@ input.switch:focus-visible {
     --line: #d4d4d8;
     --line-strong: #a1a1aa;
     --soft-line: #e4e4e7;
-    --absent: #ffffff;
+    --present: #b3bbc7;
+    --rescue: #0f6fd6;
+    --nsc: #e07b00;
+    --kept: #c01048;
+    --absent: #f4f5f7;
     --absent-stroke: #d4d4d8;
+    --mech-retained: #667085;
+    --mech-gain: #4ca30d;
+    --mech-loss: #7a2e0e;
+    --mech-disruption: #fac515;
+    --mech-paralog: #15b79e;
+    --mech-unresolved: #1d2939;
     --shadow-1: none;
     --shadow-2: none;
     --shadow-3: none;

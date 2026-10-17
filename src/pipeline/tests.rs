@@ -2258,3 +2258,153 @@ fn report_payload_is_safe_inside_a_script_element() {
     assert!(!safe.contains('\u{2028}'));
     assert!(safe.contains("\\u003c!--\\u003cscript\\u003e"));
 }
+
+fn evidence_row(cluster: usize, genome: usize, values: &[(&str, &str)]) -> OrthologyEvidenceRow {
+    let fields = ORTHOLOGY_EVIDENCE_COLUMNS
+        .iter()
+        .map(|column| {
+            values
+                .iter()
+                .find(|(c, _)| c == column)
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    OrthologyEvidenceRow {
+        cluster_idx: ClusterIdx(cluster),
+        genome_idx: GenomeIdx(genome),
+        fields,
+    }
+}
+
+fn test_base64_decode(text: &str) -> Vec<u8> {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits = 0u32;
+    let mut n_bits = 0;
+    let mut out = Vec::new();
+    for c in text.bytes().filter(|&c| c != b'=') {
+        bits = (bits << 6) | alphabet.iter().position(|&a| a == c).unwrap() as u32;
+        n_bits += 6;
+        if n_bits >= 8 {
+            n_bits -= 8;
+            out.push((bits >> n_bits) as u8);
+            bits &= (1 << n_bits) - 1;
+        }
+    }
+    out
+}
+
+/// The JSON string array that follows `"key":` in `json` (no escapes inside).
+fn test_json_strings(json: &str, key: &str) -> Vec<String> {
+    let start = json.find(&format!("\"{key}\":[")).unwrap() + key.len() + 4;
+    let end = start + json[start..].find(']').unwrap();
+    json[start..end]
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_matches('"').to_string())
+        .collect()
+}
+
+/// The explorer reads each cell's evidence from one base64 string per cluster.
+/// Decoding it must give back the rows of orthology_evidence.tsv, field for
+/// field, in genome order, with empty numbers as "not given".
+#[test]
+fn explorer_evidence_round_trips_per_cluster() {
+    let rows = vec![
+        evidence_row(
+            0,
+            2,
+            &[
+                ("decision", "accepted"),
+                ("matrix_action", "audit_only_policy"),
+                ("rescue_type", "PSEUDOGENE:1stops"),
+                ("contig", "g3_ctg"),
+                ("start", "101"),
+                ("end", "400"),
+                ("identity", "99.1"),
+                ("coverage", "100.0"),
+                ("strand", "-"),
+            ],
+        ),
+        evidence_row(
+            0,
+            1,
+            &[
+                ("decision", "accepted"),
+                ("matrix_action", "correct_presence"),
+                ("rescue_type", "DROPPED"),
+                ("contig", "g2_ctg"),
+                ("start", "7"),
+                ("end", "1206"),
+                ("identity", "93.6"),
+                ("coverage", ""),
+                ("strand", "+"),
+            ],
+        ),
+        // A cluster the explorer does not draw (merged away by NSC) is left out.
+        evidence_row(5, 0, &[("decision", "accepted"), ("contig", "hidden")]),
+    ];
+    let rendered: HashMap<usize, usize> = [(0usize, 0usize), (1, 1)].into_iter().collect();
+    let json = output::explorer_evidence_json(&rows, &rendered, 2);
+    let strings = test_json_strings(&json, "strings");
+    let by_cluster = test_json_strings(&json, "byCluster");
+    assert_eq!(by_cluster.len(), 2);
+    assert_eq!(
+        by_cluster[1], "",
+        "a cluster with no evidence costs nothing"
+    );
+    assert!(!strings.iter().any(|s| s == "hidden"));
+
+    let bytes = test_base64_decode(&by_cluster[0]);
+    let mut pos = 0;
+    let mut next = || {
+        let (mut value, mut shift) = (0u64, 0);
+        loop {
+            let byte = bytes[pos];
+            pos += 1;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    };
+    assert_eq!(next(), 2);
+    let mut genome = 0;
+    let mut decoded = Vec::new();
+    for _ in 0..2 {
+        genome += next();
+        let _profile = next();
+        let text: Vec<String> = (0..output::EXPLORER_EVIDENCE_TEXT.len())
+            .map(|_| strings[next() as usize].clone())
+            .collect();
+        let numbers: Vec<u64> = (0..4).map(|_| next()).collect();
+        decoded.push((genome, text, numbers));
+    }
+    // Genome order, not input order.
+    assert_eq!(decoded[0].0, 1);
+    assert_eq!(decoded[0].1[0], "DROPPED");
+    assert_eq!(decoded[0].1[1], "g2_ctg");
+    assert_eq!(decoded[0].2, vec![8, 1207, 937, 0]);
+    assert_eq!(decoded[1].0, 2);
+    assert_eq!(decoded[1].1[0], "PSEUDOGENE:1stops");
+    assert_eq!(decoded[1].2, vec![102, 401, 992, 1001]);
+    assert!(json.contains("\"audit_only_policy\"") && json.contains("\"correct_presence\""));
+}
+
+/// The cell tooltip was unstyled for a release: it sat static and transparent
+/// under the scroller. Keep the rule, and keep legend keys as swatch+label pairs.
+#[test]
+fn report_styles_the_cell_tooltip_and_pairs_legend_keys() {
+    let css = include_str!("report_assets/report.css");
+    let rule = css
+        .split(".matrix-tooltip {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("a .matrix-tooltip rule");
+    assert!(rule.contains("position: absolute"));
+    assert!(rule.contains("pointer-events: none"));
+    assert!(rule.contains("background: var(--ink)"));
+    let writer = include_str!("output.rs");
+    assert!(writer.contains("<span class='key'><i class='sw p'></i>input</span>"));
+}

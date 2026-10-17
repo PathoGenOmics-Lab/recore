@@ -26,7 +26,7 @@ const MODE_BITSET: u8 = 2;
 /// evidence kept out of the binary matrix.
 pub(super) const STATE_SETS: usize = 4;
 
-fn push_varint(out: &mut Vec<u8>, mut value: u64) {
+pub(super) fn push_varint(out: &mut Vec<u8>, mut value: u64) {
     loop {
         let mut byte = (value & 0x7f) as u8;
         value >>= 7;

@@ -66,7 +66,38 @@ A plain click on a tip opens that genome in the inspector: its lineage, its
 state in the selected cluster, its counts across all clusters, and its distance
 from the root.
 
+The burden modes draw a ramp from the line colour to the state colour, with a
+hollow ring for zero, and a key under the top bar gives the ramp's maximum.
+
 ## The matrix
+
+Each cell is one cluster in one genome, in one of five states:
+
+| State | Colour | Meaning |
+|-------|--------|---------|
+| input | grey | present in the input matrix |
+| corrected | blue | absent in the input; Recore found the gene and corrected the cell |
+| NSC | orange | absent in the input; near-identical clusters were merged and the merged cluster is present (only when NSC ran) |
+| kept out | crimson | Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix |
+| absent | pale | absent, with no evidence |
+
+Input presence is the quiet background on purpose, so what Recore found is what
+draws the eye at any zoom. The five colours stay distinguishable under deutan and
+protan colour vision. The legend in the matrix header only lists the states the
+run has.
+
+**Cell evidence.** Hover a cell for its genome, cluster and state; for a
+corrected or kept-out cell the tooltip adds the rescue type, identity and
+coverage. Click a cell for the full row from `orthology_evidence.tsv` at the top
+of the inspector: the locus, the synteny and ORF checks, whether it went into
+the matrix and why not, and its publication status. The cluster card lists every
+evidence row of the cluster, corrections first; clicking one opens that cell and
+brings its tip into view.
+
+**Mechanism colour.** In mechanism mode the input cells take the colour of their
+cluster's mechanism family (retained, gain, loss, disruption, paralog or context
+change, artifact or unresolved), while corrected and kept-out cells keep their
+own colours. The legend key opens the full list, with counts and filters.
 
 The sliders icon in the matrix header holds cell colour, column order, the
 reference-absent filter and the mechanism filter.

@@ -1753,95 +1753,191 @@ fn explorer_state_char(
     }
 }
 
-/// The text columns of orthology_evidence.tsv the explorer shows per cell.
-const EXPLORER_EVIDENCE_TEXT: [&str; 17] = [
+/// Evidence columns that take few distinct values. A row stores one index into
+/// a table of their combinations instead of eleven string indices.
+pub(super) const EXPLORER_EVIDENCE_PROFILE: [&str; 11] = [
     "decision",
     "evidence_state",
     "matrix_action",
     "publication_status",
     "recommended_wording",
-    "rescue_type",
-    "contig",
     "strand",
     "synteny",
-    "synteny_score",
     "orf_integrity_signal",
-    "annotation_match",
-    "annotation_cluster",
     "rejection_reason",
-    "fragment_note",
     "orthology_confidence_tier",
     "risk_flags",
 ];
-/// The numeric columns, kept as numbers.
-const EXPLORER_EVIDENCE_NUMBERS: [&str; 4] = ["identity", "coverage", "start", "end"];
+/// Free-text evidence columns, each stored as a string-table index.
+pub(super) const EXPLORER_EVIDENCE_TEXT: [&str; 6] = [
+    "rescue_type",
+    "contig",
+    "synteny_score",
+    "annotation_match",
+    "annotation_cluster",
+    "fragment_note",
+];
 
-/// Every evidence row, accepted or rejected, for the cells the explorer draws.
+/// Every evidence row, accepted or rejected, for the clusters the explorer draws.
 ///
-/// One row per (cluster, genome, evidence), read from the same rows that
-/// orthology_evidence.tsv is written from, so a cell's explanation on the page
-/// is word for word what the file says. Text is stored once in a string table
-/// and referred to by index, and the size follows the number of evidence rows,
-/// not the size of the matrix.
-fn explorer_evidence_json(
+/// The rows are the ones orthology_evidence.tsv is written from, so a cell's
+/// explanation on the page is word for word what the file says. Each drawn
+/// cluster gets one base64 string, decoded only when the cluster is selected:
+/// a row count, then per row (sorted by genome) the varints
+/// `genome delta, profile, text columns.., start+1, end+1, identity*10+1,
+/// coverage*10+1`, where 0 means the field was empty. About 25 bytes a row, so
+/// a 10,000-genome run with 280,000 evidence rows adds a few MB, not 30.
+pub(super) fn explorer_evidence_json(
     evidence: &[OrthologyEvidenceRow],
     rendered_index: &HashMap<usize, usize>,
+    n_rendered: usize,
 ) -> String {
-    use std::fmt::Write as _;
-    let mut strings: Vec<String> = Vec::new();
-    let mut string_index: HashMap<String, usize> = HashMap::new();
-    let mut intern = |value: &str| -> usize {
+    let mut strings: Vec<String> = vec![String::new()];
+    let mut string_index: HashMap<String, u64> = HashMap::default();
+    string_index.insert(String::new(), 0);
+    let mut intern = |value: &str| -> u64 {
         if let Some(&idx) = string_index.get(value) {
             return idx;
         }
-        let idx = strings.len();
+        let idx = strings.len() as u64;
         strings.push(value.to_string());
         string_index.insert(value.to_string(), idx);
         idx
     };
-    let mut rows = String::new();
-    let mut first = true;
+    let mut profiles: Vec<Vec<u64>> = Vec::new();
+    let mut profile_index: HashMap<Vec<u64>, u64> = HashMap::default();
+    let mut by_cluster: Vec<Vec<(usize, Vec<u64>)>> = vec![Vec::new(); n_rendered];
+    // Empty, unparsable or non-finite numbers are stored as 0, "not given".
+    let plus_one = |text: &str, scale: f64| -> u64 {
+        match text.parse::<f64>() {
+            Ok(v) if v.is_finite() && v >= 0.0 => (v * scale).round() as u64 + 1,
+            _ => 0,
+        }
+    };
     for row in evidence {
         let Some(&cluster) = rendered_index.get(&row.cluster_idx.val()) else {
             continue;
         };
-        if !first {
-            rows.push(',');
-        }
-        first = false;
-        write!(rows, "[{},{}", cluster, row.genome_idx.val()).expect("write to String");
-        for column in EXPLORER_EVIDENCE_TEXT {
-            write!(rows, ",{}", intern(row.field(column))).expect("write to String");
-        }
-        for column in EXPLORER_EVIDENCE_NUMBERS {
-            match row.field(column).parse::<f64>() {
-                Ok(value) if value.is_finite() => {
-                    write!(rows, ",{}", value).expect("write to String")
-                }
-                _ => rows.push_str(",null"),
+        let profile: Vec<u64> = EXPLORER_EVIDENCE_PROFILE
+            .iter()
+            .map(|column| intern(row.field(column)))
+            .collect();
+        let profile_id = match profile_index.get(&profile) {
+            Some(&id) => id,
+            None => {
+                let id = profiles.len() as u64;
+                profiles.push(profile.clone());
+                profile_index.insert(profile, id);
+                id
             }
-        }
-        rows.push(']');
+        };
+        let mut values = vec![profile_id];
+        values.extend(
+            EXPLORER_EVIDENCE_TEXT
+                .iter()
+                .map(|column| intern(row.field(column))),
+        );
+        values.push(plus_one(row.field("start"), 1.0));
+        values.push(plus_one(row.field("end"), 1.0));
+        values.push(plus_one(row.field("identity"), 10.0));
+        values.push(plus_one(row.field("coverage"), 10.0));
+        by_cluster[cluster].push((row.genome_idx.val(), values));
     }
-    let mut out = String::from("{\"text\":");
+
+    let mut out = String::from("{\"profileColumns\":");
+    out.push_str(&json_string_array(
+        &EXPLORER_EVIDENCE_PROFILE.map(str::to_string),
+    ));
+    out.push_str(",\"textColumns\":");
     out.push_str(&json_string_array(
         &EXPLORER_EVIDENCE_TEXT.map(str::to_string),
     ));
-    out.push_str(",\"numbers\":");
-    out.push_str(&json_string_array(
-        &EXPLORER_EVIDENCE_NUMBERS.map(str::to_string),
-    ));
-    out.push_str(",\"strings\":[");
-    for (idx, value) in strings.iter().enumerate() {
+    out.push_str(",\"strings\":");
+    out.push_str(&json_string_array(&strings));
+    out.push_str(",\"profiles\":[");
+    for (idx, profile) in profiles.iter().enumerate() {
         if idx > 0 {
             out.push(',');
         }
-        out.push_str(&json_script_escape(value));
+        out.push('[');
+        for (j, value) in profile.iter().enumerate() {
+            if j > 0 {
+                out.push(',');
+            }
+            out.push_str(&value.to_string());
+        }
+        out.push(']');
     }
-    out.push_str("],\"rows\":[");
-    out.push_str(&rows);
+    out.push_str("],\"byCluster\":[");
+    let mut bytes = Vec::new();
+    for (cluster, rows) in by_cluster.iter_mut().enumerate() {
+        if cluster > 0 {
+            out.push(',');
+        }
+        if rows.is_empty() {
+            out.push_str("\"\"");
+            continue;
+        }
+        rows.sort_by_key(|(genome, _)| *genome);
+        bytes.clear();
+        cellcodec::push_varint(&mut bytes, rows.len() as u64);
+        let mut previous = 0usize;
+        for (genome, values) in rows.iter() {
+            cellcodec::push_varint(&mut bytes, (genome - previous) as u64);
+            previous = *genome;
+            for &value in values {
+                cellcodec::push_varint(&mut bytes, value);
+            }
+        }
+        out.push('"');
+        out.push_str(&cellcodec::base64(&bytes));
+        out.push('"');
+    }
     out.push_str("]}");
     out
+}
+
+/// Cells with evidence that the corrected matrix does not show, each with the
+/// matrix_action of its first evidence row. The explorer draws these as "kept
+/// out", and the run readout counts them by reason; both read this one map.
+fn kept_out_cells<'a>(
+    pa: &crate::parser::PresenceAbsence,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_presence: &ahash::HashSet<(usize, usize)>,
+    evidence: &'a [OrthologyEvidenceRow],
+) -> ahash::HashMap<(usize, usize), &'a str> {
+    let mut out = ahash::HashMap::default();
+    for row in evidence {
+        let (ci, gi) = (row.cluster_idx, row.genome_idx);
+        if pa.is_present(ci, gi)
+            || rescue_map.contains_key(&(ci, gi))
+            || nsc_presence.contains(&(ci.val(), gi.val()))
+        {
+            continue;
+        }
+        out.entry((ci.val(), gi.val()))
+            .or_insert_with(|| row.field("matrix_action"));
+    }
+    out
+}
+
+/// Kept-out cells by reason: (matrix policy, quality floors, rejected by a guard).
+fn kept_out_counts(
+    pa: &crate::parser::PresenceAbsence,
+    rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
+    nsc_result: &Option<nscluster::NsClusterResult>,
+    evidence: &[OrthologyEvidenceRow],
+) -> (usize, usize, usize) {
+    let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
+    let mut counts = (0, 0, 0);
+    for action in kept_out_cells(pa, rescue_map, &nsc_presence, evidence).into_values() {
+        match action {
+            "audit_only_policy" => counts.0 += 1,
+            "audit_only_quality" => counts.1 += 1,
+            _ => counts.2 += 1,
+        }
+    }
+    counts
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1859,16 +1955,10 @@ fn build_explorer_data_json(
 
     let tree_json = pruned_phylo_json(&tree.root)?;
     let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
-    let kept_out: ahash::HashSet<(usize, usize)> = evidence
-        .iter()
-        .map(|row| (row.cluster_idx, row.genome_idx))
-        .filter(|&(ci, gi)| {
-            !pa.is_present(ci, gi)
-                && !rescue_map.contains_key(&(ci, gi))
-                && !nsc_presence.contains(&(ci.val(), gi.val()))
-        })
-        .map(|(ci, gi)| (ci.val(), gi.val()))
-        .collect();
+    let kept_out: ahash::HashSet<(usize, usize)> =
+        kept_out_cells(pa, rescue_map, &nsc_presence, evidence)
+            .into_keys()
+            .collect();
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
         .as_ref()
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
@@ -2015,7 +2105,8 @@ fn build_explorer_data_json(
         rendered_cluster_names.push(cluster_name.to_string());
     }
 
-    out.push_str("],\"cellEncoding\":\"recore.cells.v2\",\"cells\":[");
+    write!(out, "],\"nscEnabled\":{}", nsc_result.is_some()).expect("write to String");
+    out.push_str(",\"cellEncoding\":\"recore.cells.v2\",\"cells\":[");
     for (idx, row) in states.iter().enumerate() {
         if idx > 0 {
             out.push(',');
@@ -2035,7 +2126,11 @@ fn build_explorer_data_json(
         .expect("write to String is infallible");
     }
     out.push_str("],\"evidence\":");
-    out.push_str(&explorer_evidence_json(evidence, &rendered_index));
+    out.push_str(&explorer_evidence_json(
+        evidence,
+        &rendered_index,
+        states.len(),
+    ));
     out.push_str(",\"tree\":");
     out.push_str(&tree_json);
     out.push_str(",\"synteny\":{");
@@ -2248,7 +2343,7 @@ fn explorer_workspace_html(
     html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
     write!(
         html,
-        "<header class='pane-head'><span class='pane-name'>Corrected matrix</span><small id='topMatrixMeta'></small><span class='legend' aria-label='Cell legend'><i class='sw p'></i>input<i class='sw r'></i>rescued<i class='sw n'></i>NSC<i class='sw a'></i>absent</span><span class='head-zoom'><input id='cellSize' type='range' min='0.25' max='90' step='0.25' value='8' aria-label='Column zoom' data-tip='Column width'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
+        "<header class='pane-head'><span class='pane-name'>Corrected matrix</span><small id='topMatrixMeta'></small><span id='cellLegend' class='legend' aria-label='Cell legend'><span class='key'><i class='sw p'></i>input</span><span class='key'><i class='sw r'></i>corrected</span><span class='key'><i class='sw a'></i>absent</span></span><span class='head-zoom'><input id='cellSize' type='range' min='0.25' max='90' step='0.25' value='8' aria-label='Column zoom' data-tip='Column width'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
         icon("sliders")
     )
     .expect("write to String is infallible");
@@ -2323,6 +2418,9 @@ pub(super) fn write_html_report(
 
     let matrix_corrected_total = stats.matrix_corrected + stats.nsc_matrix_corrected;
     let rejected_total = stats.synteny_rejected + stats.paralog_rejected;
+    let (kept_policy, kept_quality, _kept_rejected) =
+        kept_out_counts(pa, rescue_map, nsc_result, evidence);
+    let kept_total = kept_policy + kept_quality;
     let rescued = stats.dropped
         + stats.missing_cds
         + stats.split
@@ -2452,7 +2550,7 @@ pub(super) fn write_html_report(
         (
             format_count(matrix_corrected_total),
             "corrected",
-            "pos",
+            "rescue",
             "Absent cells Recore turned into a supported presence",
         ),
         (
@@ -2465,9 +2563,15 @@ pub(super) fn write_html_report(
             "Share of the searchable absence cells that were corrected",
         ),
         (
+            format_count(kept_total),
+            "kept out",
+            if kept_total > 0 { "kept" } else { "" },
+            "Cells where Recore found the gene but the matrix policy or a quality floor kept it out of the corrected matrix",
+        ),
+        (
             format_count(rejected_total),
-            "guarded",
-            "warn",
+            "rejected",
+            if rejected_total > 0 { "warn" } else { "" },
             "Candidate corrections rejected by the synteny and paralog guards",
         ),
         (
@@ -2630,12 +2734,16 @@ pub(super) fn write_html_report(
 
     write!(
         html,
-        "<section class='drawer-section'><h3>Summary</h3><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore retained <strong class='num'>{}</strong> accepted evidence rows for audit and kept <strong class='num'>{}</strong> candidates out of the binary matrix through synteny/paralog guardrails. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p><p class='path'>Output dir: {}</p></section>",
+        "<section class='drawer-section'><h3>Summary</h3><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore found the gene in <strong class='num'>{}</strong> more cells that it kept out of the matrix, <strong class='num'>{}</strong> by the {:?} policy and <strong class='num'>{}</strong> by the quality floors, and its synteny and paralog guards rejected <strong class='num'>{}</strong> candidates. All <strong class='num'>{}</strong> accepted evidence rows are in orthology_evidence.tsv. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p><p class='path'>Output dir: {}</p></section>",
         format_count(matrix_corrected_total),
         stats.matrix_policy,
         format_count(stats.searchable_gaps),
-        format_count(rescued),
+        format_count(kept_total),
+        format_count(kept_policy),
+        stats.matrix_policy,
+        format_count(kept_quality),
         format_count(rejected_total),
+        format_count(rescued),
         format_count(stats.core_before),
         format_count(core_after),
         core_delta,
