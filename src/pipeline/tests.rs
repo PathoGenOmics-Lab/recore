@@ -260,6 +260,8 @@ fn html_report_summarizes_run_outputs() {
         synteny_enabled: false,
         nsc_clusters: 0,
         nsc_merged_genes: 0,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
     };
 
     write_html_report(&args, &pa, &stats, &HashMap::new(), &None, None, out.path()).unwrap();
@@ -374,6 +376,8 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         synteny_enabled: false,
         nsc_clusters: 0,
         nsc_merged_genes: 0,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
     };
     let tree = PhyloTree {
         root: PhyloNode {
@@ -1290,6 +1294,8 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         synteny_enabled: true,
         nsc_clusters: 1,
         nsc_merged_genes: 1,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
     };
 
     write_html_report(
@@ -1983,6 +1989,79 @@ fn nsc_presence_union_includes_matrix_rescued_members() {
     let updates = nsc_presence_updates(&pa, &nsc, &rescue_map);
 
     assert!(updates.contains(&(0, 1)));
+}
+
+/// The summary's matrix-corrected count, its remaining gaps and the report's
+/// share come from what write_corrected_csv writes. A rescue in a row that NSC
+/// merges away is not written, and used to be counted as a correction anyway;
+/// "Remaining gaps" used to be searched gaps minus corrections, which is not
+/// what is left in the file.
+#[test]
+fn corrected_matrix_counts_only_what_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("pa.csv");
+    std::fs::write(
+        &csv_path,
+        "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,\
+         Avg sequences per isolate,Genome Fragment,Order within Fragment,\
+         Accessory Order,QC,Min group size nuc,Max group size nuc,Avg group size nuc,g1,g2,g3\n\
+         rep,,p,1,1,1,0,0,0,,1,1,1,rep_g1,,\n\
+         member,,p,0,0,0,0,0,0,,1,1,1,,,\n\
+         other,,p,1,1,1,0,0,0,,1,1,1,other_g1,,\n",
+    )
+    .unwrap();
+    let pa = crate::parser::parse_presence_absence(&csv_path).unwrap();
+
+    let mut merge_map = HashMap::new();
+    merge_map.insert(ClusterIdx(1), ClusterIdx(0));
+    let nsc = Some(nscluster::NsClusterResult {
+        merged_clusters: vec![nscluster::NsCluster {
+            members: vec![ClusterIdx(0), ClusterIdx(1)],
+            representative: "rep".into(),
+        }],
+        total_merged_genes: 2,
+        n_clusters: 1,
+        merge_map,
+    });
+    let member_rescue = RescueEvent {
+        cluster_idx: ClusterIdx(1),
+        genome_idx: GenomeIdx(1),
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let other_rescue = RescueEvent {
+        cluster_idx: ClusterIdx(2),
+        genome_idx: GenomeIdx(1),
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let mut rescue_map = HashMap::new();
+    rescue_map.insert((ClusterIdx(1), GenomeIdx(1)), &member_rescue);
+    rescue_map.insert((ClusterIdx(2), GenomeIdx(1)), &other_rescue);
+
+    let counts = write_corrected_csv(&pa, &rescue_map, dir.path(), &nsc).unwrap();
+    assert_eq!(
+        counts.rescued_cells, 1,
+        "the member's rescue sits in a row that is not written"
+    );
+    assert_eq!(
+        counts.nsc_cells, 1,
+        "it reaches rep/g2 as NSC_MERGED instead"
+    );
+
+    // rep: rep_g1, NSC_MERGED, "" and other: other_g1, RESCUED, "".
+    let written =
+        std::fs::read_to_string(dir.path().join("gene_presence_absence_recore.csv")).unwrap();
+    let empty: usize = written
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').skip(13).filter(|c| c.is_empty()).count())
+        .sum();
+    assert_eq!(
+        written.lines().count(),
+        3,
+        "header plus two rows: member is merged away"
+    );
+    assert_eq!(counts.absent_cells, empty);
+    assert_eq!(counts.absent_cells, 2);
 }
 
 #[test]

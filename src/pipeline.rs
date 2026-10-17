@@ -171,6 +171,7 @@ pub fn run(args: &Args) -> Result<()> {
     let mut total_gaps = 0usize;
     let mut filtered_gaps = 0usize;
     let mut skipped_by_prevalence = 0usize;
+    let mut skipped_no_reference = 0usize;
 
     for ci_val in 0..n_clusters {
         let ci = ClusterIdx(ci_val);
@@ -184,6 +185,12 @@ pub fn run(args: &Args) -> Result<()> {
         };
         if prevalence < min_prevalence {
             skipped_by_prevalence += missing;
+            continue;
+        }
+        // No sequence to search with: these gaps cannot be searched, and used to
+        // be counted as "Gaps searched" all the same.
+        if !pan_ref.contains_key(pa.cluster_name(ci)) {
+            skipped_no_reference += missing;
             continue;
         }
         for (gi_val, &present) in pa.presence_row(ci).iter().enumerate() {
@@ -202,10 +209,22 @@ pub fn run(args: &Args) -> Result<()> {
         min_prevalence * 100.0,
         skipped_by_prevalence
     );
+    if skipped_no_reference > 0 {
+        warn!(
+            "{} gaps belong to clusters with no sequence in the pan-genome reference, and cannot be searched",
+            skipped_no_reference
+        );
+    }
     info!(
         "Core genome (before): {} / {} clusters",
         core_before, n_clusters
     );
+
+    // Per-genome gap counts for genome_qc, taken before the FASTA filter: a
+    // genome whose FASTA is missing has gaps that could not be searched, and
+    // that is what its qc_status=fail is for. Counted after the filter, its
+    // count was always 0 and fail could never fire.
+    let gaps_passing_filter_by_genome: Vec<usize> = gaps_by_genome.iter().map(Vec::len).collect();
 
     // ── 3. Filter to genomes with FASTA files ──
     let mut searchable_genomes: Vec<(GenomeIdx, Vec<ClusterIdx>)> = Vec::new();
@@ -241,16 +260,14 @@ pub fn run(args: &Args) -> Result<()> {
         .iter()
         .map(|(_, clusters)| clusters.len())
         .sum();
-    let mut gaps_passing_filter_by_genome = vec![0usize; n_genomes];
-    for (gi, clusters) in &searchable_genomes {
-        gaps_passing_filter_by_genome[gi.val()] = clusters.len();
-    }
 
     // ── 4. Load GFF annotations ──
     let mut gff_paths: HashMap<GenomeIdx, PathBuf> = HashMap::new();
     let mut gff_contig_remaps: Vec<(String, String, String, usize)> = Vec::new();
     let gff_indices: HashMap<GenomeIdx, GffIndex> = if let Some(ref ann_dir) = args.annotations {
         let mut data = HashMap::new();
+        let mut parse_failures = 0usize;
+        let mut unusable = 0usize;
         let annotation_files = resolve_annotation_files_for_pa(&pa, ann_dir);
         for gi_val in 0..n_genomes {
             let gi = GenomeIdx(gi_val);
@@ -261,31 +278,43 @@ pub fn run(args: &Args) -> Result<()> {
             match parse_gff_genes(&path) {
                 Ok(mut raw_genes) => {
                     if let Some(fasta_path) = genome_files.get(genome_name) {
-                        match load_genome_contig_names(fasta_path) {
-                            Ok(contig_names) => {
-                                if let Some((from, to, n_records)) =
-                                    normalize_gff_records_to_fasta(&mut raw_genes, &contig_names)
-                                {
-                                    gff_contig_remaps.push((
-                                        genome_name.to_string(),
-                                        from,
-                                        to,
-                                        n_records,
-                                    ));
-                                }
-                            }
-                            Err(e) => {
-                                // `{:#}` and not `{}`: anyhow's plain Display
-                                // prints only the outermost context, so once
-                                // the reader started naming the file this line
-                                // said the path and dropped the reason, which
-                                // is the half a reader needs. The alternate
-                                // form walks the chain.
+                        let contig_names =
+                            load_genome_contig_names(fasta_path).with_context(|| {
+                                format!("Cannot read FASTA contig names for {}", genome_name)
+                            })?;
+                        if let Some((from, to, n_records)) =
+                            normalize_gff_records_to_fasta(&mut raw_genes, &contig_names)
+                        {
+                            gff_contig_remaps.push((genome_name.to_string(), from, to, n_records));
+                        }
+                        // A GFF that annotates none of the assembly's contigs, or
+                        // has no CDS at all, used to count as loaded: every hit
+                        // then sat on "unannotated" sequence, became MISSING_CDS,
+                        // and nothing was corrected, with no warning that said so.
+                        let fasta_set: ahash::HashSet<&str> =
+                            contig_names.iter().map(String::as_str).collect();
+                        let on_assembly = raw_genes
+                            .iter()
+                            .filter(|record| fasta_set.contains(record.0.as_str()))
+                            .count();
+                        if raw_genes.is_empty() || on_assembly == 0 {
+                            unusable += 1;
+                            if raw_genes.is_empty() {
                                 warn!(
-                                    "Cannot read FASTA contig names for {}: {:#}",
-                                    genome_name, e
-                                )
+                                    "GFF for {} ({}) has no CDS records; it is not used",
+                                    genome_name,
+                                    path.display()
+                                );
+                            } else {
+                                warn!(
+                                    "GFF for {} annotates none of its assembly's contigs \
+                                     (GFF seqid '{}', FASTA contig '{}'); it is not used",
+                                    genome_name,
+                                    raw_genes[0].0,
+                                    contig_names.first().map(String::as_str).unwrap_or("")
+                                );
                             }
+                            continue;
                         }
                     }
                     let genes: Vec<(GffGene, Vec<String>, Vec<String>)> = raw_genes
@@ -311,11 +340,16 @@ pub fn run(args: &Args) -> Result<()> {
                 // matters more here: this is the one line telling a reader that
                 // a genome just lost its whole annotation, and the run goes on
                 // to a different answer without it.
-                Err(e) => warn!("Cannot parse GFF for {}: {:#}", genome_name, e),
+                Err(e) => {
+                    parse_failures += 1;
+                    warn!("Cannot parse GFF for {}: {:#}", genome_name, e)
+                }
             }
         }
         let loaded = data.len();
-        let missing = n_genomes - loaded;
+        // Files that exist but failed to parse were warned about by name above;
+        // they are not "missing", which is what this count used to call them.
+        let missing = n_genomes - loaded - parse_failures - unusable;
         if loaded > 0 {
             info!("Loaded GFF annotations for {} genomes", loaded);
         }
@@ -355,8 +389,15 @@ pub fn run(args: &Args) -> Result<()> {
             // An explicit --annotations that loads nothing is a mistake, not a
             // dataset without annotations: the run used to continue without
             // any annotation logic and report a different answer with exit 0.
+            if parse_failures + unusable > 0 {
+                anyhow::bail!(
+                    "None of the {} GFF files found in {} could be used; the warnings above say why",
+                    parse_failures + unusable,
+                    ann_dir.display()
+                );
+            }
             anyhow::bail!(
-                "No GFF in {} could be loaded for any genome of the matrix \
+                "No GFF in {} matches a genome of the matrix \
                  (expected files like {}.gff or {}.gff3, optionally gzipped)",
                 ann_dir.display(),
                 pa.genome_name(GenomeIdx(0)),
@@ -530,9 +571,16 @@ pub fn run(args: &Args) -> Result<()> {
                 let Some(fasta_path) = genome_files.get(genome_name) else {
                     continue;
                 };
-                let Ok(contigs) = crate::parser::load_genome_contigs(fasta_path) else {
-                    continue;
-                };
+                // Propagate, never skip: a genome that cannot be scanned used to
+                // be passed over in silence, and its pseudogenes went into the
+                // matrix as intact genes.
+                let contigs =
+                    crate::parser::load_genome_contigs(fasta_path).with_context(|| {
+                        format!(
+                            "Cannot scan genome {} for internal stop codons",
+                            genome_name
+                        )
+                    })?;
 
                 for rescue_idx in rescue_indices {
                     let rescue = &mut rescues[rescue_idx];
@@ -889,7 +937,7 @@ pub fn run(args: &Args) -> Result<()> {
     } else {
         Vec::new()
     };
-    write_corrected_csv(&pa, &matrix_rescue_map, &args.output, &nsc_result)?;
+    let corrected_counts = write_corrected_csv(&pa, &matrix_rescue_map, &args.output, &nsc_result)?;
     write_multistate_matrix(MultistateMatrixInputs {
         pa: &pa,
         accepted_rescue_map: &all_rescue_map,
@@ -967,8 +1015,10 @@ pub fn run(args: &Args) -> Result<()> {
         synteny_rejected: synteny_rejected.len(),
         paralog_rejected: paralog_rejected.len(),
         matrix_policy: args.matrix_policy,
-        matrix_corrected: matrix_rescue_map.len(),
-        nsc_matrix_corrected: nsc_presence.len(),
+        matrix_corrected: corrected_counts.rescued_cells,
+        nsc_matrix_corrected: corrected_counts.nsc_cells,
+        remaining_gaps: corrected_counts.absent_cells,
+        skipped_no_reference,
         synteny_enabled: args.synteny,
         nsc_clusters: nsc_result.as_ref().map(|r| r.n_clusters).unwrap_or(0),
         nsc_merged_genes: nsc_result
@@ -1611,7 +1661,9 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
         if rejected >= 3 && rejected > accepted {
             flags.push("rejected_evidence_exceeds_accepted");
         }
-        if gap_count > 0 && accepted == 0 && rejected == 0 {
+        // Only for a genome that was searched: one with no FASTA has no evidence
+        // because nothing was looked for, and is flagged for that instead.
+        if gap_count > 0 && fasta_found && accepted == 0 && rejected == 0 {
             flags.push("no_rescue_evidence_for_searchable_gaps");
         }
         if gap_count > 0 && matrix_corrected > gap_count / 4 && matrix_corrected >= 10 {

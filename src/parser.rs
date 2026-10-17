@@ -712,28 +712,78 @@ pub fn find_annotation_file(ann_dir: &Path, genome_name: &str) -> Option<PathBuf
     None
 }
 
+/// The contig name of a FASTA header line (without its '>'): the first
+/// whitespace-delimited token, which has to be UTF-8. The rest of the line is
+/// free text in any encoding. Matches what the search target writer accepts,
+/// so every reader of a genome agrees on its contig names.
+fn fasta_contig_name(header: &[u8], path: &Path, line_no: usize) -> Result<String> {
+    let token = header
+        .split(|b| b.is_ascii_whitespace())
+        .next()
+        .unwrap_or_default();
+    if token.is_empty() {
+        anyhow::bail!(
+            "{}: line {}: FASTA header with no contig name",
+            path.display(),
+            line_no
+        );
+    }
+    std::str::from_utf8(token).map(str::to_string).map_err(|_| {
+        anyhow::anyhow!(
+            "{}: line {}: contig name is not valid UTF-8",
+            path.display(),
+            line_no
+        )
+    })
+}
+
+/// Visit each line of a FASTA as bytes, with line endings removed.
+///
+/// Bytes rather than `lines()`: one Latin-1 byte in a header's description used
+/// to fail the whole read, and the internal-stop scan, which skipped a genome it
+/// could not read, then let pseudogenes into the matrix as intact genes.
+fn for_each_fasta_line(
+    path: &Path,
+    mut visit: impl FnMut(&[u8], usize) -> Result<()>,
+) -> Result<()> {
+    use std::io::BufRead;
+    let mut reader = open_maybe_gzip(path)?;
+    let mut line = Vec::with_capacity(8192);
+    let mut line_no = 0usize;
+    loop {
+        line.clear();
+        if reader
+            .read_until(b'\n', &mut line)
+            .with_context(|| format!("Cannot read {}", path.display()))?
+            == 0
+        {
+            return Ok(());
+        }
+        line_no += 1;
+        while matches!(line.last(), Some(b'\n' | b'\r')) {
+            line.pop();
+        }
+        visit(&line, line_no)?;
+    }
+}
+
 /// Load genome FASTA as contig_name → sequence map.
 /// Used for internal stop codon scanning in pseudogene detection.
 pub fn load_genome_contigs(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
-    use std::io::BufRead;
-    let reader = open_maybe_gzip(path)?;
     let mut contigs: HashMap<String, Vec<u8>> = HashMap::new();
     let mut current_name: Option<String> = None;
     let mut current_seq = Vec::new();
-
-    for line_result in reader.lines() {
-        let line = line_result.with_context(|| format!("Cannot read {}", path.display()))?;
-        if let Some(header) = line.strip_prefix('>') {
+    for_each_fasta_line(path, |line, line_no| {
+        if let Some(header) = line.strip_prefix(b">") {
             if let Some(name) = current_name.take() {
                 contigs.insert(name, std::mem::take(&mut current_seq));
             }
-            let id = header.split_whitespace().next().unwrap_or(header);
-            current_name = Some(id.to_string());
-            current_seq.clear();
+            current_name = Some(fasta_contig_name(header, path, line_no)?);
         } else {
-            current_seq.extend(line.trim().as_bytes());
+            current_seq.extend(line.iter().filter(|b| !b.is_ascii_whitespace()));
         }
-    }
+        Ok(())
+    })?;
     if let Some(name) = current_name {
         contigs.insert(name, current_seq);
     }
@@ -742,16 +792,13 @@ pub fn load_genome_contigs(path: &Path) -> Result<HashMap<String, Vec<u8>>> {
 
 /// Load only FASTA contig names, preserving file order.
 pub fn load_genome_contig_names(path: &Path) -> Result<Vec<String>> {
-    use std::io::BufRead;
-    let reader = open_maybe_gzip(path)?;
     let mut names = Vec::new();
-    for line_result in reader.lines() {
-        let line = line_result.with_context(|| format!("Cannot read {}", path.display()))?;
-        if let Some(header) = line.strip_prefix('>') {
-            let id = header.split_whitespace().next().unwrap_or(header);
-            names.push(id.to_string());
+    for_each_fasta_line(path, |line, line_no| {
+        if let Some(header) = line.strip_prefix(b">") {
+            names.push(fasta_contig_name(header, path, line_no)?);
         }
-    }
+        Ok(())
+    })?;
     Ok(names)
 }
 
@@ -836,11 +883,26 @@ pub(crate) fn open_maybe_gzip(path: &Path) -> Result<Box<dyn std::io::BufRead>> 
 pub fn parse_gff_genes(path: &Path) -> Result<Vec<GffRecord>> {
     use std::io::BufRead;
 
-    let reader = open_maybe_gzip(path)?;
+    let mut reader = open_maybe_gzip(path)?;
 
     let mut genes = Vec::new();
-    for line_result in reader.lines() {
-        let line = line_result.with_context(|| format!("Cannot read {}", path.display()))?;
+    // Bytes, decoded lossily: one non-UTF-8 byte in a free-text attribute such
+    // as product= used to fail the whole file, and the genome silently lost its
+    // annotation, its synteny and its corrected GFF records.
+    let mut buf = Vec::with_capacity(4096);
+    loop {
+        buf.clear();
+        if reader
+            .read_until(b'\n', &mut buf)
+            .with_context(|| format!("Cannot read {}", path.display()))?
+            == 0
+        {
+            break;
+        }
+        while matches!(buf.last(), Some(b'\n' | b'\r')) {
+            buf.pop();
+        }
+        let line = String::from_utf8_lossy(&buf);
         if line.starts_with('#') || !line.contains('\t') {
             continue;
         }
@@ -1487,6 +1549,38 @@ mod tests {
         );
         let err = validate_inputs(&pa, &pan_ref, &genome_files).unwrap_err();
         assert!(err.to_string().contains("Duplicate cluster name"));
+    }
+
+    /// One Latin-1 byte in a header's description used to fail this read, and
+    /// the stop scan skipped the genome without a word: its pseudogenes went
+    /// into the matrix as intact genes.
+    #[test]
+    fn test_load_genome_contigs_tolerates_non_utf8_descriptions() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(b">ctg1 isolated in S\xe3o Paulo\nATCG\nATCG\n>ctg2\nGG\n")
+            .unwrap();
+        let contigs = load_genome_contigs(f.path()).unwrap();
+        assert_eq!(contigs["ctg1"], b"ATCGATCG");
+        assert_eq!(contigs["ctg2"], b"GG");
+        assert_eq!(
+            load_genome_contig_names(f.path()).unwrap(),
+            vec!["ctg1", "ctg2"]
+        );
+    }
+
+    /// A Latin-1 byte in a free-text attribute used to lose the genome's whole
+    /// annotation.
+    #[test]
+    fn test_parse_gff_genes_tolerates_non_utf8_attributes() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(
+            b"##gff-version 3\nchr\tsrc\tCDS\t10\t99\t.\t+\t0\tID=a;locus_tag=a;product=subunit \xdf\n\
+              chr\tsrc\tCDS\t200\t299\t.\t+\t0\tID=b;locus_tag=b\n",
+        )
+        .unwrap();
+        let genes = parse_gff_genes(f.path()).unwrap();
+        let ids: Vec<&str> = genes.iter().map(|gene| gene.4.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b"]);
     }
 
     #[test]
