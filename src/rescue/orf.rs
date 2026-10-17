@@ -38,6 +38,59 @@ pub fn count_internal_stops(seq: &[u8]) -> usize {
     min_stops
 }
 
+/// Count internal stop codons in a single reading frame starting at the first
+/// base of `seq`, ignoring the final codon (the gene's own stop).
+pub fn count_stops_in_frame(seq: &[u8]) -> usize {
+    let mut stops = 0usize;
+    let mut pos = 0usize;
+    while pos + 3 < seq.len() {
+        let codon = [
+            seq[pos].to_ascii_uppercase(),
+            seq[pos + 1].to_ascii_uppercase(),
+            seq[pos + 2].to_ascii_uppercase(),
+        ];
+        if matches!(
+            codon,
+            [b'T', b'A', b'A'] | [b'T', b'A', b'G'] | [b'T', b'G', b'A']
+        ) {
+            stops += 1;
+        }
+        pos += 3;
+    }
+    stops
+}
+
+/// Internal stops in an annotated CDS, read in its own frame from its own start.
+///
+/// For a rescue that sits on an annotated CDS this is the right question, and
+/// the alignment span is the wrong one. The minimum over three frames of the
+/// span let a premature stop hide whenever another frame happened to be
+/// stop-free, which GC-rich third positions make common. And the span follows
+/// the cluster's representative: when that allele reads through its stop, the
+/// span runs past this genome's own, canonical stop, which then counted as
+/// internal and an intact gene was called a pseudogene.
+pub fn check_internal_stops_in_cds(
+    contig: &str,
+    start: u64,
+    end: u64,
+    strand: char,
+    genome_seqs: &HashMap<String, Vec<u8>>,
+) -> Option<usize> {
+    let contig_seq = genome_seqs.get(contig)?;
+    let start = start as usize;
+    let end = (end as usize).min(contig_seq.len());
+    if start >= end || end - start < 6 {
+        return None;
+    }
+    let region = &contig_seq[start..end];
+    let n_stops = if strand == '-' {
+        count_stops_in_frame(&reverse_complement(region))
+    } else {
+        count_stops_in_frame(region)
+    };
+    (n_stops > 0).then_some(n_stops)
+}
+
 /// Reverse complement a DNA sequence.
 pub(super) fn reverse_complement(seq: &[u8]) -> Vec<u8> {
     seq.iter()

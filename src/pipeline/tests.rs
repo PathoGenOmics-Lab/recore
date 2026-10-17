@@ -76,10 +76,88 @@ fn invalid_args_are_rejected_before_running_pipeline() {
     assert!(validate_args(&args).is_err());
 }
 
+/// Real input paths in a temporary directory, for the path checks.
+fn validation_fixture() -> (tempfile::TempDir, Args) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("pa.csv"), "Gene\n").unwrap();
+    std::fs::write(dir.path().join("pan_ref.fa"), ">g\nACGT\n").unwrap();
+    std::fs::create_dir(dir.path().join("genomes")).unwrap();
+    let mut args = default_args_for_validation();
+    args.presence_absence = dir.path().join("pa.csv");
+    args.pan_reference = dir.path().join("pan_ref.fa");
+    args.genomes = dir.path().join("genomes");
+    args.output = dir.path().join("out");
+    (dir, args)
+}
+
 #[test]
 fn default_args_pass_validation() {
-    let args = default_args_for_validation();
+    let (_dir, args) = validation_fixture();
     validate_args(&args).unwrap();
+    assert!(
+        args.output.is_dir(),
+        "the output directory is created and probed before the search"
+    );
+}
+
+/// Every one of these used to be discovered late or not at all: a misspelled
+/// --annotations ran to exit 0 without annotation logic, --synteny without -a
+/// was silently ignored, and a bad --mobile-element-reference failed after the
+/// whole search, having already deleted the previous run's outputs.
+#[test]
+fn input_paths_are_checked_before_any_work() {
+    let message = |args: &Args| format!("{:#}", validate_args(args).unwrap_err());
+
+    let (dir, mut args) = validation_fixture();
+    args.annotations = Some(dir.path().join("annotationz"));
+    assert!(message(&args).contains("-a/--annotations"));
+
+    let (_dir, mut args) = validation_fixture();
+    args.synteny = true;
+    assert!(message(&args).contains("--synteny needs --annotations"));
+
+    let (dir, mut args) = validation_fixture();
+    args.mobile_element_reference = Some(dir.path().join("missing_IS.fa"));
+    assert!(message(&args).contains("--mobile-element-reference"));
+
+    let (dir, mut args) = validation_fixture();
+    args.tree = Some(dir.path().join("missing.nwk"));
+    assert!(message(&args).contains("--tree"));
+
+    let (_dir, mut args) = validation_fixture();
+    args.genomes = args.presence_absence.clone();
+    assert!(message(&args).contains("is not a directory"));
+
+    let (dir, mut args) = validation_fixture();
+    std::fs::write(dir.path().join("afile"), "x").unwrap();
+    args.output = dir.path().join("afile");
+    assert!(message(&args).contains("exists and is not a directory"));
+}
+
+#[test]
+fn reference_genome_must_match_exactly_one_column() {
+    let pa = PresenceAbsence::new_for_test(
+        vec!["c".into()],
+        vec![
+            "L4_AS00401".into(),
+            "L2_AS00401".into(),
+            "L1_AS00101".into(),
+        ],
+        vec![vec!["x".into(), "".into(), "".into()]],
+    );
+    check_reference_genome(&pa, "L1_AS00101").unwrap();
+    // A unique AS identifier still resolves, with a warning.
+    check_reference_genome(&pa, "AS00101").unwrap();
+
+    let shared = format!("{:#}", check_reference_genome(&pa, "AS00401").unwrap_err());
+    assert!(shared.contains("several"), "{shared}");
+    assert!(
+        shared.contains("L4_AS00401") && shared.contains("L2_AS00401"),
+        "{shared}"
+    );
+
+    let unknown = format!("{:#}", check_reference_genome(&pa, "H37Rv").unwrap_err());
+    assert!(unknown.contains("matches no column"), "{unknown}");
 }
 
 #[test]
@@ -182,6 +260,8 @@ fn html_report_summarizes_run_outputs() {
         synteny_enabled: false,
         nsc_clusters: 0,
         nsc_merged_genes: 0,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
     };
 
     write_html_report(&args, &pa, &stats, &HashMap::new(), &None, None, out.path()).unwrap();
@@ -296,6 +376,8 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         synteny_enabled: false,
         nsc_clusters: 0,
         nsc_merged_genes: 0,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
     };
     let tree = PhyloTree {
         root: PhyloNode {
@@ -1212,6 +1294,8 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         synteny_enabled: true,
         nsc_clusters: 1,
         nsc_merged_genes: 1,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
     };
 
     write_html_report(
@@ -1582,6 +1666,7 @@ fn reference_hit_shadow_candidates_capture_partial_annotated_paralog() {
             target: "chr".into(),
             target_start: 0,
             target_end: 885,
+            target_length: 0,
             matches: 885,
             alignment_length: 885,
             mapq: 0,
@@ -1905,6 +1990,79 @@ fn nsc_presence_union_includes_matrix_rescued_members() {
     let updates = nsc_presence_updates(&pa, &nsc, &rescue_map);
 
     assert!(updates.contains(&(0, 1)));
+}
+
+/// The summary's matrix-corrected count, its remaining gaps and the report's
+/// share come from what write_corrected_csv writes. A rescue in a row that NSC
+/// merges away is not written, and used to be counted as a correction anyway;
+/// "Remaining gaps" used to be searched gaps minus corrections, which is not
+/// what is left in the file.
+#[test]
+fn corrected_matrix_counts_only_what_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("pa.csv");
+    std::fs::write(
+        &csv_path,
+        "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,\
+         Avg sequences per isolate,Genome Fragment,Order within Fragment,\
+         Accessory Order,QC,Min group size nuc,Max group size nuc,Avg group size nuc,g1,g2,g3\n\
+         rep,,p,1,1,1,0,0,0,,1,1,1,rep_g1,,\n\
+         member,,p,0,0,0,0,0,0,,1,1,1,,,\n\
+         other,,p,1,1,1,0,0,0,,1,1,1,other_g1,,\n",
+    )
+    .unwrap();
+    let pa = crate::parser::parse_presence_absence(&csv_path).unwrap();
+
+    let mut merge_map = HashMap::new();
+    merge_map.insert(ClusterIdx(1), ClusterIdx(0));
+    let nsc = Some(nscluster::NsClusterResult {
+        merged_clusters: vec![nscluster::NsCluster {
+            members: vec![ClusterIdx(0), ClusterIdx(1)],
+            representative: "rep".into(),
+        }],
+        total_merged_genes: 2,
+        n_clusters: 1,
+        merge_map,
+    });
+    let member_rescue = RescueEvent {
+        cluster_idx: ClusterIdx(1),
+        genome_idx: GenomeIdx(1),
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let other_rescue = RescueEvent {
+        cluster_idx: ClusterIdx(2),
+        genome_idx: GenomeIdx(1),
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let mut rescue_map = HashMap::new();
+    rescue_map.insert((ClusterIdx(1), GenomeIdx(1)), &member_rescue);
+    rescue_map.insert((ClusterIdx(2), GenomeIdx(1)), &other_rescue);
+
+    let counts = write_corrected_csv(&pa, &rescue_map, dir.path(), &nsc).unwrap();
+    assert_eq!(
+        counts.rescued_cells, 1,
+        "the member's rescue sits in a row that is not written"
+    );
+    assert_eq!(
+        counts.nsc_cells, 1,
+        "it reaches rep/g2 as NSC_MERGED instead"
+    );
+
+    // rep: rep_g1, NSC_MERGED, "" and other: other_g1, RESCUED, "".
+    let written =
+        std::fs::read_to_string(dir.path().join("gene_presence_absence_recore.csv")).unwrap();
+    let empty: usize = written
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').skip(13).filter(|c| c.is_empty()).count())
+        .sum();
+    assert_eq!(
+        written.lines().count(),
+        3,
+        "header plus two rows: member is merged away"
+    );
+    assert_eq!(counts.absent_cells, empty);
+    assert_eq!(counts.absent_cells, 2);
 }
 
 #[test]

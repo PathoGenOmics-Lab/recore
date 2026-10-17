@@ -12,6 +12,7 @@ fn make_hit(query_start: u64, query_end: u64, query_length: u64) -> Hit {
         target: "c".into(),
         target_start: query_start,
         target_end: query_end,
+        target_length: 0,
         matches: query_end - query_start,
         alignment_length: query_end - query_start,
         mapq: 60,
@@ -48,6 +49,7 @@ fn test_merged_coverage_multi_allele() {
         target: "c".into(),
         target_start: 0,
         target_end: 600,
+        target_length: 0,
         matches: 600,
         alignment_length: 600,
         mapq: 60,
@@ -62,6 +64,7 @@ fn test_merged_coverage_multi_allele() {
         target: "c".into(),
         target_start: 0,
         target_end: 1100,
+        target_length: 0,
         matches: 1100,
         alignment_length: 1100,
         mapq: 60,
@@ -83,6 +86,7 @@ fn test_merged_coverage_same_length_different_alleles() {
         target: "c".into(),
         target_start: 0,
         target_end: 400,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -97,6 +101,7 @@ fn test_merged_coverage_same_length_different_alleles() {
         target: "c".into(),
         target_start: 5000,
         target_end: 5400,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -763,6 +768,7 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
         target: "chr".into(),
         target_start: 1000,
         target_end: 1100,
+        target_length: 0,
         matches: 100,
         alignment_length: 100,
         mapq: 60,
@@ -777,6 +783,7 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
         target: "chr".into(),
         target_start: 198,
         target_end: 302,
+        target_length: 0,
         matches: 98,
         alignment_length: 100,
         mapq: 60,
@@ -952,6 +959,7 @@ fn test_detect_start_variant_with_gff() {
         target: "c".into(),
         target_start: 100,
         target_end: 1100,
+        target_length: 0,
         matches: 1000,
         alignment_length: 1000,
         mapq: 60,
@@ -960,12 +968,11 @@ fn test_detect_start_variant_with_gff() {
     assert_eq!(result, Some((100, "gene1".to_string())));
 }
 
+/// A CDS that agrees with the representative at both ends, once the query
+/// bases the alignment left unaligned are projected onto the contig, is not a
+/// start variant. The old rule compared lengths and called this +50bp.
 #[test]
-fn test_detect_start_variant_uses_target_not_query_len() {
-    // GFF gene: 0-1050 (length 1050)
-    // Hit: query_length=1100, query aligned 0-1050. Target: 0-1000 (footprint 1000bp).
-    // With fix: diff = gene_len(1050) - target_aln_len(1000) = +50bp ✓
-    // Old bug would compute: diff = 1050 - 1100(query_length) = -50bp ✗
+fn test_detect_start_variant_projects_unaligned_query_ends() {
     let genes = vec![GffGene {
         contig: "c".into(),
         start: 0,
@@ -974,6 +981,8 @@ fn test_detect_start_variant_uses_target_not_query_len() {
         gene_id: "gene1".into(),
     }];
     let idx = GffIndex::build(genes);
+    // The last 50 bases of the 1100 bp query are unaligned, and the target span
+    // ends at 1000: projected, the representative ends at 1050, as the CDS does.
     let hit = Hit {
         query: "g".into(),
         cluster: "g".into(),
@@ -984,20 +993,48 @@ fn test_detect_start_variant_uses_target_not_query_len() {
         target: "c".into(),
         target_start: 0,
         target_end: 1000,
-        matches: 1000,
+        target_length: 0,
+        matches: 1040,
         alignment_length: 1050,
         mapq: 60,
     };
-    // identity = 1000/1050 = 95.2% (≥98%? NO — need 98%)
-    // query_coverage = 1050/1100 = 95.5% (≥90% ✓)
-    // Adjust matches to pass identity filter:
+    assert_eq!(detect_start_variant(&hit, Some(&idx)), None);
+}
+
+/// A CDS that runs past the representative's stop differs at the 3' end:
+/// that is a stop-side difference, never a start variant. A representative
+/// that reads through its stop used to be reported this way.
+#[test]
+fn test_detect_start_variant_ignores_stop_side_differences() {
+    let idx = GffIndex::build(vec![GffGene {
+        contig: "c".into(),
+        start: 0,
+        end: 1100,
+        strand: '+',
+        gene_id: "gene1".into(),
+    }]);
+    let hit = make_hit(0, 1000, 1000);
+    assert_eq!(detect_start_variant(&hit, Some(&idx)), None);
+}
+
+/// On the minus strand the start is the high coordinate.
+#[test]
+fn test_detect_start_variant_minus_strand_start_is_the_high_end() {
+    let idx = GffIndex::build(vec![GffGene {
+        contig: "c".into(),
+        start: 0,
+        end: 1100,
+        strand: '-',
+        gene_id: "gene1".into(),
+    }]);
     let hit = Hit {
-        matches: 1040,
-        ..hit
-    }; // 1040/1050 = 99.0%
-    let result = detect_start_variant(&hit, Some(&idx));
-    // diff = gene_len(1050) - target_aln_len(1000) = +50
-    assert_eq!(result, Some((50, "gene1".to_string())));
+        strand: '-',
+        ..make_hit(0, 1000, 1000)
+    };
+    assert_eq!(
+        detect_start_variant(&hit, Some(&idx)),
+        Some((100, "gene1".to_string()))
+    );
 }
 
 #[test]
@@ -1139,6 +1176,7 @@ fn test_fragmented_span() {
         target: "c".into(),
         target_start: 1000,
         target_end: 1400,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -1153,6 +1191,7 @@ fn test_fragmented_span() {
         target: "c".into(),
         target_start: 2000,
         target_end: 2400,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -1196,6 +1235,7 @@ fn test_best_fragment_chain_tie_breaks_by_locus() {
         target: "z_contig".into(),
         target_start: 100,
         target_end: 600,
+        target_length: 0,
         matches: 500,
         alignment_length: 500,
         mapq: 60,
@@ -1246,6 +1286,7 @@ fn test_classify_split_vs_paralog() {
         target: "c".into(),
         target_start: 0,
         target_end: 1000,
+        target_length: 0,
         matches: 990,
         alignment_length: 1000,
         mapq: 60,
@@ -1276,6 +1317,7 @@ fn test_classify_split_vs_paralog() {
         target: "c".into(),
         target_start: 0,
         target_end: 1000,
+        target_length: 0,
         matches: 900,
         alignment_length: 1000,
         mapq: 60,
@@ -1310,6 +1352,7 @@ fn test_classify_dropped_no_gff() {
         target: "c".into(),
         target_start: 0,
         target_end: 1000,
+        target_length: 0,
         matches: 990,
         alignment_length: 1000,
         mapq: 60,
@@ -1338,6 +1381,7 @@ fn test_classify_prefers_best_evidence_over_longest_allele() {
         target: "long_hit".into(),
         target_start: 100,
         target_end: 1060,
+        target_length: 0,
         matches: 864,
         alignment_length: 960,
         mapq: 60,
@@ -1352,6 +1396,7 @@ fn test_classify_prefers_best_evidence_over_longest_allele() {
         target: "best_hit".into(),
         target_start: 200,
         target_end: 1100,
+        target_length: 0,
         matches: 900,
         alignment_length: 900,
         mapq: 60,
@@ -1405,6 +1450,7 @@ fn test_classify_missing_cds_no_overlapping_genes() {
         target: "c".into(),
         target_start: 0,
         target_end: 1000,
+        target_length: 0,
         matches: 990,
         alignment_length: 1000,
         mapq: 60,
@@ -1451,6 +1497,7 @@ fn test_classify_start_variant_with_gff() {
         target: "c".into(),
         target_start: 100,
         target_end: 1100,
+        target_length: 0,
         matches: 1000,
         alignment_length: 1000,
         mapq: 60,
@@ -1494,6 +1541,7 @@ fn test_classify_returns_none_below_coverage() {
         target: "c".into(),
         target_start: 0,
         target_end: 500,
+        target_length: 0,
         matches: 500,
         alignment_length: 500,
         mapq: 60,
@@ -1634,6 +1682,7 @@ fn test_classify_hit_uses_gff_alias_for_split_cluster() {
         target: "ctg".into(),
         target_start: 100,
         target_end: 1100,
+        target_length: 0,
         matches: 990,
         alignment_length: 1000,
         mapq: 60,
@@ -1759,6 +1808,7 @@ fn test_frameshift_pattern_detected() {
         target: "c".into(),
         target_start: 100,
         target_end: 600,
+        target_length: 0,
         matches: 500,
         alignment_length: 500,
         mapq: 60,
@@ -1773,6 +1823,7 @@ fn test_frameshift_pattern_detected() {
         target: "c".into(),
         target_start: 602,
         target_end: 1102, // 2bp gap (not %3)
+        target_length: 0,
         matches: 500,
         alignment_length: 500,
         mapq: 60,
@@ -1792,6 +1843,7 @@ fn test_frameshift_pattern_not_detected_divisible_by_3() {
         target: "c".into(),
         target_start: 100,
         target_end: 600,
+        target_length: 0,
         matches: 500,
         alignment_length: 500,
         mapq: 60,
@@ -1806,6 +1858,7 @@ fn test_frameshift_pattern_not_detected_divisible_by_3() {
         target: "c".into(),
         target_start: 603,
         target_end: 1103, // 3bp gap (divisible by 3)
+        target_length: 0,
         matches: 500,
         alignment_length: 500,
         mapq: 60,
@@ -1848,6 +1901,7 @@ fn test_internal_stops_minus_strand() {
         target: "c".into(),
         target_start: 0,
         target_end: 9,
+        target_length: 0,
         matches: 9,
         alignment_length: 9,
         mapq: 60,
@@ -1877,6 +1931,7 @@ fn test_classify_partial_deletion_pseudogene() {
         target: "c".into(),
         target_start: 0,
         target_end: 700,
+        target_length: 0,
         matches: 665,
         alignment_length: 700,
         mapq: 60,
@@ -1909,6 +1964,7 @@ fn test_alignment_split_for_small_colinear_gaps() {
         target: "c".into(),
         target_start: 0,
         target_end: 495,
+        target_length: 0,
         matches: 495,
         alignment_length: 495,
         mapq: 60,
@@ -1923,6 +1979,7 @@ fn test_alignment_split_for_small_colinear_gaps() {
         target: "c".into(),
         target_start: 504,
         target_end: 1000,
+        target_length: 0,
         matches: 495,
         alignment_length: 495,
         mapq: 60,
@@ -1966,6 +2023,7 @@ fn test_fragment_chain_inside_same_cds_is_not_fragmented() {
         target: "c".into(),
         target_start: 100,
         target_end: 500,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -1980,6 +2038,7 @@ fn test_fragment_chain_inside_same_cds_is_not_fragmented() {
         target: "c".into(),
         target_start: 700,
         target_end: 1100,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -2024,6 +2083,7 @@ fn test_non_colinear_fragments_are_not_rescued() {
         target: "c".into(),
         target_start: 1000,
         target_end: 1400,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -2038,6 +2098,7 @@ fn test_non_colinear_fragments_are_not_rescued() {
         target: "c".into(),
         target_start: 500,
         target_end: 900,
+        target_length: 0,
         matches: 400,
         alignment_length: 400,
         mapq: 60,
@@ -2060,6 +2121,38 @@ fn test_non_colinear_fragments_are_not_rescued() {
     assert!(result.is_none());
 }
 
+/// Genes are sorted by start and their ends stop being monotone once one CDS
+/// contains another. The binary search on ends skipped the containing CDS.
+#[test]
+fn test_gff_index_finds_a_cds_that_contains_a_nested_one() {
+    let gene = |start, end, id: &str| GffGene {
+        contig: "c".into(),
+        start,
+        end,
+        strand: '+',
+        gene_id: id.into(),
+    };
+    let idx = GffIndex::build(vec![
+        gene(1000, 5000, "A"),
+        gene(1200, 1500, "B"),
+        gene(5100, 6000, "C"),
+    ]);
+    let ids: Vec<&str> = idx
+        .overlapping("c", 3000, 4000)
+        .iter()
+        .map(|g| g.gene_id.as_str())
+        .collect();
+    assert_eq!(ids, vec!["A"]);
+
+    let (up, down) = idx.flanking("c", 5040, 5090);
+    assert_eq!(
+        up.map(|g| g.gene_id.as_str()),
+        Some("A"),
+        "nearest end is A's, not B's"
+    );
+    assert_eq!(down.map(|g| g.gene_id.as_str()), Some("C"));
+}
+
 /// The two halves of a gene broken by an insertion abut exactly on the query
 /// and sit far apart on the contig. They are two fragments, not one segment.
 #[test]
@@ -2074,4 +2167,119 @@ fn test_fragment_chain_keeps_query_adjacent_pieces_apart_on_the_target() {
     assert_eq!(chain.n_fragments, 2);
     assert!((chain.coverage - 100.0).abs() < 1e-9);
     assert_eq!(chain.evidence.max_target_gap_bp, 5000);
+}
+
+/// One piece runs off the end of one contig, the other starts another: an
+/// assembly break, classified as FRAGMENTED rather than a partial deletion.
+#[test]
+fn test_gene_split_across_contigs_is_fragmented() {
+    let pa = PresenceAbsence::new_for_test(
+        vec!["gene".into()],
+        vec!["g".into(), "r".into()],
+        vec![vec!["".into(), "r1".into()]],
+    );
+    let first = Hit {
+        query: "gene".into(),
+        cluster: "gene".into(),
+        target: "ctg1".into(),
+        target_start: 3300,
+        target_end: 4000,
+        target_length: 4000,
+        ..make_hit(0, 700, 1000)
+    };
+    let second = Hit {
+        query: "gene".into(),
+        cluster: "gene".into(),
+        target: "ctg2".into(),
+        target_start: 0,
+        target_end: 300,
+        target_length: 9000,
+        ..make_hit(700, 1000, 1000)
+    };
+    let rescue = classify_hits(
+        &[first, second],
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        None,
+        &HashMap::new(),
+        80.0,
+    )
+    .unwrap();
+    assert!(
+        matches!(rescue.rescue_type, RescueType::Fragmented { .. }),
+        "{:?}",
+        rescue.rescue_type
+    );
+    assert_eq!(
+        rescue.fragment_evidence.note.as_deref(),
+        Some("split_across_contigs:ctg2")
+    );
+}
+
+/// An unclaimed annotated CDS is the plainest false absence. An identical
+/// unannotated copy elsewhere used to take its place as MISSING_CDS.
+#[test]
+fn test_unclaimed_annotated_cds_beats_an_unannotated_copy() {
+    let pa = PresenceAbsence::new_for_test(
+        vec!["gene".into()],
+        vec!["g".into(), "r".into()],
+        vec![vec!["".into(), "r1".into()]],
+    );
+    let gff = GffIndex::build(vec![GffGene {
+        contig: "chr".into(),
+        start: 1000,
+        end: 2000,
+        strand: '+',
+        gene_id: "g_00019".into(),
+    }]);
+    let annotated = Hit {
+        query: "gene".into(),
+        cluster: "gene".into(),
+        target: "chr".into(),
+        target_start: 1000,
+        target_end: 2000,
+        ..make_hit(0, 1000, 1000)
+    };
+    let copy = Hit {
+        target_start: 8000,
+        target_end: 9000,
+        ..annotated.clone()
+    };
+    // The copy is listed first, as it was when it won.
+    let rescue = classify_hits(
+        &[copy, annotated],
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        Some(&gff),
+        &HashMap::new(),
+        80.0,
+    )
+    .unwrap();
+    assert!(
+        matches!(rescue.rescue_type, RescueType::Dropped),
+        "{:?}",
+        rescue.rescue_type
+    );
+    assert_eq!(rescue.start, 1000);
+    assert_eq!(rescue.annotation_match.as_deref(), Some("g_00019"));
+}
+
+/// A premature stop read in the CDS's own frame. Over three frames the
+/// minimum hid it whenever another frame happened to be stop-free.
+#[test]
+fn test_stop_in_frame_is_not_hidden_by_a_clean_other_frame() {
+    // Frame 0: ATG GCC TAA GCC GCC TAA -> one internal stop, then the end.
+    // Frames 1 and 2 of this sequence contain no stop codon at all.
+    let seq = b"ATGGCCTAAGCCGCCTAA";
+    assert_eq!(orf::count_internal_stops(seq), 0, "the minimum over frames");
+    assert_eq!(orf::count_stops_in_frame(seq), 1);
+
+    let mut contigs = HashMap::new();
+    contigs.insert("chr".to_string(), seq.to_vec());
+    assert_eq!(
+        check_internal_stops_in_cds("chr", 0, seq.len() as u64, '+', &contigs),
+        Some(1)
+    );
 }

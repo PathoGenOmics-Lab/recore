@@ -193,11 +193,11 @@ If the best hit has ≥90% identity but only 60-80% coverage (below min_coverage
 DROPPED and MISSING_CDS rescues are post-processed for pseudogene detection. For each genome with at least one sequence-only rescue:
 
 1. Load genome FASTA contigs on-demand (not preloaded for all genomes)
-2. Extract the hit region from the contig
-3. If the hit is on the minus strand, reverse-complement the sequence
-4. Scan all 3 reading frames for internal stop codons (TAA, TAG, TGA)
-5. Report the frame with the fewest stops (the "real" reading frame)
-6. If stops found → reclassify as PSEUDOGENE:InternalStop, confidence × 0.5
+2. If the rescue sits on an annotated CDS, extract that CDS and read it in its own frame, from its start codon to its stop, counting stops before the last codon. That is the reading frame this genome's annotation asserts, and it ends at this genome's own stop.
+3. Otherwise extract the aligned region, reverse-complement it on the minus strand, scan all three frames for internal stops (TAA, TAG, TGA) and keep the frame with the fewest.
+4. If stops are found, reclassify as PSEUDOGENE:InternalStop, confidence × 0.5
+
+The minimum over three frames is only the fallback: a premature stop in the true frame can hide behind another frame that happens to be stop-free, which GC-rich third positions make common, and the aligned region follows the cluster's representative, so a representative that reads through its stop extends it past this genome's canonical one.
 
 ---
 

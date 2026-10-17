@@ -3,12 +3,26 @@ use super::evolution::{PhyloNode, PhyloTree};
 use super::reference_audit::resolve_reference_genome;
 use super::*;
 
+/// What the corrected matrix actually holds, counted as it is written.
+///
+/// The summary, the manifest and the report used to compute these separately,
+/// and drifted: rescues in rows that NSC merged away were counted as matrix
+/// corrections although those rows are not written, and "Remaining gaps" was
+/// searched gaps minus corrections, which is not what is left in the file.
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct CorrectedMatrixCounts {
+    pub(super) rescued_cells: usize,
+    pub(super) nsc_cells: usize,
+    pub(super) absent_cells: usize,
+}
+
 pub(super) fn write_corrected_csv(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     output_dir: &std::path::Path,
     nsc_result: &Option<nscluster::NsClusterResult>,
-) -> Result<()> {
+) -> Result<CorrectedMatrixCounts> {
+    let mut counts = CorrectedMatrixCounts::default();
     // Build set of clusters to skip (merged into another by NSC)
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
         .as_ref()
@@ -70,12 +84,14 @@ pub(super) fn write_corrected_csv(
                 row[col_idx].clone_from(&rescue_buf);
                 isolate_count += 1;
                 sequence_count += 1;
+                counts.rescued_cells += 1;
             } else if nsc_presence.contains(&(ci_val, gi_val)) {
                 // Gene absent in this cluster but present in a merged NSC member
                 row[col_idx].clear();
                 row[col_idx].push_str("NSC_MERGED");
                 isolate_count += 1;
                 sequence_count += 1;
+                counts.nsc_cells += 1;
             } else {
                 row[col_idx].clear();
                 let cell = pa.cell(ci, gi);
@@ -83,6 +99,8 @@ pub(super) fn write_corrected_csv(
                 if !cell.trim().is_empty() {
                     isolate_count += 1;
                     sequence_count += cell_sequence_count(cell);
+                } else {
+                    counts.absent_cells += 1;
                 }
             }
         }
@@ -109,7 +127,7 @@ pub(super) fn write_corrected_csv(
         csv_writer.write_record(row.iter().map(|s| s.as_str()))?;
     }
     csv_writer.flush()?;
-    Ok(())
+    Ok(counts)
 }
 
 pub(super) fn clear_optional_outputs(output_dir: &std::path::Path) -> Result<()> {
@@ -630,6 +648,8 @@ pub(super) struct SummaryStats {
     pub(super) synteny_enabled: bool,
     pub(super) nsc_clusters: usize,
     pub(super) nsc_merged_genes: usize,
+    pub(super) skipped_no_reference: usize,
+    pub(super) remaining_gaps: usize,
 }
 
 pub(super) fn write_nsc_report(
@@ -686,6 +706,9 @@ pub(super) fn write_summary(
     if stats.missing_fasta_gaps > 0 {
         writeln!(w, "Gaps skipped (FASTA):  {}", stats.missing_fasta_gaps)?;
     }
+    if stats.skipped_no_reference > 0 {
+        writeln!(w, "Gaps skipped (no seq): {}", stats.skipped_no_reference)?;
+    }
     writeln!(w, "Skipped (prevalence):  {}", stats.skipped_by_prevalence)?;
     writeln!(w, "Rescued:               {}", rescues.len())?;
     writeln!(w, "Matrix policy:         {:?}", stats.matrix_policy)?;
@@ -701,11 +724,9 @@ pub(super) fn write_summary(
     if stats.paralog_rejected > 0 {
         writeln!(w, "Rejected (paralog):    {}", stats.paralog_rejected)?;
     }
-    writeln!(
-        w,
-        "Remaining gaps:        {}",
-        stats.searchable_gaps.saturating_sub(total_matrix_corrected)
-    )?;
+    // Absent cells left in the corrected matrix as written, so that
+    // Total gaps - Matrix-corrected = Remaining gaps when nothing was merged.
+    writeln!(w, "Remaining gaps:        {}", stats.remaining_gaps)?;
     writeln!(w)?;
     let core_diff = core_after as i64 - stats.core_before as i64;
     let soft_diff = soft_core_after as i64 - soft_core_before as i64;
@@ -919,6 +940,12 @@ pub(super) fn write_run_manifest(
         "    \"missing_fasta_gaps\": {},",
         stats.missing_fasta_gaps
     )?;
+    writeln!(
+        w,
+        "    \"missing_reference_gaps\": {},",
+        stats.skipped_no_reference
+    )?;
+    writeln!(w, "    \"remaining_gaps\": {},", stats.remaining_gaps)?;
     writeln!(w, "    \"rescued\": {},", rescued)?;
     writeln!(
         w,
@@ -2278,7 +2305,10 @@ pub(super) fn write_html_report(
             "Absent cells Recore turned into a supported presence",
         ),
         (
-            format_percent(matrix_corrected_total, stats.searchable_gaps),
+            // Rescue cells only: each one is a searchable gap, so the share is
+            // bounded by 100%. NSC cells were never searched, and counting them
+            // here printed shares like 220.0%.
+            format_percent(stats.matrix_corrected, stats.searchable_gaps),
             "of gaps",
             "",
             "Share of the searchable absence cells that were corrected",

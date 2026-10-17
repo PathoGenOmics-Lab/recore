@@ -421,52 +421,70 @@ kept in `qc_flags` but does not by itself trigger `review`.
 
 ## summary.txt
 
-Human-readable run summary. Example:
+Human-readable run summary. This one is from the
+[tutorial](../getting-started/tutorial.md) run:
 
 ```
 Recore Summary
 ==================================================
-Clusters:              4103
-Genomes:               479
-Total gaps:            91509
-Gaps passing filter:   91509
-Gaps searched:         91509
-Skipped (prevalence):  0
-Rescued:               947
+Clusters:              24
+Genomes:               12
+Total gaps:            50
+Gaps passing filter:   39
+Gaps searched:         39
+Skipped (prevalence):  11
+Rescued:               11
 Matrix policy:         Balanced
-Matrix-corrected:      812
-  rescue cells:        812
-Rejected (synteny):    4
-Remaining gaps:        90562
+Matrix-corrected:      8
+  rescue cells:        8
+Remaining gaps:        42
 
-Core genome (strict):  1539 → 1546 (+7)
-Soft-core (≥95%):      3781 → 3776 (-5)
+Core genome (strict):  14 → 17 (+3)
+Soft-core (≥95%):      14 → 17 (+3)
 
 Rescue types:
-  DROPPED:       378
-  MISSING_CDS:   0
-  SPLIT:         206
+  DROPPED:       6
+  MISSING_CDS:   2
+  SPLIT:         0
   FRAGMENTED:    0
-  ALIGNMENT_SPLIT: 12
-  START_VARIANT: 60
-  PARALOG:       113
-  PSEUDOGENE:    190
+  ALIGNMENT_SPLIT: 0
+  START_VARIANT: 0
+  PARALOG:       0
+  PSEUDOGENE:    3
 
 Synteny validation:
-  PASS:  747
+  PASS:  11
   FAIL:  0
-  REJECTED_FAIL: 4
-
-Nucleotide similarity clustering:
-  NS clusters:      19
-  Genes merged:     39
-  Clusters removed: 20
 ```
+
+The gap lines add up. Every empty cell of the input matrix is in **Total gaps**,
+and each one is accounted for exactly once:
+
+| Line | Gaps it counts |
+|------|----------------|
+| `Skipped (prevalence)` | in clusters under `--min-prevalence`; never searched |
+| `Gaps skipped (no seq)` | in clusters with no sequence in the pan-genome reference; shown only when there are some |
+| `Gaps passing filter` | everything else |
+| `Gaps skipped (FASTA)` | of those, in genomes with no FASTA file; shown only when there are some |
+| `Gaps searched` | of those, actually searched with minimap2 |
+
+`Matrix-corrected` is the number of cells written into the corrected matrix as
+presence, and `Remaining gaps` is the number of cells still empty in it, both
+counted from the file as it is written. Without `--nscluster`,
+`Total gaps - Matrix-corrected = Remaining gaps`. With `--nscluster` a
+`NSC merged cells` line appears under `Matrix-corrected`, rows merged into a
+representative are no longer in the file, and the summary ends with a
+`Nucleotide similarity clustering` block.
 
 ### Interpreting core genome changes
 
-- **Core +7**: 7 clusters that were missing from at least one genome are now found in all: true core genes that Panaroo had incorrectly excluded.
-- **Soft-core -5**: 5 clusters that appeared to be soft-core were actually redundant with other clusters (merged by NSC). The true soft-core is slightly smaller.
+- **Core +3** in the tutorial: `Rv0003`, `Rv0006` and `Rv0012` were missing
+  from a few genomes and are now found in all of them, core genes the matrix had
+  excluded. `Rv0009` stays out, because balanced keeps pseudogenes out of the
+  binary matrix.
+- With `--nscluster` the soft-core can **shrink**: clusters that looked
+  soft-core on their own may be redundant copies of another cluster and are
+  merged into it.
 
 ---
 

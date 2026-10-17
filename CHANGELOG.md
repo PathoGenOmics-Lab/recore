@@ -222,6 +222,52 @@ and Recore uses semantic versioning.
   two halves meet exactly on the gene and were merged into one piece; and when
   minimap2 chained them across a short insertion it aligned only the first
   half. What a partial hit leaves uncovered is now realigned on its own.
+- A gene split across two contigs is FRAGMENTED, with a
+  `split_across_contigs` note, instead of a partial deletion claimed from its
+  larger piece.
+- Internal stops in a rescue that sits on an annotated CDS are counted in that
+  CDS, in its own frame and up to its own stop. The minimum over three frames
+  missed premature stops in GC-rich genes, and a representative that reads
+  through its stop made an intact gene look like a pseudogene.
+- `START_VARIANT` requires the annotated CDS to agree with the representative
+  at the stop and differ at the start. It was a length comparison, which called
+  intact genes start variants when an alignment was trimmed, and let a
+  frameshifted gene into the matrix as one. The docs had its sign backwards: a
+  positive value means this genome's CDS starts upstream.
+- A CDS that contains another, nested CDS is found by annotation lookups. The
+  binary search assumed gene ends were sorted, so the outer CDS was skipped and
+  its gene read as `MISSING_CDS`.
+- An annotated CDS that no cluster claims is preferred over an identical
+  unannotated copy elsewhere in the genome. The copy used to win as
+  `MISSING_CDS`, fail synteny, and leave the cell uncorrected.
+- Inputs are checked before any work starts. A misspelled `--annotations`
+  directory, `--synteny` without `--annotations`, a genomes directory with no
+  FASTA for the matrix, an unmatched or ambiguous `--reference-genome`, an
+  unusable output directory and a missing MMseqs2 for `--nsc-engine mmseqs2`
+  used to be found late or not at all, several of them ending in exit code 0
+  with a degraded answer. A bad `--mobile-element-reference` failed only after
+  the whole search, having already deleted the previous run's outputs.
+- Roary pan-genome references (`>seqid cluster`) are read. They matched no
+  cluster, and the run finished with no rescues and exit code 0.
+- Panaroo cluster names containing `~~~` (merged genes such as `pstB~~~phoT`)
+  are kept whole. They were cut at `~~~`, which either lost the cluster or
+  filed its sequence under another cluster and searched that one with it.
+- A matrix column with no FASTA or GFF of its own no longer borrows another
+  column's through a shared AS identifier, which produced rescues from the
+  wrong genome.
+- A non-UTF-8 byte in a FASTA header's description or a GFF attribute no longer
+  breaks the read. In a FASTA it silently skipped the internal stop codon scan
+  for that genome, so its pseudogenes entered the matrix as intact genes; in a
+  GFF the genome lost its whole annotation.
+- A GFF that annotates none of its assembly's contigs, or has no CDS, is
+  reported and not used. It counted as loaded, and every rescue in that genome
+  became an uncorrected `MISSING_CDS`.
+- Summary, manifest and report counts are taken from the corrected matrix as
+  it is written. Rescues in rows that NSC merges away were counted as matrix
+  corrections, the report's "of gaps" share could exceed 100%, "Remaining gaps"
+  was searched gaps minus corrections rather than the cells left empty, gaps of
+  clusters with no reference sequence were counted as searched, and a genome
+  with no FASTA was reported as passing QC.
 - Rescues are no longer lost on large pangenomes. Every genome was searched in
   one shared minimap2 target, so once more than about fifty genomes carried a
   gene their copies used up the secondary budget and the gap genomes' hits were

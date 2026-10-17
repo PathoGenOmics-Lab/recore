@@ -61,6 +61,8 @@ The value after `SPLIT:` is the cluster that actually contains the annotation.
 
 **Evidence:** A co-linear chain of ≥2 hits from the same query allele, target contig, and strand whose merged coverage reaches ≥80% of the reference, with a large query or target gap (≥50 bp). Non-co-linear chains are not rescued as FRAGMENTED, and chains contained inside one compatible CDS are classified through the single-CDS annotation logic instead.
 
+A gene split across two contigs is FRAGMENTED too: two pieces, in order along the gene, each reaching its contig's end on the side where the gene carries on. The contigs may be assembled in either orientation. Such a rescue reports the larger piece's coordinates, and its `fragment_note` reads `split_across_contigs:<other contig>`.
+
 **Confidence:** `avg_identity × total_coverage × 0.8`
 
 **Example:**
@@ -93,7 +95,7 @@ These events are reported separately so downstream analyses can avoid treating t
 
 **What it means:** The gene is present with the correct sequence but starts at a different position than the reference annotation. Alternative start codons (GTG, TTG) and upstream ATGs can lead to start site disagreements between annotators.
 
-**Evidence:** Full-coverage hit (≥80%) with ≥98% identity, overlapping a GFF gene of similar length (within ±300 bp), where the length difference is non-zero.
+**Evidence:** Full-coverage hit (≥80%) with ≥98% identity, overlapping an annotated CDS on the same strand that agrees with the cluster's representative at the stop (within one codon) and differs from it at the start by 1 to 299 bp. The representative's start and stop are placed on the contig from the alignment, counting the query bases it left unaligned at each end, so trimmed alignment ends are not mistaken for a different start. A difference at the stop end is not a start variant: that is what a representative which reads through its stop looks like.
 
 **Confidence:** `identity × 0.95` (the only rescue type whose score does not multiply in coverage)
 
@@ -102,7 +104,7 @@ These events are reported separately so downstream analyses can avoid treating t
 geneA   genome4   START_VARIANT:+57bp   99.6   100.0   contig_1   34100   34956   +   0.941   PASS   Rv0033
 ```
 
-`+57bp` means the reference annotation extends 57bp upstream of where this genome's annotator placed the start.
+`+57bp` means this genome's annotated CDS starts 57 bp upstream of where the cluster's representative starts; a negative value means it starts downstream.
 
 ---
 
@@ -129,7 +131,7 @@ geneB   genome5   PARALOG:PE_PGRS_group   91.3   98.2   contig_2   1920400   192
 
 **What it means:** The gene sequence is present with good coverage but contains one or more premature stop codons (TAA, TAG, TGA) in the reading frame. This is a functional pseudogene.
 
-**Evidence:** Full-coverage hit reclassified after scanning the genome FASTA sequence. The region is extracted, reverse-complemented if on the minus strand, and scanned in all 3 reading frames. The frame with the fewest stops is reported.
+**Evidence:** Full-coverage hit reclassified after scanning the genome FASTA sequence. When the rescue sits on an annotated CDS, that CDS is read in its own frame from its own start to its own stop, so a premature stop cannot hide in another frame and a representative that reads through its stop does not turn this genome's canonical stop into an internal one. Without an annotated CDS, the aligned region is reverse-complemented if on the minus strand and scanned in all three frames, and the frame with the fewest stops is reported.
 
 **Confidence:** `identity × coverage × 0.5` (halved)
 
