@@ -119,7 +119,9 @@ For manuscript highlighting, the safest candidates are usually clusters with:
 - coherent `phylogenetic_pattern` with low/moderate blink flag;
 - high `carrier_mrca_purity` or `dollo_origin_purity`;
 - no paralog/component warning;
-- compatible synteny and clear ORF integrity.
+- compatible synteny and clear ORF integrity;
+- `absent_not_searched` of 0, so every absence the call rests on was searched
+  (see below).
 
 Clusters with `duplication_or_paralog_expansion`,
 `annotation_or_clustering_artifact`,
@@ -130,6 +132,34 @@ the locus is inspected manually. Clusters with `reference_gene_*` or
 `partial_reference_homology` should not be described as completely novel
 reference-absent genes, even if the original pangenome matrix marked them as
 absent from the reference.
+
+## Calls that rest on gaps Recore never searched
+
+Gains and losses are made of absences: a gain needs the gene missing in the
+rest of the tree, a loss needs it missing where it was lost. A gap outside the
+search (a cluster below `--min-prevalence`, a cluster with no sequence to search
+with, or a genome with no FASTA) keeps the input matrix's call, so a call built
+on such absences is only as good as that call. Under the default prevalence
+floor that is every gain on a cluster in fewer than one genome in ten.
+
+`absent_not_searched` counts those absences and `not_searched_reason` says why
+(`low_prevalence`, `no_cluster_sequence` or `no_fasta`). For the calls that rest
+on absences (`clean_insertion_or_acquisition_candidate`,
+`reference_or_lineage_loss_candidate`, `deletion_loss_candidate`,
+`unstable_or_homoplastic_accessory_signal` and
+`unresolved_accessory_variation`):
+
+- when none of the absences behind the call were searched (for a reference
+  loss, when the reference genome's was not), `support_level` drops one level,
+  `mechanism_detail` gains `absences_not_searched`, and `recommended_wording`
+  says so. The lower support lowers `evolutionary_signal_score`, and with it
+  `highlight_priority`;
+- when only some were not searched, `mechanism_detail` gains
+  `absences_not_searched=N/M` and the wording says how many, but the searched
+  absences still carry the call.
+
+Calls made from rescue evidence (pseudogenes, fragments, paralogs, reference
+events) do not rest on absences and are left as they are.
 
 ## Where the fields live
 

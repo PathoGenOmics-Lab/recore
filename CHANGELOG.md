@@ -9,6 +9,16 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- `evolutionary_events.tsv` no longer presents a gain or loss built on gaps
+  Recore never searched as an audited call. New columns `absent_not_searched`
+  and `not_searched_reason` count those absences and say why; a call none of
+  whose absences were searched drops one support level (and so in score and
+  priority), and every affected call is tagged in `mechanism_detail` and
+  explained in `recommended_wording`.
+- `benchmarks/compare_runs.py` counted `NOT_SEARCHED_*` cells as calls, so a
+  comparison against a run from before those states listed every unsearched
+  cell as a new correction. They are absences now, and a cell searched in one
+  run and not the other is `search_coverage_changed`.
 - A gap Recore never searched no longer reads like one it searched and found
   empty. The states file writes `NOT_SEARCHED_LOW_PREVALENCE`,
   `NOT_SEARCHED_NO_CLUSTER_SEQUENCE` or `NOT_SEARCHED_NO_FASTA` where it wrote
