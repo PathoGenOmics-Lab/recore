@@ -69,6 +69,11 @@ change to those rules is a change there too; `tools/check_site.py` fails if the
 policy table, a state, a rescue type, a matrix action or a column no longer
 matches the code.
 
+The README is the same front door on GitHub, in the website's words: keep the
+two in step. `tools/check_site.py` checks the README's links into the
+repository and into the website, the options of its `recore` commands, and that
+its Try-it block and counts are the website's.
+
 The Docs tab is these markdown pages. `tools/build_docs.py` turns each one into
 an `.html` page next to it, with the site's header, sidebar, contents and
 search, and writes `docs/documentation.html` and the search index. The pages

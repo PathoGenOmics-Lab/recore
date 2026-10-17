@@ -112,7 +112,11 @@ and Recore uses semantic versioning.
   cell through seven animated drawings, from the search to what gets written
   down: pick what the search finds, whether the neighbours agree and the
   policy, and the drawings decide by the same rules as the code, which
-  `tools/check_site.py` holds them to.
+  `tools/check_site.py` holds them to. The README follows the website: the
+  same opening, the same numbered steps, an animated preview of How it works
+  and a link into each part of the site. `tools/check_site.py` checks its
+  links, the options of its commands, and that its Try-it block and counts
+  are the website's.
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
   Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
   or `held_out_quality` instead of a `corrected...` value, and a strict
