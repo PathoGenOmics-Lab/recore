@@ -110,6 +110,13 @@ fn encode_set(out: &mut Vec<u8>, indices: &[u32], n_genomes: usize) {
     }
 }
 
+/// Encode a single genome set, such as the carriers of a synteny block.
+pub(super) fn encode_one_set(indices: &[u32], n_genomes: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_set(&mut out, indices, n_genomes);
+    out
+}
+
 /// Encode one cluster row: the present, rescued and NSC index sets.
 pub(super) fn encode_cluster(sets: &[Vec<u32>; STATE_SETS], n_genomes: usize) -> Vec<u8> {
     let mut out = Vec::new();

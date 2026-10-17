@@ -1060,13 +1060,14 @@ struct ExplorerSyntenyBlock {
     downstream: Vec<String>,
     interpretation: String,
     examples: String,
-    carrier_genomes: Vec<String>,
+    /// Matrix genome indices, sorted. Kept as indices from the moment the TSV is
+    /// read: one String per carrier name was most of the memory a full-synteny
+    /// run used, and merging blocks compared names pairwise.
+    carrier_genomes: Vec<u32>,
     representative_genome: String,
-    representative_gene: String,
     representative_contig: String,
     representative_start: String,
     representative_end: String,
-    representative_strand: String,
     representative_length: String,
     genes: Vec<ExplorerSyntenyGene>,
     reference_genes: Vec<ExplorerSyntenyGene>,
@@ -1185,13 +1186,15 @@ fn parse_synteny_gene_records(value: &str) -> Vec<ExplorerSyntenyGene> {
         .collect()
 }
 
-fn parse_synteny_carriers(value: &str) -> Vec<String> {
-    value
+fn parse_synteny_carriers(value: &str, genome_index: &HashMap<&str, u32>) -> Vec<u32> {
+    let mut carriers: Vec<u32> = value
         .split(';')
         .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(ToString::to_string)
-        .collect()
+        .filter_map(|name| genome_index.get(name).copied())
+        .collect();
+    carriers.sort_unstable();
+    carriers.dedup();
+    carriers
 }
 
 fn explorer_synteny_signature(
@@ -1233,11 +1236,9 @@ fn merge_explorer_synteny_block(
     incoming: ExplorerSyntenyBlock,
 ) {
     let incoming_n_genomes = incoming.n_genomes;
-    for genome in incoming.carrier_genomes {
-        if !existing.carrier_genomes.contains(&genome) {
-            existing.carrier_genomes.push(genome);
-        }
-    }
+    existing.carrier_genomes.extend(incoming.carrier_genomes);
+    existing.carrier_genomes.sort_unstable();
+    existing.carrier_genomes.dedup();
     existing.n_genomes = if existing.carrier_genomes.is_empty() {
         existing.n_genomes + incoming_n_genomes
     } else {
@@ -1248,19 +1249,16 @@ fn merge_explorer_synteny_block(
     if merged_fraction > 0.0 {
         existing.fraction = format!("{:.3}", merged_fraction.min(1.0));
     }
-    if !incoming.examples.is_empty() {
-        if existing.examples.is_empty() {
-            existing.examples = incoming.examples;
-        } else {
-            existing.examples.push(';');
-            existing.examples.push_str(&incoming.examples);
-        }
+    // The page shows one example locus; keep the first.
+    if existing.examples.is_empty() {
+        existing.examples = incoming.examples;
     }
 }
 
 fn explorer_synteny_blocks(
     path: &std::path::Path,
     limit_per_cluster: usize,
+    genome_index: &HashMap<&str, u32>,
 ) -> Result<HashMap<String, Vec<ExplorerSyntenyBlock>>> {
     let mut rows: HashMap<String, Vec<ExplorerSyntenyBlock>> = HashMap::new();
     let mut signature_indices: HashMap<String, HashMap<String, usize>> = HashMap::new();
@@ -1285,11 +1283,9 @@ fn explorer_synteny_blocks(
     let examples_idx = idx("example_genomes");
     let carrier_genomes_idx = idx("carrier_genomes");
     let representative_genome_idx = idx("representative_genome");
-    let representative_gene_idx = idx("representative_gene");
     let representative_contig_idx = idx("representative_contig");
     let representative_start_idx = idx("representative_start");
     let representative_end_idx = idx("representative_end");
-    let representative_strand_idx = idx("representative_strand");
     let representative_length_idx = idx("representative_length_bp");
     let representative_genes_idx = idx("representative_block_genes");
     let reference_genes_idx = idx("reference_block_genes");
@@ -1338,17 +1334,14 @@ fn explorer_synteny_blocks(
                 .to_string(),
             examples: examples_idx
                 .and_then(|i| record.get(i))
+                .and_then(|value| value.split(';').map(str::trim).find(|v| !v.is_empty()))
                 .unwrap_or("")
                 .to_string(),
             carrier_genomes: carrier_genomes_idx
                 .and_then(|i| record.get(i))
-                .map(parse_synteny_carriers)
+                .map(|value| parse_synteny_carriers(value, genome_index))
                 .unwrap_or_default(),
             representative_genome: representative_genome_idx
-                .and_then(|i| record.get(i))
-                .unwrap_or("")
-                .to_string(),
-            representative_gene: representative_gene_idx
                 .and_then(|i| record.get(i))
                 .unwrap_or("")
                 .to_string(),
@@ -1361,10 +1354,6 @@ fn explorer_synteny_blocks(
                 .unwrap_or("")
                 .to_string(),
             representative_end: representative_end_idx
-                .and_then(|i| record.get(i))
-                .unwrap_or("")
-                .to_string(),
-            representative_strand: representative_strand_idx
                 .and_then(|i| record.get(i))
                 .unwrap_or("")
                 .to_string(),
@@ -1672,24 +1661,6 @@ fn json_synteny_gene_array(values: &[ExplorerSyntenyGene]) -> String {
         .expect("write to String is infallible");
     }
     out.push(']');
-    out
-}
-
-fn genome_bitset_hex<I>(indices: I, n_genomes: usize) -> String
-where
-    I: IntoIterator<Item = usize>,
-{
-    let mut nibbles = vec![0u8; (n_genomes + 3) / 4];
-    for idx in indices {
-        if idx < n_genomes {
-            nibbles[idx / 4] |= 1 << (idx % 4);
-        }
-    }
-    let mut out = String::with_capacity(nibbles.len());
-    for nibble in nibbles {
-        let ch = std::char::from_digit(nibble as u32, 16).unwrap_or('0');
-        out.push(ch);
-    }
     out
 }
 
@@ -2068,7 +2039,7 @@ fn build_explorer_data_json(
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
     evidence: &[OrthologyEvidenceRow],
     notices: &[String],
-) -> Option<String> {
+) -> Option<(String, String)> {
     use std::fmt::Write as _;
 
     let tree_json = pruned_phylo_json(&tree.root)?;
@@ -2082,12 +2053,6 @@ fn build_explorer_data_json(
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
         .unwrap_or_default();
     let annotation_idx = metadata_column_index(pa, "Annotation");
-    let genome_name_to_idx: HashMap<&str, usize> = pa
-        .genome_names()
-        .iter()
-        .enumerate()
-        .map(|(idx, name)| (name.as_str(), idx))
-        .collect();
 
     let mut out = String::new();
     out.push_str("{\"genomes\":[");
@@ -2253,7 +2218,21 @@ fn build_explorer_data_json(
     out.push_str(&json_string_array(notices));
     out.push_str(",\"tree\":");
     out.push_str(&tree_json);
-    out.push_str(",\"synteny\":{");
+    // Synteny travels in its own script element, parsed the first time the
+    // panel opens: at 10,000 x 30,000 it was most of the payload, and every
+    // load paid for parsing it. The page only needs each cluster's block count
+    // up front.
+    out.push_str(",\"syntenyCounts\":[");
+    for (idx, cluster_name) in rendered_cluster_names.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        let n = synteny_blocks.get(cluster_name).map_or(0, Vec::len);
+        write!(out, "{n}").expect("write to String is infallible");
+    }
+    out.push_str("]}");
+
+    let mut synteny = String::from("{");
     let mut first_synteny_cluster = true;
     for cluster_name in rendered_cluster_names {
         let Some(blocks) = synteny_blocks.get(&cluster_name) else {
@@ -2263,50 +2242,61 @@ fn build_explorer_data_json(
             continue;
         }
         if !first_synteny_cluster {
-            out.push(',');
+            synteny.push(',');
         }
         first_synteny_cluster = false;
-        out.push_str(&json_script_escape(&cluster_name));
-        out.push_str(":[");
+        synteny.push_str(&json_script_escape(&cluster_name));
+        synteny.push_str(":[");
         for (idx, block) in blocks.iter().enumerate() {
             if idx > 0 {
-                out.push(',');
+                synteny.push(',');
             }
-            let carrier_bitset = genome_bitset_hex(
-                block
-                    .carrier_genomes
-                    .iter()
-                    .filter_map(|genome| genome_name_to_idx.get(genome.as_str()).copied()),
+            let carriers = cellcodec::base64(&cellcodec::encode_one_set(
+                &block.carrier_genomes,
                 pa.n_genomes(),
-            );
+            ));
             write!(
-                out,
-                "{{\"rank\":{},\"nGenomes\":{},\"fraction\":{},\"upstream\":{},\"downstream\":{},\"interpretation\":{},\"examples\":{},\"genomeBits\":{},\"representativeGenome\":{},\"representativeGene\":{},\"representativeContig\":{},\"representativeStart\":{},\"representativeEnd\":{},\"representativeStrand\":{},\"representativeLength\":{},\"genes\":{},\"referenceGenes\":{}}}",
+                synteny,
+                "{{\"rank\":{},\"nGenomes\":{},\"fraction\":{},\"interpretation\":{},\"examples\":{},\"carriers\":\"{}\",\"representativeGenome\":{},\"representativeContig\":{},\"representativeStart\":{},\"representativeEnd\":{},\"representativeLength\":{},\"genes\":{}",
                 block.rank,
                 block.n_genomes,
                 json_script_escape(&block.fraction),
-                json_string_array(&block.upstream),
-                json_string_array(&block.downstream),
                 json_script_escape(&block.interpretation),
                 json_script_escape(&block.examples),
-                json_script_escape(&carrier_bitset),
+                carriers,
                 json_script_escape(&block.representative_genome),
-                json_script_escape(&block.representative_gene),
                 json_script_escape(&block.representative_contig),
                 json_script_escape(&block.representative_start),
                 json_script_escape(&block.representative_end),
-                json_script_escape(&block.representative_strand),
                 json_script_escape(&block.representative_length),
                 json_synteny_gene_array(&block.genes),
-                json_synteny_gene_array(&block.reference_genes)
             )
             .expect("write to String is infallible");
+            // The flanking names are only drawn when there are no gene records,
+            // and the reference context only for the first block.
+            if block.genes.is_empty() {
+                write!(
+                    synteny,
+                    ",\"upstream\":{},\"downstream\":{}",
+                    json_string_array(&block.upstream),
+                    json_string_array(&block.downstream)
+                )
+                .expect("write to String is infallible");
+            }
+            if idx == 0 {
+                write!(
+                    synteny,
+                    ",\"referenceGenes\":{}",
+                    json_synteny_gene_array(&block.reference_genes)
+                )
+                .expect("write to String is infallible");
+            }
+            synteny.push('}');
         }
-        out.push(']');
+        synteny.push(']');
     }
-    out.push('}');
-    out.push('}');
-    Some(out)
+    synteny.push('}');
+    Some((out, synteny))
 }
 
 /// The workspace markup, and whether the viewer was actually embedded. Without a
@@ -2423,18 +2413,19 @@ fn explorer_workspace_html(
             notices,
         )
     };
-    let Some(mut data_json) = build(synteny_blocks, &notices) else {
+    let Some((mut data_json, mut synteny_json)) = build(synteny_blocks, &notices) else {
         return unavailable(
             "The tree could not be converted into a matched-tip browser workspace.",
         );
     };
-    if data_json.len() > EXPLORER_MAX_JSON_BYTES && !synteny_blocks.is_empty() {
+    let total = data_json.len() + synteny_json.len();
+    if total > EXPLORER_MAX_JSON_BYTES && !synteny_blocks.is_empty() {
         notices.push(format!(
             "Synteny detail was left out of this report: with it the embedded data would be {} MB, more than a browser reliably holds. cluster_synteny_blocks.tsv has every block.",
-            format_count(data_json.len() / (1024 * 1024))
+            format_count(total / (1024 * 1024))
         ));
         match build(&HashMap::new(), &notices) {
-            Some(json) => data_json = json,
+            Some(json) => (data_json, synteny_json) = json,
             None => {
                 return unavailable(
                     "The tree could not be converted into a matched-tip browser workspace.",
@@ -2442,10 +2433,10 @@ fn explorer_workspace_html(
             }
         }
     }
-    if data_json.len() > EXPLORER_MAX_JSON_BYTES {
+    if data_json.len() + synteny_json.len() > EXPLORER_MAX_JSON_BYTES {
         return unavailable(&format!(
             "The workspace data would be {} MB, more than a browser reliably holds. The run details drawer and the TSV files have every result.",
-            format_count(data_json.len() / (1024 * 1024))
+            format_count((data_json.len() + synteny_json.len()) / (1024 * 1024))
         ));
     }
 
@@ -2541,6 +2532,9 @@ fn explorer_workspace_html(
 
     html.push_str("<footer class='statusbar'><span id='matrixStatus'></span><span class='status-hint'><kbd>&#8984;K</kbd> find<span class='dot'></span><kbd>?</kbd> shortcuts</span></footer>");
 
+    html.push_str("<script id='syntenyData' type='application/json'>");
+    html.push_str(&script_safe_json(&synteny_json));
+    html.push_str("</script>");
     html.push_str("<script id='explorerData' type='application/json'>");
     html.push_str(&script_safe_json(&data_json));
     html.push_str("</script><script>");
@@ -2603,9 +2597,16 @@ pub(super) fn write_html_report(
     let qc = count_tsv_column(&output_dir.join("genome_qc.tsv"), "qc_status")?;
     let top_candidates = top_candidate_rows(&output_dir.join("evolutionary_events.tsv"), 25)?;
     let explorer_evolution = explorer_evolution_rows(&output_dir.join("evolutionary_events.tsv"))?;
+    let genome_index: HashMap<&str, u32> = pa
+        .genome_names()
+        .iter()
+        .enumerate()
+        .map(|(gi, name)| (name.as_str(), gi as u32))
+        .collect();
     let explorer_synteny = explorer_synteny_blocks(
         &output_dir.join("cluster_synteny_blocks.tsv"),
         EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER,
+        &genome_index,
     )?;
 
     let priority_set: std::collections::BTreeSet<String> = top_candidates

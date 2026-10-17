@@ -439,10 +439,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("id='syntenySvg'"));
     assert!(text.contains("treeEdgeColor"));
     assert!(text.contains("subtreeLineage"));
-    assert!(text.contains("\"synteny\""));
+    assert!(text.contains("syntenyCounts"));
     assert!(text.contains("selectedSyntenyBlock"));
     assert!(text.contains("function tidyTree"));
-    assert!(text.contains("genomeBits"));
+    assert!(text.contains("id='syntenyData'"));
     assert!(text.contains("syntenyCarrierIndices"));
     assert!(text.contains("referenceGenes"));
     assert!(text.contains("representativeLength"));

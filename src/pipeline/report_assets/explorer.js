@@ -503,8 +503,8 @@ function changedCellsHtml(clusterIdx) {
     : "";
   return `<div class="card-title">Evidence rows (${formatInt(rows.length)})</div><ul class="changed-cells">${items}</ul>${more}`;
 }
-function decodeClusterSets(encoded, nGenomes) {
-  const sets = [EMPTY_SET, EMPTY_SET, EMPTY_SET, EMPTY_SET];
+function decodeClusterSets(encoded, nGenomes, count = STORED_STATES) {
+  const sets = Array.from({length: count}, () => EMPTY_SET);
   if (!encoded) return sets;
   const bytes = decodeBase64(encoded);
   let pos = 0;
@@ -529,7 +529,7 @@ function decodeClusterSets(encoded, nGenomes) {
     }
     return idx;
   };
-  for (let state = 0; state < STORED_STATES; state += 1) {
+  for (let state = 0; state < count; state += 1) {
     const mode = bytes[pos];
     pos += 1;
     if (mode === 0) {
@@ -911,9 +911,29 @@ function burdenOf(mode, stats) {
 function subtreeLineage(node) {
   return node._lineage || "unknown";
 }
+/* Synteny sits in its own script element and is parsed the first time the panel
+   needs it; until then only the per-cluster block counts are in memory. */
+let syntenyStore = null;
+function syntenyBlocksFor(cluster) {
+  if (!cluster) return [];
+  if (!syntenyStore) {
+    const element = document.getElementById("syntenyData");
+    try {
+      syntenyStore = element ? JSON.parse(element.textContent) : {};
+    } catch (error) {
+      syntenyStore = {};
+      status.textContent = `Synteny data could not be read: ${error.message}`;
+    }
+    if (element) element.remove();
+  }
+  return syntenyStore[cluster.name] || [];
+}
+function syntenyBlockCount(clusterIdx) {
+  return data.syntenyCounts ? (data.syntenyCounts[clusterIdx] || 0) : 0;
+}
 function selectedSyntenyBlockData() {
   const cluster = data.clusters[selected];
-  const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+  const blocks = syntenyBlocksFor(cluster);
   if (!blocks.length) return null;
   selectedSyntenyBlock = Math.max(0, Math.min(selectedSyntenyBlock, blocks.length - 1));
   return blocks[selectedSyntenyBlock] || null;
@@ -934,16 +954,17 @@ function isSelectedSyntenyCarrier(genomeIdx) {
   return selectedSyntenyCarriers.has(genomeIdx);
 }
 function syntenyCarrierIndices(block) {
-  if (Array.isArray(block.genomes)) return block.genomes;
-  const bits = String(block.genomeBits || "");
-  const out = [];
-  for (let i = 0; i < bits.length; i += 1) {
-    const value = parseInt(bits[i], 16);
-    if (!Number.isFinite(value)) continue;
-    for (let bit = 0; bit < 4; bit += 1) {
-      if (value & (1 << bit)) out.push(i * 4 + bit);
-    }
-  }
+  if (block._carriers) return block._carriers;
+  const n = data.genomes.length;
+  const set = decodeClusterSets(block.carriers || "", n, 1)[0];
+  let out;
+  if (set.kind === "all") out = Array.from({length: n}, (_, g) => g);
+  else if (set.kind === "complement") {
+    const skip = new Set(set.idx);
+    out = [];
+    for (let g = 0; g < n; g += 1) if (!skip.has(g)) out.push(g);
+  } else out = Array.from(set.idx || []);
+  block._carriers = out;
   return out;
 }
 /* ---- Tree walks ------------------------------------------------------------
@@ -1442,7 +1463,7 @@ function renderSyntenyPanel() {
   if (syntenyHidden) return;
   if (!syntenyPanel || !syntenySvg || !syntenySummary) return;
   const cluster = data.clusters[selected];
-  const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+  const blocks = syntenyBlocksFor(cluster);
   updateSelectedSyntenyCarriers(blocks);
   const scrollContainer = syntenyPanel.querySelector(".synteny-scroll") || syntenyPanel;
   const paneWidth = Math.max(360, scrollContainer.clientWidth || syntenyPanel.clientWidth || 600);
@@ -1940,9 +1961,9 @@ function updateTopBarMeta() {
   if (topMatrixMeta) topMatrixMeta.textContent = `${formatInt(visibleClusters.length)} / ${plural(data.clusters.length, "cluster")}`;
   if (topSyntenyMeta) {
     const cluster = data.clusters[selected];
-    const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+    const count = syntenyBlockCount(selected);
     topSyntenyMeta.textContent = cluster
-      ? (blocks.length ? `${cluster.name} – ${blocks.length} unique block${blocks.length === 1 ? "" : "s"}` : `${cluster.name} – no synteny data`)
+      ? (count ? `${cluster.name} – ${plural(count, "unique block")}` : `${cluster.name} – no synteny data`)
       : "select a cluster";
   }
 }
