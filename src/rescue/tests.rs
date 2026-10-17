@@ -2515,3 +2515,114 @@ fn unannotated_spans_are_scanned_in_the_alignment_frame() {
         None
     );
 }
+
+fn piece(
+    query_start: u64,
+    query_end: u64,
+    strand: char,
+    target_start: u64,
+    target_end: u64,
+) -> Hit {
+    Hit {
+        query: "q".into(),
+        cluster: "cluster1".into(),
+        query_length: 1182,
+        query_start,
+        query_end,
+        strand,
+        target: "chr".into(),
+        target_start,
+        target_end,
+        target_length: 23632,
+        matches: (query_end - query_start) * 99 / 100,
+        alignment_length: query_end - query_start,
+        mapq: 60,
+    }
+}
+
+fn classify_pieces(hits: &[Hit]) -> Option<RescueEvent> {
+    // An annotation exists but nothing in it overlaps either piece.
+    let gff = GffIndex::build(vec![GffGene {
+        contig: "chr".into(),
+        start: 9000,
+        end: 9900,
+        strand: '+',
+        gene_id: "far".into(),
+    }]);
+    let pa = PresenceAbsence::new_for_test(
+        vec!["cluster1".into()],
+        vec!["genome1".into()],
+        vec![vec!["".into()]],
+    );
+    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
+    classify_hits(
+        hits,
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        Some(&gff),
+        &g2c,
+        80.0,
+    )
+}
+
+/// A gene across the origin of a circular contig: its first half runs off the
+/// end of the contig and its second half carries on from the start. Neither
+/// piece reaches 80% on its own, and chained as one stretch they read as
+/// non-colinear, so there was no rescue at all.
+#[test]
+fn a_gene_across_the_origin_of_a_circular_contig_is_rescued() {
+    let plus = classify_pieces(&[
+        piece(9, 588, '+', 23049, 23628),
+        piece(608, 1173, '+', 16, 581),
+    ])
+    .expect("a rescue across the origin");
+    assert!(
+        matches!(plus.rescue_type, RescueType::MissingCds),
+        "{}",
+        plus.rescue_type
+    );
+    assert!(plus.coverage > 95.0, "both pieces count: {}", plus.coverage);
+    assert_eq!(
+        (plus.start, plus.end),
+        (23049, 23628),
+        "the larger piece's span"
+    );
+    assert_eq!(
+        plus.fragment_evidence.note.as_deref(),
+        Some("wraps_origin:17-581")
+    );
+    assert_eq!(plus.fragment_evidence.n_fragments, 2);
+    assert_eq!(plus.query_start, Some(9));
+
+    // Minus strand: the gene's first piece is the one at the contig's start.
+    let minus = classify_pieces(&[
+        piece(9, 588, '-', 10, 589),
+        piece(608, 1173, '-', 23049, 23614),
+    ])
+    .expect("a rescue across the origin on the minus strand");
+    assert!(matches!(minus.rescue_type, RescueType::MissingCds));
+    assert_eq!(
+        minus.fragment_evidence.note.as_deref(),
+        Some("wraps_origin:23050-23614")
+    );
+}
+
+/// The same two pieces in the order a linear contig gives them are not a
+/// wrap: the first half sits at the start and the second at the end.
+#[test]
+fn pieces_at_both_ends_in_linear_order_are_not_an_origin_wrap() {
+    let rescue = classify_pieces(&[
+        piece(9, 588, '+', 16, 595),
+        piece(608, 1173, '+', 23049, 23614),
+    ]);
+    assert!(
+        rescue.as_ref().is_none_or(|r| !r
+            .fragment_evidence
+            .note
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("wraps_origin")),
+        "{rescue:?}"
+    );
+}

@@ -9,6 +9,10 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- A gene across the origin of a circular contig, which comes back as two
+  pieces at opposite ends of the same contig, is rescued as one gene (with
+  `fragment_note` `wraps_origin:<start>-<end>`). It used to get no rescue at
+  all, and the evolutionary audit then called it a deletion.
 - Unannotated rescues are scanned for internal stops in the reading frame
   their alignment fixes, instead of the cleanest of three frames, so a
   premature stop in a gene of G/C-ending codons is caught and the pseudogene
