@@ -144,6 +144,28 @@ shows one representative locus.
 
 This needs `cluster_synteny_blocks.tsv`, which means GFFs were loaded.
 
+## Run details
+
+++d++ or the info button opens the run details. They start with what you need
+to write the run up:
+
+- **Using these results**: a methods paragraph built from the run's own
+  settings and counts, with a button that copies it; the caveats the evidence
+  calls for (cells kept out of the matrix, corrections whose span is not whole
+  codons, rejected candidates, synteny or the tree being off); and the
+  parameters, the command line and the time the report was written.
+- **Changed cells**: every evidence row, corrections first, with a button that
+  copies them as tab-separated text and one that downloads
+  `recore_changed_cells.tsv`. Clicking a row opens that cell in the matrix.
+
+Below come the run statistics, the dominant mechanisms, the top candidate
+clusters (the first ten, then **Show all**) and every file in the output
+directory with its row count. The links open the files beside the report, so
+they work while the report sits in its output directory.
+
+The genome card shows each genome's QC status and flags from `genome_qc.tsv`,
+and tips can be coloured by QC status.
+
 ## Getting figures out
 
 The download button writes `recore_matrix.png` and, when the synteny band is
@@ -188,12 +210,6 @@ Press ++question++ for this list in the report itself.
 | ++shift++ + wheel | scroll sideways |
 | ++alt++ + click a tip | root the tree on that genome |
 | ++esc++ | close whatever is open |
-
-## Run details
-
-The info button opens the drawer: the run summary, the QC breakdowns, the top
-candidate clusters, and links to the exact TSV files behind every number.
-Clicking a candidate takes you to it in the matrix.
 
 ## Scale
 

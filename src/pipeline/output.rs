@@ -813,6 +813,54 @@ pub(super) fn json_path(path: &std::path::Path) -> String {
     json_escape(&path.display().to_string())
 }
 
+/// Version of the output set, shared by run_manifest.json and the report so the
+/// two cannot name different schemas.
+pub(super) const OUTPUT_SCHEMA: &str = "recore.outputs.v7";
+
+/// The current time as an ISO 8601 UTC timestamp, without a date crate.
+pub(super) fn utc_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
+}
+
+/// The command line this process was started with, quoted where needed so it
+/// can be pasted back into a shell.
+pub(super) fn command_line() -> String {
+    std::env::args()
+        .map(|arg| {
+            if !arg.is_empty()
+                && arg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./=:,+@%".contains(c))
+            {
+                arg
+            } else {
+                format!("'{}'", arg.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub(super) fn write_run_manifest(
     args: &Args,
     pa: &crate::parser::PresenceAbsence,
@@ -839,7 +887,9 @@ pub(super) fn write_run_manifest(
         "  \"tool_version\": {},",
         json_escape(env!("CARGO_PKG_VERSION"))
     )?;
-    writeln!(w, "  \"schema_version\": \"recore.outputs.v6\",")?;
+    writeln!(w, "  \"schema_version\": {},", json_escape(OUTPUT_SCHEMA))?;
+    writeln!(w, "  \"created_utc\": {},", json_escape(&utc_timestamp()))?;
+    writeln!(w, "  \"command_line\": {},", json_escape(&command_line()))?;
     writeln!(w, "  \"inputs\": {{")?;
     writeln!(
         w,
@@ -1026,6 +1076,103 @@ fn count_tsv_column(path: &std::path::Path, column: &str) -> Result<BTreeMap<Str
         *counts.entry(key.to_string()).or_default() += 1;
     }
     Ok(counts)
+}
+
+/// genome_qc.tsv as (status, flags) per matrix genome, for the genome card.
+fn genome_qc_rows(
+    path: &std::path::Path,
+    pa: &crate::parser::PresenceAbsence,
+) -> Result<Vec<(String, String)>> {
+    let mut rows = vec![(String::new(), String::new()); pa.n_genomes()];
+    if !path.exists() {
+        return Ok(rows);
+    }
+    let index: HashMap<&str, usize> = pa
+        .genome_names()
+        .iter()
+        .enumerate()
+        .map(|(gi, name)| (name.as_str(), gi))
+        .collect();
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    let headers = reader.headers()?.clone();
+    let col = |name: &str| headers.iter().position(|h| h == name);
+    let (Some(genome_col), Some(status_col)) = (col("genome"), col("qc_status")) else {
+        return Ok(rows);
+    };
+    let flags_col = col("qc_flags");
+    for record in reader.records() {
+        let record = record?;
+        if let Some(&gi) = record.get(genome_col).and_then(|g| index.get(g)) {
+            rows[gi] = (
+                record.get(status_col).unwrap_or("").to_string(),
+                flags_col
+                    .and_then(|c| record.get(c))
+                    .unwrap_or("")
+                    .to_string(),
+            );
+        }
+    }
+    Ok(rows)
+}
+
+/// What the report says a reader can put in a methods section, built from the
+/// run's own settings and counts so it cannot drift from what was done.
+#[allow(clippy::too_many_arguments)]
+fn methods_text(
+    args: &Args,
+    pa: &crate::parser::PresenceAbsence,
+    stats: &SummaryStats,
+    corrected: usize,
+    kept_out: usize,
+    rejected: usize,
+    merged_by_nsc: usize,
+) -> String {
+    let mut text = format!(
+        "False gene absences in the gene presence/absence matrix ({} clusters, {} genomes) were corrected with Recore v{}. ",
+        format_count(pa.n_clusters()),
+        format_count(pa.n_genomes()),
+        env!("CARGO_PKG_VERSION")
+    );
+    text.push_str(&format!(
+        "Each absent cell of a cluster present in at least {}% of genomes was searched by aligning the cluster's representative sequence{} to that genome's assembly with minimap2 (preset {}); a hit counted when it reached at least {}% identity over at least {}% of the query. ",
+        trim_number(args.min_prevalence * 100.0),
+        if args.multi_allele { " and every allele" } else { "" },
+        args.preset,
+        trim_number(args.min_identity),
+        trim_number(args.min_coverage)
+    ));
+    if args.annotations.is_some() {
+        text.push_str("Hits were classified against the genome annotation as missing annotations, split or fragmented genes, start variants or pseudogenes");
+        text.push_str(if args.synteny {
+            ", and kept only when the flanking gene context (synteny) agreed with the cluster's. "
+        } else {
+            ". "
+        });
+    }
+    text.push_str(&format!(
+        "Under the {} matrix policy, {} cells were set to present; {} further cells with sequence evidence were kept out of the binary matrix, and the synteny and paralog guards rejected {} candidates. ",
+        format!("{:?}", stats.matrix_policy).to_lowercase(),
+        format_count(corrected),
+        format_count(kept_out),
+        format_count(rejected)
+    ));
+    if merged_by_nsc > 0 {
+        text.push_str(&format!(
+            "Clusters identical at the nucleotide level were merged by similarity clustering ({} clusters merged). ",
+            format_count(merged_by_nsc)
+        ));
+    }
+    text.push_str("The evidence behind every corrected and kept-out cell is listed in orthology_evidence.tsv.");
+    text
+}
+
+/// 90.0 as "90", 0.1 as "0.1": thresholds read as people write them.
+pub(super) fn trim_number(value: f64) -> String {
+    let text = format!("{value:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -1475,13 +1622,22 @@ fn count_items_html(
     rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
     for (label, value) in rows {
         let share = *value as f64 / total as f64 * 100.0;
+        // Genome QC is coloured by what each status means, not one hue for all.
+        let kind = match (bar_kind, label.as_str()) {
+            ("qc", "pass") => "pos",
+            ("qc", "review") => "warn",
+            ("qc", "fail") => "danger",
+            ("qc", _) => "",
+            (kind, _) => kind,
+        };
         write!(
             html,
-            "<div class='bar-row'><div class='bar-label'><span>{}</span><strong class='num'>{} <small>{:.1}%</small></strong></div><div class='track'><div class='bar {}' style='width:{:.1}%'></div></div></div>",
+            "<div class='bar-row'><div class='bar-label'><span data-tip='{}'>{}</span><strong class='num'>{} <small>{:.1}%</small></strong></div><div class='track'><div class='bar {}' style='width:{:.1}%'></div></div></div>",
             html_escape(label),
+            html_escape(&plain_label(label)),
             format_count(*value),
             share,
-            bar_kind,
+            kind,
             share.clamp(1.5, 100.0)
         )
         .expect("write to String is infallible");
@@ -1490,12 +1646,107 @@ fn count_items_html(
     html
 }
 
-fn file_link_html(path: &str, description: &str) -> String {
-    format!(
-        "<a class='file' href='{0}'><span class='file-name'>{0}</span><small>{1}</small></a>",
-        html_escape(path),
-        html_escape(description)
-    )
+fn output_file_description(name: &str) -> &'static str {
+    match name {
+        "gene_presence_absence_recore.csv" => "Corrected binary matrix",
+        "gene_presence_absence_recore_states.csv" => {
+            "Multistate matrix: input, corrected, NSC and kept-out codes"
+        }
+        "orthology_evidence.tsv" => {
+            "Every rescue and rejected candidate, with its decision and why"
+        }
+        "rescue_report.tsv" => "One row per rescue: type, identity, coverage and locus",
+        "evolutionary_events.tsv" => "Cluster mechanisms, priorities and phylogenetic patterns",
+        "genome_qc.tsv" => "Per-genome inputs, correction burden and QC status",
+        "reference_genome_audit.tsv" => "Reference-absence audit (--reference-genome)",
+        "cluster_synteny_blocks.tsv" => "Unique flanking-gene blocks per cluster",
+        "cluster_locus_context.tsv" => "Locus context per cluster and genome",
+        "cluster_locus_summary.tsv" => "Locus context summary per cluster",
+        "cluster_relationships.tsv" => "Split, alias, paralog and NSC links between clusters",
+        "cluster_components.tsv" => "Components of related clusters",
+        "cluster_component_members.tsv" => "Members of each cluster component",
+        "run_manifest.json" => "Inputs, parameters, counts and the command line",
+        "summary.txt" => "Plain-text run summary",
+        _ => "",
+    }
+}
+
+/// One link per file actually in the output directory, with a description when
+/// Recore knows the file and its row count (or size, for large files).
+pub(super) fn output_file_entries(output_dir: &std::path::Path) -> Vec<String> {
+    let Ok(read) = std::fs::read_dir(output_dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<(String, bool, u64)> = read
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_string();
+            let meta = entry.metadata().ok()?;
+            (name != "recore_report.html" && !name.starts_with('.'))
+                .then(|| (name, meta.is_dir(), meta.len()))
+        })
+        .collect();
+    // Known outputs first, in the order a reader needs them, then the rest.
+    let rank = |name: &str| {
+        [
+            "gene_presence_absence_recore.csv",
+            "orthology_evidence.tsv",
+            "gene_presence_absence_recore_states.csv",
+            "rescue_report.tsv",
+            "genome_qc.tsv",
+            "evolutionary_events.tsv",
+            "summary.txt",
+            "run_manifest.json",
+        ]
+        .iter()
+        .position(|known| *known == name)
+        .unwrap_or(usize::MAX)
+    };
+    names.sort_by(|a, b| rank(&a.0).cmp(&rank(&b.0)).then_with(|| a.0.cmp(&b.0)));
+    names
+        .into_iter()
+        .map(|(name, is_dir, len)| {
+            let detail = if is_dir {
+                "folder".to_string()
+            } else if (name.ends_with(".tsv") || name.ends_with(".csv")) && len < 32 * 1024 * 1024 {
+                let rows = std::fs::read(output_dir.join(&name))
+                    .map(|bytes| bytecount_lines(&bytes).saturating_sub(1))
+                    .unwrap_or(0);
+                format!("{} {}", format_count(rows), if rows == 1 { "row" } else { "rows" })
+            } else {
+                format_bytes(len)
+            };
+            let description = output_file_description(&name);
+            format!(
+                "<a class='file' href='{0}' target='_blank' rel='noopener'><span class='file-name'>{1}</span><small>{2}{3}{4}</small></a>",
+                html_escape(&name),
+                html_escape(&name).replace('_', "_<wbr>"),
+                html_escape(description),
+                if description.is_empty() { "" } else { " &middot; " },
+                html_escape(&detail)
+            )
+        })
+        .collect()
+}
+
+fn bytecount_lines(bytes: &[u8]) -> usize {
+    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
+    newlines + usize::from(!bytes.is_empty() && !bytes.ends_with(b"\n"))
+}
+
+fn format_bytes(len: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = len as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{len} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 const RECORE_REPO_URL: &str = "https://github.com/PathoGenOmics-Lab/recore";
@@ -1563,25 +1814,8 @@ fn report_logo_svg() -> String {
     REPORT_LOGO.trim().to_string()
 }
 
-fn mechanism_color(name: &str) -> &'static str {
-    match name {
-        "clade_associated_gain" | "clean_insertion_or_acquisition_candidate" => "#079455",
-        "ancestral_retained_no_disruption" => "#155eef",
-        "duplication_or_paralog_expansion" => "#7a5af8",
-        "deletion_loss_candidate" => "#b42318",
-        "reference_or_lineage_loss_candidate" => "#d92d20",
-        "IS_interruption_supported" => "#f79009",
-        "pseudogenization" => "#b54708",
-        "gene_fragmentation_or_structural_break" => "#dc6803",
-        "partial_reference_homology" => "#0e9384",
-        "reference_gene_allelic_derivative" => "#2970ff",
-        "reference_gene_disruption_or_truncation" => "#c11574",
-        "translocation_or_context_shift_candidate" => "#9e77ed",
-        "annotation_or_clustering_artifact" => "#667085",
-        "unstable_or_homoplastic_accessory_signal" => "#dd2590",
-        "unresolved_accessory_variation" => "#475467",
-        _ => "#475467",
-    }
+fn mechanism_color(name: &str) -> String {
+    format!("var(--mech-{})", mechanism_family(name))
 }
 
 fn priority_badge_class(priority: &str) -> &'static str {
@@ -1599,6 +1833,42 @@ fn priority_badge_class(priority: &str) -> &'static str {
 
 fn pretty_label(value: &str) -> String {
     value.replace('_', " ")
+}
+
+/// Pipeline vocabulary in words a reader knows; anything not listed reads with
+/// spaces for underscores. The raw value stays in the element's tip.
+fn plain_label(value: &str) -> String {
+    match value {
+        "correct_presence" => "corrected".to_string(),
+        "audit_only_policy" => "kept out by the matrix policy".to_string(),
+        "audit_only_quality" => "kept out by a quality floor".to_string(),
+        "audit_only" => "rejected".to_string(),
+        "high_confidence" => "high".to_string(),
+        "moderate_confidence" => "moderate".to_string(),
+        "low_confidence" => "low".to_string(),
+        "filter_or_review_blinking" => "filter or review (unstable)".to_string(),
+        "NA" => "not given".to_string(),
+        other => pretty_label(other),
+    }
+}
+
+/// Mechanisms are drawn in six families; the report's markup takes the
+/// family's colour token so it follows the theme.
+fn mechanism_family(name: &str) -> &'static str {
+    match name {
+        "ancestral_retained_no_disruption" => "retained",
+        "clade_associated_gain" | "clean_insertion_or_acquisition_candidate" => "gain",
+        "deletion_loss_candidate" | "reference_or_lineage_loss_candidate" => "loss",
+        "IS_interruption_supported"
+        | "pseudogenization"
+        | "gene_fragmentation_or_structural_break"
+        | "reference_gene_disruption_or_truncation" => "disruption",
+        "duplication_or_paralog_expansion"
+        | "translocation_or_context_shift_candidate"
+        | "partial_reference_homology"
+        | "reference_gene_allelic_derivative" => "paralog",
+        _ => "unresolved",
+    }
 }
 
 /// JSON made safe to sit inside a `<script>` element.
@@ -2039,6 +2309,7 @@ fn build_explorer_data_json(
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
     evidence: &[OrthologyEvidenceRow],
     notices: &[String],
+    genome_qc: &[(String, String)],
 ) -> Option<(String, String)> {
     use std::fmt::Write as _;
 
@@ -2216,6 +2487,20 @@ fn build_explorer_data_json(
     ));
     out.push_str(",\"notices\":");
     out.push_str(&json_string_array(notices));
+    out.push_str(",\"genomeQc\":[");
+    for (idx, (status, flags)) in genome_qc.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        write!(
+            out,
+            "[{},{}]",
+            json_script_escape(status),
+            json_script_escape(flags)
+        )
+        .expect("write to String is infallible");
+    }
+    out.push(']');
     out.push_str(",\"tree\":");
     out.push_str(&tree_json);
     // Synteny travels in its own script element, parsed the first time the
@@ -2354,6 +2639,7 @@ fn explorer_workspace_html(
     evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
     evidence: &[OrthologyEvidenceRow],
+    genome_qc: &[(String, String)],
 ) -> ExplorerWorkspace {
     use std::fmt::Write as _;
 
@@ -2411,6 +2697,7 @@ fn explorer_workspace_html(
             synteny,
             evidence,
             notices,
+            genome_qc,
         )
     };
     let Some((mut data_json, mut synteny_json)) = build(synteny_blocks, &notices) else {
@@ -2468,7 +2755,7 @@ fn explorer_workspace_html(
     html.push_str("<div class='menu-row'><label class='menu-label' for='rootMode'>Root</label><select id='rootMode' data-tip='Where the displayed tree is rooted. Every ancestral reading depends on this.'><option value='l8'>L8 outgroup</option><option value='input'>As supplied</option><option value='midpoint'>Midpoint</option></select></div>");
     html.push_str("<p class='menu-hint'>Alt-click any tip to root the tree on that genome.</p>");
     html.push_str("<div class='menu-sep'></div>");
-    html.push_str("<div class='menu-row'><label class='menu-label' for='tipColorMode'>Colour tips by</label><select id='tipColorMode'><option value='cluster'>Selected cluster</option><option value='lineage'>Lineage</option><option value='process'>Mechanism</option><option value='rescue'>Rescue burden</option><option value='absence'>Absence burden</option><option value='correction'>Any correction</option></select></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='tipColorMode'>Colour tips by</label><select id='tipColorMode'><option value='cluster'>Selected cluster</option><option value='lineage'>Lineage</option><option value='process'>Mechanism</option><option value='rescue'>Rescue burden</option><option value='absence'>Absence burden</option><option value='correction'>Any correction</option><option value='qc'>Genome QC status</option></select></div>");
     html.push_str("<div class='menu-row'><label class='menu-label' for='tipLabels'>Tip labels</label><input id='tipLabels' type='checkbox' class='switch' checked data-tip='Draw genome names beside the tips'></div>");
     html.push_str("</div>");
     // Tree, lineage strip and matrix all draw only their visible window onto a
@@ -2646,6 +2933,7 @@ pub(super) fn write_html_report(
         .reference_genome
         .as_deref()
         .and_then(|name| resolve_reference_genome(pa, name));
+    let genome_qc = genome_qc_rows(&output_dir.join("genome_qc.tsv"), pa)?;
     let workspace = explorer_workspace_html(
         pa,
         rescue_map,
@@ -2655,6 +2943,7 @@ pub(super) fn write_html_report(
         &explorer_evolution,
         &explorer_synteny,
         evidence,
+        &genome_qc,
     );
     let has_viewer = workspace.embedded;
 
@@ -2903,7 +3192,7 @@ pub(super) fn write_html_report(
 
     write!(
         html,
-        "<section class='drawer-section'><h3>Summary</h3><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore found the gene in <strong class='num'>{}</strong> more cells that it kept out of the matrix, <strong class='num'>{}</strong> by the {:?} policy and <strong class='num'>{}</strong> by the quality floors, and its synteny and paralog guards rejected <strong class='num'>{}</strong> candidates. All <strong class='num'>{}</strong> accepted evidence rows are in orthology_evidence.tsv. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p><p class='path'>Output dir: {}</p></section>",
+        "<section class='drawer-section'><h3>Summary</h3><p><strong class='num'>{}</strong> binary matrix cells were corrected under the <strong>{:?}</strong> policy from <strong class='num'>{}</strong> searchable gaps. Recore found the gene in <strong class='num'>{}</strong> more cells that it kept out of the matrix, <strong class='num'>{}</strong> by the {:?} policy and <strong class='num'>{}</strong> by the quality floors, and its synteny and paralog guards rejected <strong class='num'>{}</strong> candidates. All <strong class='num'>{}</strong> accepted evidence rows are in orthology_evidence.tsv. Core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> clusters (<strong class='num'>{:+}</strong>); soft-core changed from <strong class='num'>{}</strong> to <strong class='num'>{}</strong> (<strong class='num'>{:+}</strong>).</p><p class='path' data-tip='{}'>Output directory: {}</p></section>",
         format_count(matrix_corrected_total),
         stats.matrix_policy,
         format_count(stats.searchable_gaps),
@@ -2920,8 +3209,149 @@ pub(super) fn write_html_report(
         format_count(soft_after),
         soft_delta,
         html_escape(&output_dir.display().to_string()),
+        // The name, not the whole path: an absolute path printed into a PDF
+        // carries the user's home or a temp directory into supplementary data.
+        html_escape(
+            &output_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| output_dir.display().to_string())
+        ),
     )
     .expect("write to String is infallible");
+
+    // ---- Using these results: what a reader needs to write the run up.
+    let orf_review = evidence
+        .iter()
+        .filter(|row| {
+            row.field("matrix_action") == "correct_presence"
+                && row.field("orf_integrity_signal") == "out_of_frame_span_review"
+        })
+        .count();
+    let mut caveats: Vec<String> = Vec::new();
+    if kept_total > 0 {
+        caveats.push(format!(
+            "{} cells have sequence evidence but are not in the corrected matrix ({} by the {:?} policy, {} by the quality floors). They are drawn as kept out and carry publication_status held_out_policy or held_out_quality.",
+            format_count(kept_total),
+            format_count(kept_policy),
+            stats.matrix_policy,
+            format_count(kept_quality)
+        ));
+    }
+    if orf_review > 0 {
+        caveats.push(format!(
+            "{} corrections span a length that is not a whole number of codons (publication_status corrected_review); check them before calling the gene intact.",
+            format_count(orf_review)
+        ));
+    }
+    if rejected_total > 0 {
+        caveats.push(format!(
+            "The synteny and paralog guards rejected {} candidates; they stay absent and are listed with decision rejected.",
+            format_count(rejected_total)
+        ));
+    }
+    if !args.synteny {
+        caveats.push(
+            "Synteny was off, so corrections rest on sequence similarity and annotation alone."
+                .to_string(),
+        );
+    }
+    if phylo_tree.is_none() {
+        caveats
+            .push("No tree was supplied, so no ancestral or lineage reading was made.".to_string());
+    }
+    let methods = methods_text(
+        args,
+        pa,
+        stats,
+        matrix_corrected_total,
+        kept_total,
+        rejected_total,
+        merged_by_nsc,
+    );
+    html.push_str("<section class='drawer-section using'><h3>Using these results</h3>");
+    write!(
+        html,
+        "<div class='methods'><p id='methodsText'>{}</p><button id='copyMethods' type='button' class='ghost-btn' data-tip='Copy this paragraph for a methods section'>Copy methods text</button></div>",
+        html_escape(&methods)
+    )
+    .expect("write to String is infallible");
+    if !caveats.is_empty() {
+        html.push_str("<ul class='caveats'>");
+        for caveat in &caveats {
+            write!(html, "<li>{}</li>", html_escape(caveat))
+                .expect("write to String is infallible");
+        }
+        html.push_str("</ul>");
+    }
+    html.push_str("<div class='corrections-head'><h4>Changed cells</h4><span class='corrections-actions'><button id='copyCorrections' type='button' class='ghost-btn' data-tip='Every evidence row, as tab-separated text'>Copy as TSV</button><button id='downloadCorrections' type='button' class='ghost-btn' data-tip='Every evidence row, as a TSV file'>Download TSV</button></span></div>");
+    html.push_str("<div id='correctionsTable' class='corrections-table'><p class='muted'>The list of changed cells needs the interactive workspace; orthology_evidence.tsv has every row.</p></div>");
+    let parameters: Vec<(&str, String)> = vec![
+        (
+            "Recore",
+            format!("v{} ({})", env!("CARGO_PKG_VERSION"), OUTPUT_SCHEMA),
+        ),
+        ("Report written", utc_timestamp()),
+        ("Command line", command_line()),
+        (
+            "Minimum identity",
+            format!("{}%", trim_number(args.min_identity)),
+        ),
+        (
+            "Minimum query coverage",
+            format!("{}%", trim_number(args.min_coverage)),
+        ),
+        (
+            "Minimum prevalence",
+            format!("{}% of genomes", trim_number(args.min_prevalence * 100.0)),
+        ),
+        ("minimap2 preset", args.preset.clone()),
+        ("Matrix policy", format!("{:?}", args.matrix_policy)),
+        (
+            "All alleles as queries",
+            if args.multi_allele { "yes" } else { "no" }.to_string(),
+        ),
+        (
+            "Annotations",
+            if args.annotations.is_some() {
+                "supplied"
+            } else {
+                "not supplied"
+            }
+            .to_string(),
+        ),
+        (
+            "Synteny",
+            if args.synteny { "on" } else { "off" }.to_string(),
+        ),
+        ("NSC", if args.nscluster { "on" } else { "off" }.to_string()),
+        (
+            "Reference genome",
+            args.reference_genome
+                .clone()
+                .unwrap_or_else(|| "not set".to_string()),
+        ),
+        (
+            "Tree",
+            if phylo_tree.is_some() {
+                "supplied"
+            } else {
+                "not supplied"
+            }
+            .to_string(),
+        ),
+    ];
+    html.push_str("<details class='parameters'><summary>Parameters and command line</summary><dl class='provenance'>");
+    for (label, value) in &parameters {
+        write!(
+            html,
+            "<dt>{}</dt><dd>{}</dd>",
+            html_escape(label),
+            html_escape(value)
+        )
+        .expect("write to String is infallible");
+    }
+    html.push_str("</dl></details></section>");
 
     html.push_str("<section class='drawer-section'><h3>Run statistics</h3><div class='stat-grid'>");
     for (label, value, sub, accent) in [
@@ -3005,7 +3435,7 @@ pub(super) fn write_html_report(
         "Genome QC",
         &qc,
         "No genome QC rows found.",
-        "pos",
+        "qc",
     ));
     html.push_str("</div></section>");
 
@@ -3059,8 +3489,13 @@ pub(super) fn write_html_report(
             "<select id='candidatesPriority' aria-label='Filter by priority'><option value=''>All priorities</option>",
         );
         for prio in &priority_set {
-            write!(html, "<option value='{0}'>{0}</option>", html_escape(prio))
-                .expect("write to String is infallible");
+            write!(
+                html,
+                "<option value='{}'>{}</option>",
+                html_escape(prio),
+                html_escape(&plain_label(prio))
+            )
+            .expect("write to String is infallible");
         }
         html.push_str("</select>");
         html.push_str("<span id='candidatesCount' class='count num'></span>");
@@ -3072,9 +3507,7 @@ pub(super) fn write_html_report(
             ("Cluster", "string", ""),
             ("Priority", "string", ""),
             ("Score", "number", " num"),
-            ("Mechanism", "string", ""),
-            ("Phylogeny", "string", ""),
-            ("Support", "string", ""),
+            ("Mechanism and wording", "string", ""),
         ] {
             write!(
                 html,
@@ -3083,84 +3516,46 @@ pub(super) fn write_html_report(
             )
             .expect("write to String is infallible");
         }
-        html.push_str("<th scope='col'>Recommended wording</th>");
         html.push_str("</tr></thead><tbody>");
         for row in top_candidates {
             let badge_class = priority_badge_class(&row.priority);
             let mech_color = mechanism_color(&row.mechanism);
             write!(
                 html,
-                "<tr data-priority='{}' data-cluster='{}'><td><strong>{}</strong></td><td><span class='badge {}'>{}</span></td><td class='num' data-sort-value='{:.6}'>{:.3}</td><td><span class='mech-badge' style='--mech-color:{}'><i></i>{}</span></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr data-priority='{}' data-cluster='{}'><td><strong>{}</strong></td><td><span class='badge {}' data-tip='{}'>{}</span></td><td class='num' data-sort-value='{:.6}'>{:.3}</td><td data-sort-value='{}'><span class='mech-badge' style='--mech-color:{}' data-tip='{}'><i></i>{}</span><span class='wording'>{}</span></td></tr>",
                 html_escape(&row.priority),
                 html_escape(&row.cluster),
                 html_escape(&row.cluster),
                 badge_class,
                 html_escape(&row.priority),
+                html_escape(&plain_label(&row.priority)),
                 row.score,
                 row.score,
+                html_escape(&row.mechanism),
                 mech_color,
+                html_escape(&format!(
+                    "{}; phylogenetic pattern: {}; support: {}",
+                    row.mechanism,
+                    pretty_label(&row.phylo),
+                    row.support
+                )),
                 html_escape(&pretty_label(&row.mechanism)),
-                html_escape(&row.phylo),
-                html_escape(&row.support),
                 html_escape(&row.wording)
             )
             .expect("write to String is infallible");
         }
         html.push_str("</tbody></table></div>");
-        html.push_str("<p class='muted' style='margin-top:8px'>Click a row to select that cluster in the matrix.</p>");
+        html.push_str("<p class='muted candidates-foot'><button id='candidatesMore' type='button' class='ghost-btn' hidden>Show all</button> Click a row, or Tab to it and press Enter, to open that cluster in the matrix.</p>");
     }
     html.push_str("</section>");
 
-    html.push_str("<section class='drawer-section'><h3>Files to inspect</h3><div class='files'>");
-    for (path, description) in [
-        (
-            "gene_presence_absence_recore.csv",
-            "Corrected binary matrix",
-        ),
-        (
-            "gene_presence_absence_recore_states.csv",
-            "Multistate evidence matrix",
-        ),
-        (
-            "orthology_evidence.tsv",
-            "Per-rescue decisions, adaptive scores, and risk flags",
-        ),
-        (
-            "evolutionary_events.tsv",
-            "Cluster-level mechanisms, priorities, and phylogenetic flags",
-        ),
-        (
-            "reference_genome_audit.tsv",
-            "Reference-absence audit when --reference-genome is set",
-        ),
-        (
-            "genome_qc.tsv",
-            "Per-genome FASTA/GFF/rescue/rejection burden",
-        ),
-        (
-            "cluster_components.tsv",
-            "Related split, alias, paralog, and NSC components",
-        ),
-        ("summary.txt", "Plain-text run summary"),
-    ] {
-        html.push_str(&file_link_html(path, description));
+    // Listed from the directory itself: a hand-written list linked an empty
+    // file and left eight outputs out.
+    html.push_str("<section class='drawer-section'><h3>Files in the output directory</h3><p class='muted'>The links open the files beside this report, so they work while the report sits in its output directory.</p><div class='files'>");
+    for entry in output_file_entries(output_dir) {
+        html.push_str(&entry);
     }
     html.push_str("</div></section>");
-
-    write!(
-        html,
-        "<section class='drawer-section'><h3>Provenance</h3><dl class='provenance'><dt>Version</dt><dd>Recore v{}</dd><dt>Schema</dt><dd>recore.outputs.v6</dd><dt>Synteny</dt><dd>{}</dd><dt>NSC</dt><dd>{}</dd><dt>Reference</dt><dd>{}</dd><dt>Tree</dt><dd>{}</dd></dl></section>",
-        html_escape(env!("CARGO_PKG_VERSION")),
-        if args.synteny { "on" } else { "off" },
-        if args.nscluster { "on" } else { "off" },
-        html_escape(args.reference_genome.as_deref().unwrap_or("not set")),
-        if phylo_tree.is_some() {
-            "supplied"
-        } else {
-            "not supplied"
-        },
-    )
-    .expect("write to String is infallible");
 
     html.push_str("</div></aside>");
     html.push_str("<div id='drawerScrim' class='drawer-scrim' hidden></div>");

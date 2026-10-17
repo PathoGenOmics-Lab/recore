@@ -519,7 +519,8 @@ representative are no longer in the file, and the summary ends with a
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v6`);
+- `schema_version` (`recore.outputs.v7`);
+- `created_utc`, the time the run finished writing outputs, and `command_line`, the exact invocation;
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;

@@ -19,6 +19,11 @@ and Recore uses semantic versioning.
   flags. A new `correction_burden_above_cohort` flag asks for review when a
   genome's corrections sit above the cohort median plus three median absolute
   deviations.
+- `run_manifest.json` records `created_utc` and `command_line`, and the output
+  schema is `recore.outputs.v7`.
+- The HTML report's run details open with a methods paragraph, the caveats the
+  evidence calls for, the parameters and a downloadable table of changed cells,
+  and list the files actually in the output directory.
 - The HTML report draws cells kept out of the matrix in their own colour, shows
   each cell's evidence row on click, and colours input presence grey so that
   corrections stand out. See the report guide for the new palette.

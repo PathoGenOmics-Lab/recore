@@ -29,6 +29,7 @@
     setupCandidatesTable();
     setupSortableTables();
     setupDrawer();
+    setupMethodsCopy();
     setupTooltips();
   });
 
@@ -147,6 +148,44 @@
     }
   }
 
+  /* Clipboard writes need a secure context, which a report opened from disk is
+     not in every browser; a selected textarea and execCommand still work there. */
+  window.recoreCopyText = text => {
+    const fallback = () => {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch (_e) {
+        ok = false;
+      }
+      area.remove();
+      return Promise.resolve(ok);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(() => true, fallback);
+    }
+    return fallback();
+  };
+
+  function setupMethodsCopy() {
+    const button = document.getElementById("copyMethods");
+    const text = document.getElementById("methodsText");
+    if (!button || !text) return;
+    button.addEventListener("click", () => {
+      window.recoreCopyText(text.textContent).then(ok => {
+        button.textContent = ok ? "Copied" : "Select the text and copy it";
+        setTimeout(() => { button.textContent = "Copy methods text"; }, 1800);
+      });
+    });
+  }
+
   function setupCandidatesTable() {
     const table = document.getElementById("candidatesTable");
     if (!table) return;
@@ -158,25 +197,37 @@
     const rows = Array.from(tbody.rows);
     const total = rows.length;
 
+    // The first ten open; the rest wait behind "Show all" unless a filter is
+    // typed, so the drawer does not open on four screens of table.
+    const SHOWN = 10;
+    const more = document.getElementById("candidatesMore");
+    let expanded = false;
     const update = () => {
       const q = (search?.value || "").trim().toLowerCase();
       const prio = (priority?.value || "").trim();
+      const filtering = Boolean(q || prio);
+      let matches = 0;
       let visible = 0;
       rows.forEach(row => {
         const haystack = row.dataset.searchText || row.textContent.toLowerCase();
         const rowPrio = row.dataset.priority || "";
-        const matchText = !q || haystack.includes(q);
-        const matchPrio = !prio || rowPrio === prio;
-        const show = matchText && matchPrio;
+        const match = (!q || haystack.includes(q)) && (!prio || rowPrio === prio);
+        if (match) matches += 1;
+        const show = match && (filtering || expanded || matches <= SHOWN);
         row.classList.toggle("hidden", !show);
         if (show) visible += 1;
       });
+      if (more) {
+        more.hidden = filtering || expanded || matches <= SHOWN;
+        more.textContent = `Show all ${matches}`;
+      }
       if (count) {
         count.textContent = visible === total
           ? `${total} candidates`
-          : `${visible} / ${total} candidates`;
+          : `${visible} of ${total} candidates`;
       }
     };
+    if (more) more.addEventListener("click", () => { expanded = true; update(); });
     rows.forEach(row => {
       row.dataset.searchText = row.textContent.toLowerCase();
     });

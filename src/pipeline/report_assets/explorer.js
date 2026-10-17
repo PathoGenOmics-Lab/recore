@@ -58,6 +58,9 @@ function refreshThemeColors(source) {
     mechanismFamilyColors[family] = readVar(`--mech-${family}`, mechanismFamilyColors[family]);
   }
   burdenLow = readVar("--line", "#e4e4e7");
+  qcColors.pass = readVar("--faint", "#a1a1aa");
+  qcColors.review = readVar("--warning", "#d97706");
+  qcColors.fail = readVar("--danger", "#dc2626");
   panelBg = readVar("--panel", "#ffffff");
   headerBg = readVar("--bg-subtle", "#f8fafc");
   hoverColTint = readVar("--warning-soft", "#fff7ed");
@@ -72,6 +75,7 @@ const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluste
 const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7"};
 const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd"};
 let burdenLow = "#e4e4e7";
+const qcColors = {pass: "#a1a1aa", review: "#d97706", fail: "#dc2626"};
 let panelBg = "#ffffff";
 let headerBg = "#f8fafc";
 let hoverColTint = "#fff7ed";
@@ -387,6 +391,26 @@ function clusterEvidence(clusterIdx) {
   if (!evidenceData) return [];
   const cached = evidenceCache.get(clusterIdx);
   if (cached) return cached;
+  const rows = decodeEvidence(clusterIdx);
+  if (evidenceCache.size >= 64) evidenceCache.delete(evidenceCache.keys().next().value);
+  evidenceCache.set(clusterIdx, rows);
+  return rows;
+}
+/** Number of evidence rows of a cluster, read from the first bytes only. */
+function evidenceCount(clusterIdx) {
+  const encoded = evidenceData ? evidenceData.byCluster[clusterIdx] || "" : "";
+  if (!encoded) return 0;
+  const bytes = decodeBase64(encoded.slice(0, 8));
+  let value = 0;
+  let scale = 1;
+  for (const byte of bytes) {
+    value += (byte & 0x7f) * scale;
+    if (!(byte & 0x80)) break;
+    scale *= 128;
+  }
+  return value;
+}
+function decodeEvidence(clusterIdx) {
   const encoded = evidenceData.byCluster[clusterIdx] || "";
   const rows = [];
   if (encoded) {
@@ -422,8 +446,6 @@ function clusterEvidence(clusterIdx) {
       rows.push(row);
     }
   }
-  if (evidenceCache.size >= 64) evidenceCache.delete(evidenceCache.keys().next().value);
-  evidenceCache.set(clusterIdx, rows);
   return rows;
 }
 /** Evidence rows for one cell; rows are sorted by genome. */
@@ -920,6 +942,12 @@ function tipStyle(genomeIdx) {
     if (state === "A") return {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)}; absent`};
     if (state === "R" || state === "K") return {fill: colors[state], stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`};
     return {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
+  }
+  if (mode === "qc") {
+    const qc = genomeQc(genomeIdx);
+    const status = qc ? qc.status : "";
+    const fill = status === "fail" ? qcColors.fail : status === "review" ? qcColors.review : status === "pass" ? qcColors.pass : colors.A;
+    return {fill, stroke: status ? fill : strokes.A, title: status ? `QC ${status}${qc.flags ? `: ${qc.flags.replace(/;/g, "; ")}` : ""}` : "no QC row"};
   }
   if (mode === "lineage") {
     const genome = data.genomes[genomeIdx] || "";
@@ -3262,6 +3290,112 @@ matrixPane.addEventListener("mousemove", event => {
   const top = y + 14 + h > paneRect.height ? Math.max(4, y - 14 - h) : y + 14;
   tooltip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
 });
+/* ---- Changed cells, for the drawer ----------------------------------------
+   Every evidence row as a list a reader can copy or download, built from the
+   same per-cluster data the cell card reads. The preview is built when the
+   drawer first opens; the full text only when it is asked for. */
+const CELL_STATE_WORDS = {P: "present", R: "corrected", N: "NSC", K: "kept out", A: "absent"};
+const CORRECTION_COLUMNS = ["genome", "cluster", "cell_state", "decision", "rescue_type", "identity", "coverage", "contig", "start", "end", "strand", "synteny", "synteny_score", "orf_integrity_signal", "matrix_action", "publication_status", "rejection_reason", "risk_flags"];
+function correctionRecord(clusterIdx, row) {
+  const value = column => {
+    if (column === "genome") return data.genomes[row.genome] || "";
+    if (column === "cluster") return data.clusters[clusterIdx].name;
+    if (column === "cell_state") return CELL_STATE_WORDS[stateAt(clusterIdx, row.genome)] || "";
+    if (column === "identity" || column === "coverage") return row[column] === null ? "" : row[column].toFixed(1);
+    if (column === "start" || column === "end") return row[column] === null ? "" : String(row[column]);
+    return row[column] || "";
+  };
+  return CORRECTION_COLUMNS.map(value);
+}
+function correctionsTsv() {
+  const lines = [CORRECTION_COLUMNS.join("\t")];
+  for (let ci = 0; ci < data.clusters.length; ci += 1) {
+    if (!evidenceCount(ci)) continue;
+    for (const row of decodeEvidence(ci)) {
+      lines.push(correctionRecord(ci, row).map(v => String(v).replace(/[\t\n]/g, " ")).join("\t"));
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+const CORRECTIONS_PREVIEW = 50;
+let correctionsBuilt = false;
+function buildCorrectionsPreview() {
+  const box = document.getElementById("correctionsTable");
+  if (!box || correctionsBuilt || !evidenceData) return;
+  correctionsBuilt = true;
+  let total = 0;
+  for (let ci = 0; ci < data.clusters.length; ci += 1) total += evidenceCount(ci);
+  if (!total) {
+    box.innerHTML = "<p class='muted'>No evidence rows: Recore changed no cell in this run.</p>";
+    return;
+  }
+  // Corrections first, then kept out, then rejected, in matrix order.
+  const picked = [[], [], []];
+  for (let ci = 0; ci < data.clusters.length && picked[0].length < CORRECTIONS_PREVIEW; ci += 1) {
+    if (!evidenceCount(ci)) continue;
+    for (const row of decodeEvidence(ci)) {
+      const rank = row.matrix_action === "correct_presence" ? 0 : row.decision === "accepted" ? 1 : 2;
+      if (picked[rank].length < CORRECTIONS_PREVIEW) picked[rank].push([ci, row]);
+    }
+  }
+  const shown = [...picked[0], ...picked[1], ...picked[2]].slice(0, CORRECTIONS_PREVIEW);
+  const body = shown.map(([ci, row]) => {
+    const state = stateAt(ci, row.genome);
+    return `<tr data-cell-cluster="${ci}" data-cell-genome="${row.genome}" tabindex="0">` +
+      `<td><span class="state-chip ${state.toLowerCase()}">${escapeHtml(CELL_STATE_WORDS[state])}</span></td>` +
+      `<td class="mono">${escapeHtml(data.genomes[row.genome] || "")}</td>` +
+      `<td class="mono">${escapeHtml(data.clusters[ci].name)}</td>` +
+      `<td>${escapeHtml(row.rescue_type || row.evidence_state || "")}</td>` +
+      `<td class="num">${pctText(row.identity)}</td><td class="num">${pctText(row.coverage)}</td></tr>`;
+  }).join("");
+  box.innerHTML = `<p class="muted">${plural(total, "evidence row")}${total > shown.length ? `; the first ${formatInt(shown.length)} are shown, corrections first. Copy or download the rest.` : "."} Click a row to open that cell.</p>` +
+    `<div class="table-wrap"><table class="corrections"><thead><tr><th>Cell</th><th>Genome</th><th>Cluster</th><th>Type</th><th class="num">Identity</th><th class="num">Coverage</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function openCellFromDrawer(row) {
+  const clusterIdx = Number(row.getAttribute("data-cell-cluster"));
+  const genomeIdx = Number(row.getAttribute("data-cell-genome"));
+  document.getElementById("closeDetails")?.click();
+  selected = clusterIdx;
+  selectedGenome = genomeIdx;
+  selectedSyntenyReference = false;
+  populateOptions();
+  setInspectorTab("cluster");
+  render(true);
+  scrollToGenome(genomeIdx);
+}
+// The drawer is written after this script, so its controls are reached by
+// delegation rather than looked up now.
+document.addEventListener("click", event => {
+  const row = event.target.closest("#correctionsTable tr[data-cell-cluster]");
+  if (row) {
+    openCellFromDrawer(row);
+    return;
+  }
+  if (event.target.closest("#openDetails")) {
+    requestAnimationFrame(buildCorrectionsPreview);
+    return;
+  }
+  const copyButton = event.target.closest("#copyCorrections");
+  if (copyButton) {
+    const copy = window.recoreCopyText || (() => Promise.resolve(false));
+    copy(correctionsTsv()).then(ok => {
+      copyButton.textContent = ok ? "Copied" : "Copy failed: use Download";
+      setTimeout(() => { copyButton.textContent = "Copy as TSV"; }, 1800);
+    });
+    return;
+  }
+  if (event.target.closest("#downloadCorrections")) {
+    downloadBlob(new Blob([correctionsTsv()], {type: "text/tab-separated-values"}), "recore_changed_cells.tsv");
+  }
+});
+document.addEventListener("keydown", event => {
+  const row = event.target.closest && event.target.closest("#correctionsTable tr[data-cell-cluster]");
+  if (row && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    openCellFromDrawer(row);
+  }
+});
+
 /* ---- Keyboard cell cursor -------------------------------------------------
    The matrix is a canvas, so without this a keyboard could reach a row only by
    typing its genome into find. The cursor reuses the hover marks and readout,
@@ -3734,6 +3868,16 @@ function inspectGenome(genomeIdx, {focus = true} = {}) {
   if (focus) setInspectorTab("genome");
 }
 
+function genomeQc(genomeIdx) {
+  const row = data.genomeQc && data.genomeQc[genomeIdx];
+  return row && row[0] ? {status: row[0], flags: row[1] || ""} : null;
+}
+function genomeQcHtml(genomeIdx) {
+  const qc = genomeQc(genomeIdx);
+  if (!qc) return "";
+  const flags = qc.flags ? qc.flags.split(";").filter(Boolean).map(flag => flag.replace(/_/g, " ")) : [];
+  return `<p class="qc-line"><span class="qc-chip ${escapeHtml(qc.status)}">QC ${escapeHtml(qc.status)}</span>${flags.length ? ` <small class="muted">${escapeHtml(flags.join("; "))}</small>` : ""}</p>`;
+}
 function renderGenomeDetails() {
   if (!genomeDetails) return;
   if (selectedGenome < 0) {
@@ -3754,7 +3898,8 @@ function renderGenomeDetails() {
       <h3>${escapeHtml(name)}</h3>
       ${isReference ? "<span class='pill'>reference</span>" : ""}
     </div>
-    <p class="muted">Tip ${row >= 0 ? row + 1 : "?"} of ${leafOrder.length}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
+    <p class="muted">Tip ${row >= 0 ? formatInt(row + 1) : "?"} of ${formatInt(leafOrder.length)}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
+    ${genomeQcHtml(selectedGenome)}
     <dl class="cluster-dl">
       <dt>In the selected cluster</dt>
       <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong>${(() => {

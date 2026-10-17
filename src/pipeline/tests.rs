@@ -280,7 +280,9 @@ fn html_report_summarizes_run_outputs() {
     assert!(text.contains("<title>Recore run report</title>"));
     assert!(text.contains("group_1"));
     assert!(text.contains("Orthology actions"));
-    assert!(text.contains("gene_presence_absence_recore.csv"));
+    // The file list is read from the output directory.
+    assert!(text.contains("href='orthology_evidence.tsv'"));
+    assert!(text.contains("Using these results"));
     // Without a tree the workspace still opens on a star tree in matrix order,
     // and says so, instead of leaving a page with one sentence on it.
     assert!(text.contains("No --tree was given"));
@@ -2679,4 +2681,35 @@ fn hostile_names_cannot_break_out_of_the_data_block() {
     let after = &text[end..];
     assert!(after.contains("window.recoreExplorerFailed = function"));
     assert!(after.contains("const data = window.recoreExplorerData;"));
+}
+
+/// The manifest and the report carry the time and the exact command line, and
+/// thresholds read as people write them.
+#[test]
+fn run_metadata_reads_cleanly() {
+    let stamp = output::utc_timestamp();
+    assert_eq!(stamp.len(), 20, "{stamp}");
+    assert!(stamp.starts_with("20") && stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T');
+    assert_eq!(output::trim_number(90.0), "90");
+    assert_eq!(output::trim_number(10.000_000_1), "10");
+    assert_eq!(output::trim_number(0.1 * 100.0), "10");
+    assert_eq!(output::trim_number(2.5), "2.5");
+    assert!(!output::command_line().is_empty());
+}
+
+/// The drawer lists the files that are there, not a hand-written list that
+/// linked an empty file and left outputs out.
+#[test]
+fn drawer_lists_the_output_directory() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(out.path().join("rescue_report.tsv"), "a\tb\n1\t2\n3\t4\n").unwrap();
+    std::fs::write(out.path().join("cluster_components.tsv"), "component\n").unwrap();
+    std::fs::write(out.path().join("recore_report.html"), "x").unwrap();
+    std::fs::create_dir(out.path().join("corrected_gff")).unwrap();
+    let entries = output::output_file_entries(out.path()).join("\n");
+    assert!(entries.contains("href='rescue_report.tsv'") && entries.contains("2 rows"));
+    assert!(entries.contains("href='cluster_components.tsv'") && entries.contains("0 rows"));
+    assert!(entries.contains("folder"));
+    assert!(!entries.contains("recore_report.html"));
+    assert!(entries.contains("target='_blank' rel='noopener'"));
 }
