@@ -1,10 +1,8 @@
 <div align="center">
-  <a href="https://pathogenomics-lab.github.io/recore/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="assets/recore_logo_dark.svg">
-      <img src="assets/recore_logo.svg" alt="Recore" width="420">
-    </picture>
-  </a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/recore_logo_dark.svg">
+    <img src="assets/recore_logo.svg" alt="Recore" width="420">
+  </picture>
 
 ### Missing from the matrix. Still in the genome.
 
@@ -34,7 +32,10 @@ __and Mireia Coscolla<sup>1</sup>__
 <sub> 1. I<sup>2</sup>SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain </sub>
 
 <p align="center">
-  <a href="https://pathogenomics-lab.github.io/recore/how-it-works.html"><img src="assets/how-it-works.gif" alt="How Recore decides one empty cell, in seven steps: the matrix says absent, take the gene's sequence, search the assembly, look at what is there, check the neighbours, decide, write it down" width="760"></a><br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works_dark.gif">
+    <img src="assets/how-it-works.gif" alt="How Recore decides one empty cell, in seven steps: the matrix says absent, take the gene's sequence, search the assembly, look at what is there, check the neighbours, decide, write it down" width="760">
+  </picture><br>
   <sub>One empty cell, seven steps. <a href="https://pathogenomics-lab.github.io/recore/how-it-works.html">The interactive version</a> lets you pick what the search finds.</sub>
 </p>
 
