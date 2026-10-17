@@ -249,11 +249,11 @@ Optional (`--nscluster`). Detects Panaroo clusters that are distinct at the prot
 
 ### MinHash engine (default, built-in)
 
-1. **Sketch**: Bottom-k MinHash with 128 hashes per cluster. Uses canonical k-mers (min of forward and reverse-complement hash) with FNV-1a hashing. Multi-allele clusters are concatenated with N-spacers to prevent cross-allele k-mers.
+1. **Sketch**: Bottom-k MinHash with 128 hashes per cluster. Uses canonical k-mers (min of forward and reverse-complement hash) with FNV-1a hashing over upper-cased bases, so soft-masked sequence sketches like the rest. Multi-allele clusters are concatenated with N-spacers to prevent cross-allele k-mers.
 
-2. **LSH banding**: 16 bands of 8 rows each. Two clusters are candidates if they share any identical band hash. This reduces O(n²) comparisons to O(n × candidates).
+2. **Candidates**: an index from hash value to the sketches holding it. Two clusters are candidates when their sketches share at least two values; a value held by more than 500 sketches (a repeat) is ignored. Positional bands over sorted bottom-k sketches, used before, rarely line up between a gene and a near copy or a fragment of it.
 
-3. **Containment**: For candidate pairs, compute max Jaccard containment (max of containment(A,B) and containment(B,A)). This is more appropriate than Jaccard similarity when genes differ in length.
+3. **Containment**: For candidate pairs, compute max Jaccard containment (max of containment(A,B) and containment(B,A)). This is more appropriate than Jaccard similarity when genes differ in length. Containment of A in B is estimated over A's hash values no larger than B's largest, which is as far as a full sketch of B can answer; counting the rest as misses put a gene's own first half at about 0.5.
 
 4. **Clustering**: Union-Find with path compression and union-by-rank. Pairs above threshold (default 0.8) are merged.
 

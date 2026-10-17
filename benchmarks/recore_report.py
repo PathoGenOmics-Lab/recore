@@ -78,11 +78,29 @@ def main() -> int:
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("--html", type=Path)
     parser.add_argument("--top", type=int, default=12)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an interactive report written by recore --write-html-report",
+    )
     args = parser.parse_args()
 
     run_dir = args.run_dir
     output = args.output or run_dir / "recore_report.md"
-    html_output = args.html or run_dir / "recore_report.html"
+    # Not recore_report.html: that name is the binary's interactive report, and
+    # this script used to replace it silently with a compact summary.
+    html_output = args.html or run_dir / "recore_compact_report.html"
+    if (
+        html_output.exists()
+        and not args.force
+        and "recoreExplorerData" in html_output.read_text(errors="replace")
+    ):
+        print(
+            f"{html_output} is the interactive report from recore --write-html-report; "
+            "choose another --html path or pass --force to replace it.",
+            file=sys.stderr,
+        )
+        return 2
 
     summary = read_summary(run_dir / "summary.txt")
     manifest = {}

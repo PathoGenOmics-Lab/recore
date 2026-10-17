@@ -236,5 +236,7 @@ shipping something a browser cannot open.
 
 ## If you did not use `--write-html-report`
 
-`benchmarks/recore_report.py` builds a compact Markdown or HTML report from an
-existing output directory.
+`benchmarks/recore_report.py` builds a compact Markdown and HTML report
+(`recore_report.md` and `recore_compact_report.html`) from an existing output
+directory. It refuses to replace an interactive `recore_report.html` unless
+given `--force`.

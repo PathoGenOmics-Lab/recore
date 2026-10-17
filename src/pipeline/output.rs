@@ -437,8 +437,17 @@ pub(super) fn write_corrected_gffs(
     rescues: &[RescueEvent],
     pa: &crate::parser::PresenceAbsence,
     gff_paths: &HashMap<GenomeIdx, PathBuf>,
+    gff_contig_remaps: &[(String, String, String, usize)],
     output_dir: &std::path::Path,
 ) -> Result<()> {
+    // The copied records keep the GFF's own seqid. Where that seqid was mapped
+    // onto a differently named FASTA contig to read the annotation, rescue
+    // features go back on the GFF's seqid, or the file mixed two names for one
+    // sequence and its ##sequence-region and ##FASTA matched neither.
+    let gff_seqid: HashMap<(&str, &str), &str> = gff_contig_remaps
+        .iter()
+        .map(|(genome, from, to, _)| ((genome.as_str(), to.as_str()), from.as_str()))
+        .collect();
     let gff_dir = output_dir.join("corrected_gff");
     match fs::remove_dir_all(&gff_dir) {
         Ok(()) => {}
@@ -530,10 +539,14 @@ pub(super) fn write_corrected_gffs(
             }
             attrs.push("Note=Recore_rescue_feature".to_string());
 
+            let seqid = gff_seqid
+                .get(&(genome_name, rescue.contig.as_str()))
+                .copied()
+                .unwrap_or(rescue.contig.as_str());
             writeln!(
                 w,
                 "{}\tRecore\tCDS\t{}\t{}\t.\t{}\t0\t{}",
-                rescue.contig,
+                seqid,
                 rescue.start + 1,
                 rescue.end,
                 rescue.strand,
@@ -1063,6 +1076,8 @@ fn count_tsv_column(path: &std::path::Path, column: &str) -> Result<BTreeMap<Str
     }
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
+        // recore writes its TSVs unquoted; a name that starts with a quote is data.
+        .quoting(false)
         .from_path(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
     let headers = reader.headers()?.clone();
@@ -1076,6 +1091,14 @@ fn count_tsv_column(path: &std::path::Path, column: &str) -> Result<BTreeMap<Str
         *counts.entry(key.to_string()).or_default() += 1;
     }
     Ok(counts)
+}
+
+#[cfg(test)]
+pub(super) fn genome_qc_rows_for_test(
+    path: &std::path::Path,
+    pa: &crate::parser::PresenceAbsence,
+) -> Vec<(String, String)> {
+    genome_qc_rows(path, pa).unwrap()
 }
 
 /// genome_qc.tsv as (status, flags) per matrix genome, for the genome card.
@@ -1095,6 +1118,8 @@ fn genome_qc_rows(
         .collect();
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
+        // recore writes its TSVs unquoted; a name that starts with a quote is data.
+        .quoting(false)
         .from_path(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
     let headers = reader.headers()?.clone();
@@ -1240,6 +1265,8 @@ fn explorer_evolution_rows(
     }
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
+        // recore writes its TSVs unquoted; a name that starts with a quote is data.
+        .quoting(false)
         .from_path(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
     let headers = reader.headers()?.clone();
@@ -1414,6 +1441,8 @@ fn explorer_synteny_blocks(
     }
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
+        // recore writes its TSVs unquoted; a name that starts with a quote is data.
+        .quoting(false)
         .from_path(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
     let headers = reader.headers()?.clone();
@@ -1538,6 +1567,8 @@ fn top_candidate_rows(path: &std::path::Path, limit: usize) -> Result<Vec<Candid
     }
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
+        // recore writes its TSVs unquoted; a name that starts with a quote is data.
+        .quoting(false)
         .from_path(path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
     let headers = reader.headers()?.clone();

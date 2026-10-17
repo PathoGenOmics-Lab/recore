@@ -560,12 +560,15 @@ These clusters had nearly identical nucleotide sequences but were split by Panar
 
 Written only when `--write-corrected-gff` is enabled.
 
-For each genome with at least one rescue, Recore writes a GFF3 file under
-`corrected_gff/`. If an original GFF was supplied with `--annotations`, its
-records are preserved and Recore appends rescued CDS features. If the original
-GFF contains a `##FASTA` section, rescue features are inserted before `##FASTA`
-and the FASTA tail is preserved after them. If no original GFF is available for
-a rescued genome, the file contains only the appended rescue features.
+For each genome with at least one rescue that corrected the matrix, Recore
+writes a GFF3 file under `corrected_gff/`; evidence kept out of the matrix
+(`held_out_policy`, `held_out_quality`) is not written. If an original GFF was
+supplied with `--annotations`, its records are preserved and Recore appends
+rescued CDS features, on the GFF's own seqid even when that seqid had to be
+mapped onto a differently named FASTA contig. If the original GFF contains a
+`##FASTA` section, rescue features are inserted before `##FASTA` and the FASTA
+tail is preserved after them. If no original GFF is available for a rescued
+genome, the file contains only the appended rescue features.
 
 Appended rescue features use source `Recore`, type `CDS`, and include:
 

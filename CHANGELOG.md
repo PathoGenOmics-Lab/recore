@@ -7,6 +7,20 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- `--write-html-report` no longer fails, and no longer drops a cluster's
+  mechanism and wording, when a genome or cluster name starts with a double
+  quote: recore's TSVs are read back without CSV quoting.
+- MinHash NSC finds fragments and near copies: candidates come from shared
+  sketch hashes instead of positional bands (which found 0 of 10 fragment
+  pairs), containment is estimated over the range a full sketch covers, and
+  soft-masked (lowercase) sequence sketches like upper case.
+- Corrected GFF3 files put rescue features on the GFF's own seqid when that
+  seqid was mapped onto a differently named FASTA contig.
+- `benchmarks/recore_report.py` writes `recore_compact_report.html` and refuses
+  to replace the binary's interactive `recore_report.html` without `--force`.
+
 ### Changed
 
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.

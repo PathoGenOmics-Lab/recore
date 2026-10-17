@@ -1383,13 +1383,48 @@ fn corrected_gff_appends_features_before_fasta_section() {
     let mut gff_paths = HashMap::new();
     gff_paths.insert(GenomeIdx(0), source);
 
-    write_corrected_gffs(&[rescue], &pa, &gff_paths, out.path()).unwrap();
+    write_corrected_gffs(&[rescue], &pa, &gff_paths, &[], out.path()).unwrap();
 
     let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
     let rescue_pos = text.find("\tRecore\tCDS\t").unwrap();
     let fasta_pos = text.find("##FASTA").unwrap();
     assert!(rescue_pos < fasta_pos);
     assert!(text.contains(">chr1\nATGCATGC"));
+}
+
+/// A GFF whose seqid differs from the single FASTA contig is read through a
+/// remap. Its corrected copy keeps the GFF's seqid on the original records, so
+/// the rescue features must use it too, not the FASTA contig name.
+#[test]
+fn corrected_gff_writes_rescues_on_the_gff_seqid_after_a_remap() {
+    let out = tempfile::tempdir().unwrap();
+    let source = out.path().join("g1.gff3");
+    std::fs::write(
+        &source,
+        b"##gff-version 3\n##sequence-region chr1 1 900\nchr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1\n",
+    )
+    .unwrap();
+    let pa =
+        PresenceAbsence::new_for_test(vec!["clA".into()], vec!["g1".into()], vec![vec!["".into()]]);
+    let rescue = RescueEvent {
+        cluster_idx: ClusterIdx(0),
+        genome_idx: GenomeIdx(0),
+        contig: "g1_contig1".into(),
+        start: 99,
+        end: 180,
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let gff_paths: HashMap<GenomeIdx, PathBuf> = [(GenomeIdx(0), source)].into_iter().collect();
+    let remaps = vec![(
+        "g1".to_string(),
+        "chr1".to_string(),
+        "g1_contig1".to_string(),
+        1,
+    )];
+    write_corrected_gffs(&[rescue], &pa, &gff_paths, &remaps, out.path()).unwrap();
+    let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
+    assert!(text.contains("chr1\tRecore\tCDS\t100\t180"), "{text}");
+    assert!(!text.contains("g1_contig1\tRecore"));
 }
 
 #[test]
@@ -2713,4 +2748,25 @@ fn drawer_lists_the_output_directory() {
     assert!(entries.contains("folder"));
     assert!(!entries.contains("recore_report.html"));
     assert!(entries.contains("target='_blank' rel='noopener'"));
+}
+
+/// recore writes TSVs unquoted, so a genome or cluster name that starts with a
+/// double quote is plain data. Reading them back with CSV quoting failed the
+/// whole --write-html-report run on the first such name.
+#[test]
+fn report_reads_tsvs_without_csv_quoting() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(
+        out.path().join("genome_qc.tsv"),
+        "genome\tqc_status\tqc_flags\n\"L4_AS00403\treview\tmissing_gff\ng2\tpass\t\n",
+    )
+    .unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["\"Rv0003\"".into()],
+        vec!["\"L4_AS00403".into(), "g2".into()],
+        vec![vec!["a".into(), "b".into()]],
+    );
+    let rows = output::genome_qc_rows_for_test(&out.path().join("genome_qc.tsv"), &pa);
+    assert_eq!(rows[0], ("review".to_string(), "missing_gff".to_string()));
+    assert_eq!(rows[1].0, "pass");
 }

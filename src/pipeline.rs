@@ -1039,7 +1039,13 @@ pub fn run(args: &Args) -> Result<()> {
     if args.write_corrected_gff {
         let matrix_rescues: Vec<RescueEvent> =
             matrix_rescue_map.values().map(|r| (*r).clone()).collect();
-        write_corrected_gffs(&matrix_rescues, &pa, &gff_paths, &args.output)?;
+        write_corrected_gffs(
+            &matrix_rescues,
+            &pa,
+            &gff_paths,
+            &gff_contig_remaps,
+            &args.output,
+        )?;
     }
 
     let stats = SummaryStats {
