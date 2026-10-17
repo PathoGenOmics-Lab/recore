@@ -2847,3 +2847,80 @@ fn clusters_absent_from_the_tree_are_not_assessed() {
     };
     assert_eq!(evolution::phylogenetic_reliability(&phylo), "not_assessed");
 }
+
+/// A mechanism call that rests on absences Recore never searched is the input
+/// matrix's call: it is tagged and explained, and one support level weaker
+/// when none of its absences were searched.
+#[test]
+fn calls_resting_on_unsearched_absences_are_qualified() {
+    let call = |mechanism: &'static str| evolution::MechanismCall {
+        mechanism,
+        detail: "base".to_string(),
+        support: "moderate",
+        wording: "w",
+        mobile: None,
+    };
+    let coverage = |absent, not_searched, reason, reference_untested| evolution::AbsenceCoverage {
+        absent,
+        not_searched,
+        reason,
+        reference_untested,
+    };
+
+    // A gain on a cluster below the prevalence floor: no absence was searched.
+    let mut gain = call("clean_insertion_or_acquisition_candidate");
+    let note = evolution::qualify_unsearched_absences(
+        &mut gain,
+        &coverage(9, 9, Some(NotSearched::LowPrevalence), false),
+    )
+    .unwrap();
+    assert_eq!(gain.support, "low");
+    assert_eq!(gain.detail, "base;absences_not_searched");
+    assert!(note.starts_with("None of the 9 absences behind this call were searched"));
+    assert!(note.contains("--min-prevalence"));
+
+    // A loss with one absence of four in a genome without a FASTA: tagged and
+    // explained, but the three searched absences still carry it.
+    let mut loss = call("deletion_loss_candidate");
+    let note = evolution::qualify_unsearched_absences(
+        &mut loss,
+        &coverage(4, 1, Some(NotSearched::NoFasta), false),
+    )
+    .unwrap();
+    assert_eq!(loss.support, "moderate");
+    assert_eq!(loss.detail, "base;absences_not_searched=1/4");
+    assert!(note.starts_with("1 of the 4 absences was never searched (that genome has no FASTA)"));
+
+    // A reference loss rests on the reference genome's absence above all.
+    let mut reference = call("reference_or_lineage_loss_candidate");
+    let note = evolution::qualify_unsearched_absences(
+        &mut reference,
+        &coverage(3, 1, Some(NotSearched::NoFasta), true),
+    )
+    .unwrap();
+    assert_eq!(reference.support, "low");
+    assert!(
+        note.starts_with("The reference genome has no FASTA, so its absence was never searched")
+    );
+
+    // Calls made from rescue evidence, and fully searched clusters, are left alone.
+    let mut pseudogene = call("pseudogenization");
+    assert!(evolution::qualify_unsearched_absences(
+        &mut pseudogene,
+        &coverage(5, 5, Some(NotSearched::LowPrevalence), false),
+    )
+    .is_none());
+    assert_eq!(
+        (pseudogene.support, pseudogene.detail.as_str()),
+        ("moderate", "base")
+    );
+    let mut searched = call("deletion_loss_candidate");
+    assert!(
+        evolution::qualify_unsearched_absences(&mut searched, &coverage(4, 0, None, false))
+            .is_none()
+    );
+    assert_eq!(
+        (searched.support, searched.detail.as_str()),
+        ("moderate", "base")
+    );
+}

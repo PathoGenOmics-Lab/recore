@@ -1058,6 +1058,7 @@ pub fn run(args: &Args) -> Result<()> {
         reference_genome: args.reference_genome.as_deref(),
         nsc_result: &nsc_result,
         component_info: &component_info,
+        coverage: &coverage,
         output_dir: &args.output,
     })?;
     if args.write_corrected_gff {

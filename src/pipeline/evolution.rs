@@ -695,6 +695,7 @@ pub(super) struct EvolutionaryEventInputs<'a> {
     pub(super) reference_genome: Option<&'a str>,
     pub(super) nsc_result: &'a Option<nscluster::NsClusterResult>,
     pub(super) component_info: &'a [Option<ClusterComponentInfo>],
+    pub(super) coverage: &'a SearchCoverage,
     pub(super) output_dir: &'a Path,
 }
 
@@ -1343,6 +1344,100 @@ pub(super) fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
     }
 }
 
+/// How much of a cluster's absence the search actually tested.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct AbsenceCoverage {
+    /// Genomes where the cluster is absent from the corrected matrix.
+    pub(super) absent: usize,
+    /// Of those, the ones whose gap was never searched.
+    pub(super) not_searched: usize,
+    /// Why, when any were not searched: the cluster's own reason when it was
+    /// left out of the search, else the genomes without a FASTA.
+    pub(super) reason: Option<NotSearched>,
+    /// The reference genome lacks the cluster and its gap was never searched.
+    pub(super) reference_untested: bool,
+}
+
+/// Mechanisms whose call rests on the cluster being absent somewhere: a gain
+/// needs the gene missing elsewhere, a loss needs it missing where it was lost,
+/// and a homoplastic or unresolved pattern is made of absences too.
+const ABSENCE_BASED_MECHANISMS: [&str; 5] = [
+    "clean_insertion_or_acquisition_candidate",
+    "reference_or_lineage_loss_candidate",
+    "deletion_loss_candidate",
+    "unstable_or_homoplastic_accessory_signal",
+    "unresolved_accessory_variation",
+];
+
+fn downgraded_support(support: &'static str) -> &'static str {
+    match support {
+        "high" => "moderate",
+        "moderate" => "low",
+        other => other,
+    }
+}
+
+/// Qualify a mechanism call that rests on absences Recore never searched.
+///
+/// Gaps outside the search keep the input matrix's call, so a gain inferred
+/// from a cluster missing everywhere else, or a loss inferred where it is
+/// missing, is only as good as that call when the absences behind it were not
+/// tested. Every such call is tagged in `mechanism_detail` and explained in the
+/// returned sentence for `recommended_wording`; when none of its absences were
+/// searched (for a reference loss, when the reference genome's was not), its
+/// support also drops one level, which lowers its score and priority with it.
+/// Under the default `--min-prevalence` this is every gain call on a cluster in
+/// fewer than one genome in ten, and it used to read as an audited result.
+pub(super) fn qualify_unsearched_absences(
+    mechanism: &mut MechanismCall,
+    coverage: &AbsenceCoverage,
+) -> Option<String> {
+    if !ABSENCE_BASED_MECHANISMS.contains(&mechanism.mechanism) {
+        return None;
+    }
+    let reason = coverage.reason.filter(|_| coverage.not_searched > 0)?;
+    let one = coverage.not_searched == 1;
+    let why = match reason {
+        NotSearched::LowPrevalence => "the cluster is below --min-prevalence",
+        NotSearched::NoClusterSequence => "the cluster has no sequence to search with",
+        NotSearched::NoFasta if one => "that genome has no FASTA",
+        NotSearched::NoFasta => "those genomes have no FASTA",
+    };
+    let reference_loss = mechanism.mechanism == "reference_or_lineage_loss_candidate";
+    let none_searched = coverage.not_searched == coverage.absent;
+    if none_searched || (reference_loss && coverage.reference_untested) {
+        mechanism.support = downgraded_support(mechanism.support);
+        mechanism.detail.push_str(";absences_not_searched");
+        return Some(if !none_searched {
+            // Only reachable without a cluster-level reason: the reference
+            // genome is one of the genomes without a FASTA.
+            "The reference genome has no FASTA, so its absence was never searched and is the input matrix's call, not Recore's.".to_string()
+        } else if coverage.absent == 1 {
+            format!("The only absence behind this call was never searched ({why}); it is the input matrix's call, not Recore's.")
+        } else {
+            format!(
+                "None of the {} absences behind this call were searched ({why}); they are the input matrix's calls, not Recore's.",
+                coverage.absent
+            )
+        });
+    }
+    mechanism.detail.push_str(&format!(
+        ";absences_not_searched={}/{}",
+        coverage.not_searched, coverage.absent
+    ));
+    Some(if one {
+        format!(
+            "1 of the {} absences was never searched ({why}); that one is the input matrix's call.",
+            coverage.absent
+        )
+    } else {
+        format!(
+            "{} of the {} absences were never searched ({why}); those are the input matrix's calls.",
+            coverage.not_searched, coverage.absent
+        )
+    })
+}
+
 fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
     if !phylo.assessed || phylo.pattern == "absent_from_tree" {
         "not_assessed"
@@ -1536,7 +1631,7 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
     let mut w = BufWriter::new(file);
     writeln!(
         w,
-        "gene_cluster\tn_present_corrected\tprevalence_corrected\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tpenalized_phylo_model\tpenalized_phylo_score\tdollo_loss_count\tdollo_violation_count\tdollo_origin_tips\tdollo_origin_purity\tancestral_state\troot_state_confidence\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tcarrier_mrca_tips\tcarrier_mrca_purity\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
+        "gene_cluster\tn_present_corrected\tprevalence_corrected\tabsent_not_searched\tnot_searched_reason\ttree_matched_tips\treference_state\tphylogenetic_pattern\tphylogenetic_reliability\tphylogenetic_blink_flag\tpenalized_phylo_model\tpenalized_phylo_score\tdollo_loss_count\tdollo_violation_count\tdollo_origin_tips\tdollo_origin_purity\tancestral_state\troot_state_confidence\tphylogenetic_changes\tphylogenetic_gains\tphylogenetic_losses\tcarrier_monophyly\tmax_carrier_clade_fraction\tcarrier_mrca_tips\tcarrier_mrca_purity\tmolecular_mechanism\tmechanism_detail\tsupport_level\tevolutionary_signal_score\thighlight_priority\tcluster_component_id\tcluster_component_size\tcluster_component_role\tcluster_component_relations\tcluster_component_recommendation\tis_interruption_supported\tmobile_element_source\tmobile_element_kind\tmobile_element_label\tmobile_element_genome\tmobile_element_distance_bp\tmobile_element_identity\tmobile_element_coverage\treference_event_class\ttarget_reference_cluster\ttarget_reference_gene\tcontext_interpretation\tparalog_locus_risk\tsynteny_mean_score\tsynteny_pass_fraction\torf_integrity_summary\trescue_evidence_counts\trecommended_wording"
     )?;
 
     for ci_val in 0..inputs.pa.n_clusters() {
@@ -1592,7 +1687,28 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
             inputs.mobile_element_window,
         );
         let nsc_role = nsc_role_for_cluster(ci, inputs.nsc_result);
-        let mechanism = classify_mechanism(MechanismInput {
+        // Which of the cluster's absences the search tested; the cluster's own
+        // reason wins, as it does in the states file.
+        let mut absence = AbsenceCoverage {
+            reason: inputs.coverage.cluster_reason(ci),
+            ..AbsenceCoverage::default()
+        };
+        for (gi_val, &present) in present_by_genome.iter().enumerate() {
+            if present {
+                continue;
+            }
+            absence.absent += 1;
+            let gi = GenomeIdx(gi_val);
+            if let Some(reason) = inputs.coverage.reason(ci, gi) {
+                absence.not_searched += 1;
+                absence.reason.get_or_insert(reason);
+                absence.reference_untested |= Some(gi) == reference_gi;
+            }
+        }
+        if absence.not_searched == 0 {
+            absence.reason = None;
+        }
+        let mut mechanism = classify_mechanism(MechanismInput {
             pa: inputs.pa,
             phylo: &phylo,
             reference_state,
@@ -1604,6 +1720,9 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
             mobile,
             nsc_role: &nsc_role,
         });
+        // Before the score, so a call that rests on untested absences is scored
+        // and prioritised as the weaker call it is.
+        let not_searched_note = qualify_unsearched_absences(&mut mechanism, &absence);
         let component = inputs
             .component_info
             .get(ci_val)
@@ -1669,6 +1788,12 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 inputs.pa.cluster_name(ci).to_string(),
                 n_present.to_string(),
                 format!("{:.4}", prevalence),
+                absence.not_searched.to_string(),
+                absence
+                    .reason
+                    .map(NotSearched::tag)
+                    .unwrap_or("")
+                    .to_string(),
                 if phylo.assessed {
                     phylo.matched_tips.to_string()
                 } else {
@@ -1790,7 +1915,10 @@ pub(super) fn write_evolutionary_events(inputs: EvolutionaryEventInputs<'_>) -> 
                 synteny_pass_fraction(&all_rescue_evidence),
                 orf_signal_counts(&all_rescue_evidence),
                 rescue_type_counts(accepted),
-                mechanism.wording.to_string(),
+                match not_searched_note {
+                    Some(note) => format!("{} {}", mechanism.wording, note),
+                    None => mechanism.wording.to_string(),
+                },
             ],
         )?;
     }

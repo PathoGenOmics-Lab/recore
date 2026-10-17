@@ -197,6 +197,15 @@ impl NotSearched {
             NotSearched::NoFasta => "NOT_SEARCHED_NO_FASTA",
         }
     }
+
+    /// The reason alone, as `evolutionary_events.tsv` writes it.
+    pub(super) fn tag(self) -> &'static str {
+        match self {
+            NotSearched::LowPrevalence => "low_prevalence",
+            NotSearched::NoClusterSequence => "no_cluster_sequence",
+            NotSearched::NoFasta => "no_fasta",
+        }
+    }
 }
 
 /// Which gaps the search covered. The default, with empty vectors, is a run

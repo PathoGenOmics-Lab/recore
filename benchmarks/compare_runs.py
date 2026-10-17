@@ -72,19 +72,32 @@ def read_evolution(run_dir: Path) -> dict[str, dict[str, str]]:
         return {row["gene_cluster"]: row for row in reader}
 
 
+def is_absent(state: str) -> bool:
+    """No presence and no evidence: a gap searched and found empty, or one that
+    was never searched. A NOT_SEARCHED_* state is an absence, and counting it as
+    a call made every unsearched cell a "new correction" against older runs,
+    which wrote ABSENT for both."""
+    return state in {"", "ABSENT"} or state.startswith("NOT_SEARCHED")
+
+
 def classify_change(old_state: str, new_state: str) -> str:
     if old_state == "MISSING_CELL":
         return "new_only_cell"
     if new_state == "MISSING_CELL":
         return "old_only_cell"
-    old_present = old_state not in {"", "ABSENT"}
-    new_present = new_state not in {"", "ABSENT"}
     if old_state == new_state:
         return "same"
+    old_present = not is_absent(old_state)
+    new_present = not is_absent(new_state)
     if not old_present and new_present:
         return "new_correction"
     if old_present and not new_present:
         return "lost_correction"
+    if not old_present and not new_present:
+        # Absent in both runs, but searched in one and not the other, or left
+        # out of the search for a different reason: the search changed, the
+        # matrix did not.
+        return "search_coverage_changed"
     return "state_changed"
 
 
@@ -128,6 +141,7 @@ def main() -> int:
             "old_only_cell",
             "new_only_cell",
             "changed_cells",
+            "search_coverage_changed",
         ])
         for cluster in sorted(cluster_counts):
             counts = cluster_counts[cluster]
@@ -138,7 +152,7 @@ def main() -> int:
                 + counts["old_only_cell"]
                 + counts["new_only_cell"]
             )
-            if changed:
+            if changed or counts["search_coverage_changed"]:
                 writer.writerow([
                     cluster,
                     counts["same"],
@@ -148,6 +162,7 @@ def main() -> int:
                     counts["old_only_cell"],
                     counts["new_only_cell"],
                     changed,
+                    counts["search_coverage_changed"],
                 ])
 
     old_evo = read_evolution(args.old)
@@ -199,6 +214,7 @@ def main() -> int:
             "state_changed",
             "old_only_cell",
             "new_only_cell",
+            "search_coverage_changed",
         ]:
             writer.writerow([key, cell_counts[key]])
 

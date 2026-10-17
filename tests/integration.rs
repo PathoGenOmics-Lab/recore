@@ -634,4 +634,42 @@ fn test_unsearched_gaps_say_why_instead_of_absent() {
         "genome totals must count not-searched cells apart from absent ones"
     );
     assert!(html.contains("6 gaps were never searched (3 in clusters below the 50% prevalence floor, 2 in clusters with no sequence in the pan-genome reference, 1 in genomes with no FASTA file)"));
+
+    // The evolutionary audit counts the absences it cannot vouch for, says why,
+    // and does not present a call made of them as an audited one.
+    let events = fs::read_to_string(output_dir.join("evolutionary_events.tsv")).unwrap();
+    let mut rows = events.lines();
+    let header: Vec<&str> = rows.next().unwrap().split('\t').collect();
+    let column = |name: &str| header.iter().position(|h| *h == name).unwrap();
+    let event = |cluster: &str| -> Vec<String> {
+        events
+            .lines()
+            .find(|l| l.split('\t').next() == Some(cluster))
+            .unwrap()
+            .split('\t')
+            .map(str::to_string)
+            .collect()
+    };
+    let (count, reason) = (column("absent_not_searched"), column("not_searched_reason"));
+    for (cluster, n, why) in [
+        ("gA", "0", ""),
+        ("gB", "3", "low_prevalence"),
+        ("gC", "0", ""),
+        ("gD", "2", "no_cluster_sequence"),
+        ("gE", "1", "no_fasta"),
+    ] {
+        let row = event(cluster);
+        assert_eq!(
+            (row[count].as_str(), row[reason].as_str()),
+            (n, why),
+            "{cluster}"
+        );
+    }
+    let gb = event("gB");
+    assert!(gb[column("mechanism_detail")].ends_with(";absences_not_searched"));
+    assert!(gb[column("recommended_wording")]
+        .contains("None of the 3 absences behind this call were searched"));
+    let gc = event("gC");
+    assert!(!gc[column("mechanism_detail")].contains("absences_not_searched"));
+    assert!(!gc[column("recommended_wording")].contains("never searched"));
 }

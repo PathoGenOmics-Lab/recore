@@ -112,7 +112,10 @@ python3 benchmarks/compare_runs.py --old old_recore_output --new new_recore_outp
 
 The comparison uses the union of matrix cells, so clusters or genomes present
 in only one run are reported as `old_only_cell` / `new_only_cell` instead of
-being silently ignored.
+being silently ignored. A cell absent in both runs but searched in only one of
+them (an `ABSENT` against a `NOT_SEARCHED_*`, as older runs wrote `ABSENT` for
+both) is `search_coverage_changed`, not a correction, and is counted apart from
+`changed_cells`.
 
 Generate a compact Markdown/HTML report:
 
