@@ -17,6 +17,45 @@ if (!data.clusters.length) {
     notices.hidden = false;
   }
 }
+/* ---- Gaps outside the search ----------------------------------------------
+   An absent cell is either a gap Recore searched and found nothing in, or one
+   it never searched: the cluster is below --min-prevalence or has no sequence
+   to search with, or the genome has no FASTA. Both used to be drawn and named
+   "absent", and under the default prevalence floor most absent cells in a
+   pangenome are the second kind. The writer sends one code per cluster and the
+   genomes without a FASTA, and each cell is derived from the two. */
+const notSearched = data.notSearched || null;
+const clusterSearchCodes = notSearched ? String(notSearched.clusters || "") : "";
+const genomesWithoutFasta = notSearched ? notSearched.genomesWithoutFasta || [] : [];
+const genomeWithoutFasta = new Uint8Array(data.genomes.length);
+for (const gi of genomesWithoutFasta) genomeWithoutFasta[gi] = 1;
+/** Why none of a cluster's gaps were searched: "prevalence", "sequence" or "". */
+function clusterSkip(clusterIdx) {
+  const code = clusterSearchCodes.charCodeAt(clusterIdx);
+  return code === 49 ? "prevalence" : code === 50 ? "sequence" : "";
+}
+function isUnsearched(clusterIdx, genomeIdx) {
+  return clusterSkip(clusterIdx) !== "" || genomeWithoutFasta[genomeIdx] === 1;
+}
+function prevalenceFloorText() {
+  return `${+(notSearched.minPrevalence * 100).toFixed(3)}%`;
+}
+function clusterSkipWhy(clusterIdx) {
+  return clusterSkip(clusterIdx) === "prevalence"
+    ? `the cluster is in ${formatInt(countsForCluster(clusterIdx).P)} of ${plural(data.genomes.length, "input genome")}, below the ${prevalenceFloorText()} prevalence floor (--min-prevalence)`
+    : "the cluster has no sequence in the pan-genome reference, so there was nothing to search with";
+}
+/** Why a cell was not searched: a few words, or the full sentence. */
+function notSearchedReason(clusterIdx, genomeIdx, full) {
+  const skip = clusterSkip(clusterIdx);
+  if (!full) {
+    if (skip === "prevalence") return `below the ${prevalenceFloorText()} prevalence floor`;
+    if (skip === "sequence") return "no sequence to search with";
+    return "no FASTA for this genome";
+  }
+  const why = skip ? clusterSkipWhy(clusterIdx) : "there is no FASTA file for this genome";
+  return `Not searched: ${why}. The cell keeps the input matrix's call.`;
+}
 /* `source` is an optional declaration block to read instead of the live root:
    figures always take the light palette, whatever the screen is in. */
 function readThemeVar(name, fallback, source) {
@@ -49,11 +88,13 @@ function refreshThemeColors(source) {
   colors.N = readVar("--nsc", "#e07b00");
   colors.K = readVar("--kept", "#c01048");
   colors.A = readVar("--absent", "#f4f5f7");
+  colors.U = colors.A;
   strokes.P = colors.P;
   strokes.R = colors.R;
   strokes.N = colors.N;
   strokes.K = colors.K;
   strokes.A = readVar("--absent-stroke", "#d0d5dd");
+  strokes.U = readVar("--unsearched-line", "#b9bec7");
   for (const family of Object.keys(mechanismFamilyColors)) {
     mechanismFamilyColors[family] = readVar(`--mech-${family}`, mechanismFamilyColors[family]);
   }
@@ -72,8 +113,8 @@ function refreshThemeColors(source) {
   labelInk = readVar("--subtle", "#475467");
 }
 const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
-const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7"};
-const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd"};
+const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7", U:"#f4f5f7"};
+const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd", U:"#b9bec7"};
 let burdenLow = "#e4e4e7";
 const qcColors = {pass: "#a1a1aa", review: "#d97706", fail: "#dc2626"};
 let panelBg = "#ffffff";
@@ -85,14 +126,15 @@ let selectColTint = "#eef4ff";
 let selectStroke = "#1d4ed8";
 let gridStroke = "#98a2b3";
 let labelInk = "#475467";
-const labels = {P:"present in input", R:"corrected by Recore", N:"supported by NSC", K:"found, kept out of matrix", A:"absent"};
-const shortLabels = {P:"input", R:"corrected", N:"NSC", K:"kept out", A:"absent"};
+const labels = {P:"present in input", R:"corrected by Recore", N:"supported by NSC", K:"found, kept out of matrix", A:"absent", U:"not searched"};
+const shortLabels = {P:"input", R:"corrected", N:"NSC", K:"kept out", A:"absent", U:"not searched"};
 const stateDefinitions = {
   P:"Present in the input matrix.",
   R:"Absent in the input. Recore found the gene in this genome and corrected the cell.",
   N:"Absent in the input. Near-identical clusters were merged (NSC), and the merged cluster is present here.",
   K:"Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix. Click the cell for the reason.",
-  A:"Absent, and Recore found no evidence for it.",
+  A:"Absent. Recore searched this gap and found no evidence for the gene.",
+  U:"Absent in the input, and never searched: the cluster is below the prevalence floor or has no sequence to search with, or the genome has no FASTA. The absence is the input's call, not a finding.",
 };
 /* Sixteen mechanisms cannot get sixteen colours anyone can tell apart, so they
    are drawn in six families. The family hues stay off the cell-state hues and
@@ -221,6 +263,7 @@ const columnOrder = document.getElementById("columnOrder");
 const rootMode = document.getElementById("rootMode");
 const labelToggle = document.getElementById("tipLabels");
 const referenceToggle = document.getElementById("referenceOnly");
+const searchedToggle = document.getElementById("searchedOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
 const syntenyZoomControl = document.getElementById("syntenyZoom");
 const fullscreenButton = document.getElementById("explorerFullscreen");
@@ -320,6 +363,7 @@ let visibleClusters = [];
 let genomeStats = [];
 let maxGenomeStats = {R:1, N:1, A:1, correction:1};
 let anyKeptOut = false;
+let anyNotSearched = false;
 let maxDepth = 0;
 let maxDistance = 0;
 let treeHeight = 0;
@@ -347,6 +391,7 @@ let detailsKey = "";
 let syntenyKey = "";
 let treeMode = "phylogram";
 let referenceOnly = false;
+let searchedOnly = false;
 let syntenyHidden = true;
 let selectedSyntenyBlock = 0;
 let selectedSyntenyReference = false;
@@ -522,10 +567,11 @@ function evidenceRowHtml(row) {
     (notes.length ? `<dl class="cluster-dl ev-notes">${notes.join("")}</dl>` : "") +
     `</div>`;
 }
-function emptyCellText(state) {
+function emptyCellText(state, clusterIdx, genomeIdx) {
   if (state === "P") return "Present in the input matrix. Recore had nothing to correct here.";
   if (state === "N") return "Merged into a near-identical cluster by NSC; no search evidence row.";
-  return "No evidence row. Either Recore searched this gap and found nothing, or the gap was outside the search (see the prevalence filter in Run details).";
+  if (state === "U") return notSearchedReason(clusterIdx, genomeIdx, true);
+  return "No evidence row: Recore searched this gap and found nothing that cleared the identity and coverage thresholds.";
 }
 /** The selected cell: what it is, and every evidence row behind it. */
 function cellCardHtml() {
@@ -534,7 +580,7 @@ function cellCardHtml() {
   const rows = cellEvidence(selected, selectedGenome);
   const body = rows.length
     ? rows.map(evidenceRowHtml).join("")
-    : `<p class="muted cell-empty">${escapeHtml(emptyCellText(state))}</p>`;
+    : `<p class="muted cell-empty">${escapeHtml(emptyCellText(state, selected, selectedGenome))}</p>`;
   return `<section class="cell-card" aria-label="Selected cell">` +
     `<div class="cell-card-head"><span class="card-title">Cell</span>` +
     `<button type="button" class="icon-btn ghost-icon cell-close" data-clear-cell="1" aria-label="Clear the selected cell" data-tip="Clear the selected cell">&times;</button></div>` +
@@ -725,7 +771,7 @@ function stateAt(clusterIdx, genomeIdx) {
   for (let state = STORED_STATES - 1; state >= 0; state -= 1) {
     if (setContains(sets[state], genomeIdx)) return STATE_CODES[state];
   }
-  return "A";
+  return isUnsearched(clusterIdx, genomeIdx) ? "U" : "A";
 }
 function countsForCluster(clusterIdx) {
   const n = data.genomes.length;
@@ -738,11 +784,20 @@ function countsForCluster(clusterIdx) {
     A: 0,
   };
   counts.A = Math.max(0, n - counts.P - counts.R - counts.N - counts.K);
+  counts.U = 0;
+  if (clusterSkip(clusterIdx)) {
+    counts.U = counts.A;
+    counts.A = 0;
+  } else {
+    for (const gi of genomesWithoutFasta) if (stateAt(clusterIdx, gi) === "U") counts.U += 1;
+    counts.A -= counts.U;
+  }
   return counts;
 }
 function passesActiveFilters(idx, includeMechanism = true) {
   const cluster = data.clusters[idx];
   if (referenceOnly && !cluster.referenceAbsent) return false;
+  if (searchedOnly && clusterSkip(idx)) return false;
   if (includeMechanism && mechanismFilters.size && !mechanismFilters.has(processKind(cluster))) return false;
   return true;
 }
@@ -790,8 +845,9 @@ function refreshVisibleClusters() {
     .map((_, idx) => idx)
     .filter(idx => passesActiveFilters(idx, true)));
   if (!visibleClusters.length) {
-    if (referenceOnly) {
+    if (referenceOnly || searchedOnly) {
       referenceOnly = false;
+      searchedOnly = false;
       visibleClusters = sortVisibleClusters(data.clusters
         .map((_, idx) => idx)
         .filter(idx => passesActiveFilters(idx, true)));
@@ -820,6 +876,10 @@ function refreshVisibleClusters() {
     );
     referenceToggle.disabled = !data.referenceGenome;
   }
+  if (searchedToggle) {
+    searchedToggle.checked = searchedOnly;
+    searchedToggle.disabled = !clusterSearchCodes.includes("1") && !clusterSearchCodes.includes("2");
+  }
 }
 function selectedVisibleColumn() {
   return visibleClusters.indexOf(selected);
@@ -831,14 +891,16 @@ function computeGenomeStats() {
   // Totals come precomputed from the writer: deriving them here would mean
   // decoding every cluster before the first paint.
   genomeStats = data.genomes.map((_, gi) => {
-    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0];
-    return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4]};
+    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0, 0];
+    return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4], U: totals[5] || 0};
   });
   anyKeptOut = genomeStats.some(s => s.K > 0);
+  anyNotSearched = genomeStats.some(s => s.U > 0);
   maxGenomeStats = genomeStats.reduce((acc, s) => ({
     R: Math.max(acc.R, s.R),
     N: Math.max(acc.N, s.N),
-    A: Math.max(acc.A, s.A),
+    // The absence burden counts every absent cell, searched or not.
+    A: Math.max(acc.A, s.A + s.U),
     correction: Math.max(acc.correction, s.R + s.N),
   }), {R:1, N:1, A:1, correction:1});
 }
@@ -891,15 +953,16 @@ let cellLegendKey = "";
 function renderCellLegend() {
   if (!cellLegend) return;
   const byProcess = matrixColorMode.value === "process";
-  const key = byProcess ? `m|${visibleClusters.length}|${mechanismFilterKey()}` : `s|${anyKeptOut}|${data.nscEnabled}`;
+  const key = byProcess ? `m|${visibleClusters.length}|${mechanismFilterKey()}` : `s|${anyKeptOut}|${data.nscEnabled}|${anyNotSearched}`;
   if (key === cellLegendKey) return;
   cellLegendKey = key;
   const item = (cls, style, label, tip) =>
-    `<span class="key" data-tip="${escapeHtml(tip)}"><i class="sw ${cls}"${style ? ` style="${style}"` : ""}></i>${escapeHtml(label)}</span>`;
+    `<span class="key" data-tip="${escapeHtml(tip)}"><i class="sw ${cls}"${style ? ` style="${style}"` : ""}></i><span class="key-label">${escapeHtml(label)}</span></span>`;
   if (!byProcess) {
     cellLegend.innerHTML = shownStates()
       .map(state => item(state.toLowerCase(), "", shortLabels[state], stateDefinitions[state]))
       .join("");
+    fitCellLegend();
     return;
   }
   const families = new Map();
@@ -914,10 +977,22 @@ function renderCellLegend() {
     .map(family => `${mechanismFamilyLabels[family]}: ${plural(families.get(family), "cluster")}`)
     .join("; ");
   const stack = present.map(family => `<i class="sw" style="background:var(--mech-${family})"></i>`).join("");
-  const keys = [`<button type="button" class="key key-btn" data-open-mechanisms="1" data-tip="${escapeHtml(`Input cells take the colour of their cluster's mechanism family. ${tip}. Click for the list and filters.`)}"><span class="sw-stack">${stack}</span>mechanism</button>`];
+  const keys = [`<button type="button" class="key key-btn" data-open-mechanisms="1" data-tip="${escapeHtml(`Input cells take the colour of their cluster's mechanism family. ${tip}. Click for the list and filters.`)}"><span class="sw-stack">${stack}</span><span class="key-label">mechanism</span></button>`];
   keys.push(item("r", "", shortLabels.R, stateDefinitions.R));
   if (anyKeptOut) keys.push(item("k", "", shortLabels.K, stateDefinitions.K));
+  if (anyNotSearched) keys.push(item("u", "", shortLabels.U, stateDefinitions.U));
   cellLegend.innerHTML = keys.join("");
+  fitCellLegend();
+}
+/* Six keys can outgrow the pane header, and the legend was clipped on its
+   left. Short of room it keeps only the swatches, each still named by its tip. */
+function fitCellLegend() {
+  if (!cellLegend) return;
+  const head = cellLegend.parentElement;
+  cellLegend.classList.remove("compact");
+  const tight = cellLegend.scrollWidth > cellLegend.clientWidth + 1 ||
+    (head && head.scrollWidth > head.clientWidth + 1);
+  cellLegend.classList.toggle("compact", tight);
 }
 function renderLineageLegend() {
   if (!lineageLegend) return;
@@ -990,14 +1065,14 @@ function tipStyle(genomeIdx) {
   }
   if (mode === "cluster") {
     const state = stateAt(selected, genomeIdx);
-    return {fill: colors[state], stroke: strokes[state], title: labels[state]};
+    return {fill: colors[state], stroke: strokes[state], title: labels[state], dashed: state === "U"};
   }
   if (mode === "process") {
     const cluster = data.clusters[selected] || {};
     const state = stateAt(selected, genomeIdx);
     const mechanism = processKind(cluster);
     const color = processColor(mechanism);
-    if (state === "A") return {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)}; absent`};
+    if (state === "A" || state === "U") return {fill: colors.A, stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`, dashed: state === "U"};
     if (state === "R" || state === "K") return {fill: colors[state], stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`};
     return {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
   }
@@ -1013,7 +1088,7 @@ function tipStyle(genomeIdx) {
     const color = lineageColor(lineage);
     return {fill: color, stroke: color, title: lineageLabel(lineage)};
   }
-  const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
+  const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0, U:0};
   const [value, max, high, noun] = burdenOf(mode, stats);
   // Zero is a hollow ring, so "none" never passes for a pale "some" in either
   // theme, and the ramp runs from the line colour to the state's own colour.
@@ -1023,7 +1098,7 @@ function tipStyle(genomeIdx) {
 /** The value a burden tip mode shows, its maximum, its colour and its name. */
 function burdenOf(mode, stats) {
   if (mode === "rescue") return [stats.R, maxGenomeStats.R, colors.R, "corrected cells"];
-  if (mode === "absence") return [stats.A, maxGenomeStats.A, labelInk, "absent cells"];
+  if (mode === "absence") return [stats.A + (stats.U || 0), maxGenomeStats.A, labelInk, "absent cells"];
   return [stats.R + stats.N, maxGenomeStats.correction, colors.R, "corrected or NSC cells"];
 }
 function subtreeLineage(node) {
@@ -1509,6 +1584,7 @@ function selectMatrixClusterByName(name) {
   if (idx < 0) return false;
   if (!passesActiveFilters(idx, true)) {
     referenceOnly = false;
+    searchedOnly = false;
     mechanismFilters.clear();
     refreshVisibleClusters();
   }
@@ -2269,6 +2345,12 @@ function paintDensity(context, opts) {
   const N = new Uint32Array(nPix);
   const colsAt = new Uint32Array(W);
   const bulk = new Int32Array(W);
+  // Absent cells outside the search: the columns of clusters that were left
+  // out (less what is present in them), and the rows of genomes without a FASTA.
+  const uCols = new Uint32Array(anyNotSearched ? W : 0);
+  const bulkU = new Int32Array(anyNotSearched ? W : 0);
+  const PU = new Int32Array(anyNotSearched ? nPix : 0);
+  const uRowsAt = new Uint32Array(anyNotSearched ? H : 0);
   // Each visible row covers [y0, y1) device rows.
   const nRows = Math.max(0, lastRow - firstRow);
   const y0s = new Int32Array(nRows);
@@ -2281,6 +2363,9 @@ function paintDensity(context, opts) {
     y0s[i] = a;
     y1s[i] = b;
     for (let y = a; y < b; y += 1) rowsAt[y] += 1;
+    if (anyNotSearched && genomeWithoutFasta[leafOrder[r]]) {
+      for (let y = a; y < b; y += 1) uRowsAt[y] += 1;
+    }
   }
   const addRow = (arr, x0, x1, r, sign) => {
     const i = r - firstRow;
@@ -2296,6 +2381,13 @@ function paintDensity(context, opts) {
     const x0 = Math.max(0, Math.min(W - 1, Math.floor((c * cw - left) * scale)));
     const x1 = Math.max(x0 + 1, Math.min(W, Math.floor(((c + 1) * cw - left) * scale)));
     for (let x = x0; x < x1; x += 1) colsAt[x] += 1;
+    const outCol = anyNotSearched && clusterSkip(clusterIdx) !== "";
+    if (outCol) for (let x = x0; x < x1; x += 1) uCols[x] += 1;
+    // What is present in a column outside the search is counted twice: once by
+    // state, and once to take it out of that column's not-searched cells.
+    const add = outCol
+      ? (arr, a, b, r, sign) => { addRow(arr, a, b, r, sign); addRow(PU, a, b, r, sign); }
+      : addRow;
     const sets = clusterSets(clusterIdx);
     const rowsets = clusterRowSets(clusterIdx);
     const targets = [P, R, N, K];
@@ -2306,23 +2398,24 @@ function paintDensity(context, opts) {
       if (set.kind === "list") {
         if (!rows || !rows.length) continue;
         let i = lowerBound(rows, firstRow);
-        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], 1);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) add(arr, x0, x1, rows[i], 1);
         continue;
       }
       // "all" or "complement": count the column in bulk, then take out the
       // excluded rows. Only input presence is ever that dense.
       if (arr !== P) {
-        for (let r = firstRow; r < lastRow; r += 1) addRow(arr, x0, x1, r, 1);
+        for (let r = firstRow; r < lastRow; r += 1) add(arr, x0, x1, r, 1);
         if (set.kind === "complement" && rows) {
           let i = lowerBound(rows, firstRow);
-          for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+          for (; i < rows.length && rows[i] < lastRow; i += 1) add(arr, x0, x1, rows[i], -1);
         }
         continue;
       }
       for (let x = x0; x < x1; x += 1) bulk[x] += 1;
+      if (outCol) for (let x = x0; x < x1; x += 1) bulkU[x] += 1;
       if (set.kind === "complement" && rows) {
         let i = lowerBound(rows, firstRow);
-        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) add(arr, x0, x1, rows[i], -1);
       }
     }
   }
@@ -2332,6 +2425,13 @@ function paintDensity(context, opts) {
   const rescue = hexRgb(colors.R);
   const kept = hexRgb(colors.K);
   const panel = hexRgb(panelBg);
+  const hatch = hexRgb(strokes.U);
+  // The same hatch as the cell view, in device pixels and anchored at the
+  // matrix origin; a pixel's lines are as strong as its share of cells that
+  // were not searched.
+  const hatchPeriod = Math.max(3, Math.round(HATCH_CSS_PX * scale));
+  const hatchWidth = Math.max(1, Math.round(scale));
+  const hatchPhase = Math.round((left + top) * scale) % hatchPeriod;
   const image = context.createImageData(W, H);
   const out = image.data;
   for (let y = 0; y < H; y += 1) {
@@ -2353,6 +2453,13 @@ function paintDensity(context, opts) {
           const share = (R[idx] || K[idx]) / cells;
           const w = 0.3 + 0.7 * Math.min(1, share / 0.05);
           rgb = [0, 1, 2].map(k => rgb[k] * (1 - w) + finding[k] * w);
+        } else if (anyNotSearched && (x + y + hatchPhase) % hatchPeriod < hatchWidth) {
+          let u = Math.max(0, uCols[x] * rowsHere - PU[idx] - bulkU[x] * rowsHere);
+          // Rows without a FASTA in searched columns, taken as absent as the
+          // pixel is on average.
+          if (uRowsAt[y]) u += (colsAt[x] - uCols[x]) * uRowsAt[y] * a;
+          const w = Math.min(a, u / cells);
+          if (w > 0) rgb = [0, 1, 2].map(k => rgb[k] * (1 - w) + hatch[k] * w);
         }
       }
       const o = idx * 4;
@@ -2364,6 +2471,64 @@ function paintDensity(context, opts) {
   }
   context.putImageData(image, dx, dy);
 }
+/* The not-searched hatch: thin diagonal lines over the absent fill. A pattern
+   is a bitmap, so it is built per context and per scale (the screen and an
+   exported figure differ in both), and it is anchored at the matrix origin so
+   the lines scroll with the cells instead of sliding under them. */
+const HATCH_CSS_PX = 6;
+const hatchTiles = new WeakMap();
+function notSearchedPattern(context, left, top) {
+  const scale = (context.getTransform && context.getTransform().a) || 1;
+  const key = `${scale}|${colors.A}|${strokes.U}`;
+  let entry = hatchTiles.get(context);
+  if (!entry || entry.key !== key) {
+    const size = Math.max(3, Math.round(HATCH_CSS_PX * scale));
+    const tile = document.createElement("canvas");
+    tile.width = size;
+    tile.height = size;
+    const t = tile.getContext("2d");
+    t.fillStyle = colors.A;
+    t.fillRect(0, 0, size, size);
+    t.strokeStyle = strokes.U;
+    t.lineWidth = Math.max(1, Math.round(scale));
+    t.beginPath();
+    // The line through the tile and the two through its corners, so tiles join.
+    for (const k of [0, size, 2 * size]) {
+      t.moveTo(-1, k + 1);
+      t.lineTo(k + 1, -1);
+    }
+    t.stroke();
+    entry = {key, size, scale, pattern: context.createPattern(tile, "repeat")};
+    hatchTiles.set(context, entry);
+  }
+  const period = entry.size / entry.scale;
+  if (entry.pattern.setTransform && typeof DOMMatrix === "function") {
+    entry.pattern.setTransform(new DOMMatrix([1 / entry.scale, 0, 0, 1 / entry.scale, -(left % period), -(top % period)]));
+  }
+  return entry.pattern;
+}
+/* Cells outside the search, under everything else: whole columns for the
+   clusters that were left out, whole rows for the genomes without a FASTA.
+   Every other state paints over them, so only absent cells keep the hatch. */
+function paintNotSearched(context, opts) {
+  const {firstCol, lastCol, firstRow, lastRow, left, top, cw, ch, dataW, dataH} = opts;
+  context.fillStyle = notSearchedPattern(context, left, top);
+  const xAt = c => (cw < 1 ? Math.floor(c * cw - left) : c * cw - left);
+  let run = -1;
+  for (let c = firstCol; c <= lastCol; c += 1) {
+    const out = c < lastCol && clusterSkip(originalClusterAtVisibleColumn(c)) !== "";
+    if (out && run < 0) run = c;
+    if (!out && run >= 0) {
+      context.fillRect(xAt(run), 0, Math.max(1, xAt(c) - xAt(run)), dataH);
+      run = -1;
+    }
+  }
+  for (const gi of genomesWithoutFasta) {
+    const r = rowOfGenome[gi];
+    if (r < firstRow || r >= lastRow) continue;
+    context.fillRect(0, r * ch - top, dataW, ch);
+  }
+}
 /* Paints the cells of columns [firstCol, lastCol) and rows [firstRow, lastRow),
    with the matrix origin at (left, top) and cw x ch cells. The screen and the
    exported figure both draw through here, so they cannot disagree. */
@@ -2373,6 +2538,7 @@ function paintCells(context, opts) {
   // run does not look like an empty pane.
   context.fillStyle = colors.A;
   context.fillRect(0, 0, dataW, dataH);
+  if (anyNotSearched) paintNotSearched(context, opts);
   // Cells never shrink below a hairline, so a dense matrix stays legible instead
   // of fading out when several clusters share a pixel column.
   const drawW = Math.max(1, cw > 2 ? cw - 1 : cw);
@@ -2780,7 +2946,10 @@ function drawTreeNode(root, top, firstRow, lastRow, viewH, showLabels) {
     if (radius >= 1.5) {
       treeCtx.strokeStyle = style.stroke;
       treeCtx.lineWidth = 1;
+      // A dashed ring is a genome this cluster was never searched in.
+      if (style.dashed) treeCtx.setLineDash([1.5, 1.5]);
       treeCtx.stroke();
+      if (style.dashed) treeCtx.setLineDash([]);
     }
     if (highlightedRows.has(node.row)) {
       treeCtx.strokeStyle = "#0ea5e9";
@@ -2854,6 +3023,7 @@ function shownStates() {
   if (data.nscEnabled) states.push("N");
   if (anyKeptOut) states.push("K");
   states.push("A");
+  if (anyNotSearched) states.push("U");
   return states;
 }
 function stateCountRows(counts, total) {
@@ -2873,7 +3043,7 @@ function prevalenceBar(present, total, pct) {
 function renderClusterDetails() {
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
-    ? `${selected}|${selectedGenome}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
+    ? `${selected}|${selectedGenome}|${referenceOnly}|${searchedOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
     : "none";
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
@@ -2904,6 +3074,7 @@ function renderClusterDetails() {
       ${prevalenceBar(cluster.present, total, prevalencePct)}
       <div class="card-title">Evidence in ${plural(total, "genome")}</div>
       <div class="count-rows">${stateCountRows(counts, total)}</div>
+      ${clusterSkip(selected) ? `<p class="note-line">None of this cluster's gaps were searched: ${escapeHtml(clusterSkipWhy(selected))}.</p>` : ""}
       ${lineageBreakdownHtml(selected)}
       ${changedCellsHtml(selected)}
       <div class="card-title">Mechanism</div>
@@ -3118,6 +3289,9 @@ if (typeof ResizeObserver !== "undefined") {
     render(false);
   });
   ro.observe(viewerBody);
+  if (cellLegend && cellLegend.parentElement) {
+    new ResizeObserver(() => fitCellLegend()).observe(cellLegend.parentElement);
+  }
 }
 let lastPixelRatio = window.devicePixelRatio || 1;
 window.addEventListener("resize", () => {
@@ -3172,7 +3346,7 @@ function anyPaneMenuOpen() {
    two minutes ago silently explains a matrix that looks wrong. */
 function syncMenuIndicators() {
   if (matrixMenuBtn && matrixMenu.hidden) {
-    matrixMenuBtn.classList.toggle("active", mechanismFilters.size > 0 || referenceOnly);
+    matrixMenuBtn.classList.toggle("active", mechanismFilters.size > 0 || referenceOnly || searchedOnly);
   }
   if (treeMenuBtn && treeMenu.hidden) {
     treeMenuBtn.classList.toggle("active", rootMode ? rootMode.value !== defaultRootMode : false);
@@ -3215,6 +3389,12 @@ referenceToggle.addEventListener("change", () => {
   resetMatrixCache();
   render(true);
 });
+if (searchedToggle) {
+  searchedToggle.addEventListener("change", () => {
+    searchedOnly = searchedToggle.checked;
+    applyMechanismFilters();
+  });
+}
 if (prevClusterButton) prevClusterButton.addEventListener("click", () => stepCluster(-1));
 if (nextClusterButton) nextClusterButton.addEventListener("click", () => stepCluster(1));
 function setSynteny(open) {
@@ -3289,11 +3469,11 @@ function clearSyntenyHighlight() {
 }
 /** The clusters in view, with what the matrix shows for each, as TSV. */
 function visibleClustersTsv() {
-  const lines = [["cluster", "annotation", "mechanism", "present_in_input", "corrected", "nsc", "kept_out", "absent"].join("\t")];
+  const lines = [["cluster", "annotation", "mechanism", "present_in_input", "corrected", "nsc", "kept_out", "absent", "not_searched"].join("\t")];
   for (const idx of visibleClusters) {
     const cluster = data.clusters[idx];
     const c = countsForCluster(idx);
-    lines.push([cluster.name, cluster.annotation || "", processKind(cluster), c.P, c.R, c.N, c.K, c.A]
+    lines.push([cluster.name, cluster.annotation || "", processKind(cluster), c.P, c.R, c.N, c.K, c.A, c.U]
       .map(v => String(v).replace(/[\t\n]/g, " ")).join("\t"));
   }
   return `${lines.join("\n")}\n`;
@@ -3553,7 +3733,9 @@ matrixPane.addEventListener("mousemove", event => {
   // The cell's own evidence first, the cluster's mechanism after and labelled as
   // the cluster's, so it does not read as the reason for this cell.
   const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
-  const stateLine = evidence ? `${labels[state]}: ${evidenceSummary(evidence)}` : labels[state];
+  const stateLine = evidence
+    ? `${labels[state]}: ${evidenceSummary(evidence)}`
+    : state === "U" ? `${labels.U}: ${notSearchedReason(clusterIdx, genomeIdx, false)}` : labels[state];
   setHover(r, c, `${data.genomes[genomeIdx]} / ${cluster.name}: ${stateLine}`);
   const key = `${clusterIdx}|${genomeIdx}`;
   if (tooltip.dataset.key !== key) {
@@ -3577,7 +3759,7 @@ matrixPane.addEventListener("mousemove", event => {
    Every evidence row as a list a reader can copy or download, built from the
    same per-cluster data the cell card reads. The preview is built when the
    drawer first opens; the full text only when it is asked for. */
-const CELL_STATE_WORDS = {P: "present", R: "corrected", N: "NSC", K: "kept out", A: "absent"};
+const CELL_STATE_WORDS = {P: "present", R: "corrected", N: "NSC", K: "kept out", A: "absent", U: "not searched"};
 const CORRECTION_COLUMNS = ["genome", "cluster", "cell_state", "decision", "rescue_type", "identity", "coverage", "contig", "start", "end", "strand", "synteny", "synteny_score", "orf_integrity_signal", "matrix_action", "publication_status", "rejection_reason", "risk_flags"];
 function correctionRecord(clusterIdx, row) {
   const value = column => {
@@ -3698,7 +3880,10 @@ function cellReadout(row, col) {
   if (!cluster || genomeIdx === undefined) return "";
   const state = stateAt(clusterIdx, genomeIdx);
   const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
-  return `${data.genomes[genomeIdx]}, ${cluster.name}: ${labels[state]}${evidence ? `, ${evidenceSummary(evidence)}` : ""}`;
+  const detail = evidence
+    ? `, ${evidenceSummary(evidence)}`
+    : state === "U" ? `, ${notSearchedReason(clusterIdx, genomeIdx, false)}` : "";
+  return `${data.genomes[genomeIdx]}, ${cluster.name}: ${labels[state]}${detail}`;
 }
 function moveCursor(row, col) {
   const rows = leafOrder.length;
@@ -3948,9 +4133,9 @@ function drawFigure(forceWhole = false) {
   f.textBaseline = "middle";
   f.textAlign = "left";
   for (const state of shownStates()) {
-    f.fillStyle = colors[state];
+    f.fillStyle = state === "U" ? notSearchedPattern(f, 0, 0) : colors[state];
     f.fillRect(x, keyY, 10, 10);
-    if (state === "A") {
+    if (state === "A" || state === "U") {
       f.strokeStyle = strokes.A;
       f.strokeRect(x + 0.5, keyY + 0.5, 9, 9);
     }
@@ -4208,8 +4393,8 @@ function renderGenomeDetails() {
     return;
   }
   const name = data.genomes[selectedGenome] || "";
-  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, K: 0, A: 0};
-  const assessed = totals.P + totals.R + totals.N + totals.K + totals.A;
+  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, K: 0, A: 0, U: 0};
+  const assessed = totals.P + totals.R + totals.N + totals.K + totals.A + totals.U;
   const lineage = lineageOfGenomeName(name);
   const node = findLeafByGenome(treeRoot, selectedGenome);
   const state = stateAt(selected, selectedGenome);
@@ -4223,6 +4408,7 @@ function renderGenomeDetails() {
     </div>
     <p class="muted">Tip ${row >= 0 ? formatInt(row + 1) : "?"} of ${formatInt(leafOrder.length)}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
     ${genomeQcHtml(selectedGenome)}
+    ${genomeWithoutFasta[selectedGenome] ? "<p class='note-line'>No FASTA file was found for this genome, so none of its gaps were searched.</p>" : ""}
     <dl class="cluster-dl">
       <dt>In the selected cluster</dt>
       <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong>${(() => {

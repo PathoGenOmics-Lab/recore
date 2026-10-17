@@ -172,6 +172,71 @@ fn cell_sequence_count(cell: &str) -> usize {
         .max(usize::from(!cell.trim().is_empty()))
 }
 
+/// Why a gap was never searched.
+///
+/// A cell the search never looked at used to be written as ABSENT, the word
+/// for a gap that was searched and came back empty. Under the default
+/// --min-prevalence most absent cells in a pangenome are of the first kind, and
+/// nothing in the outputs told them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NotSearched {
+    /// The cluster is in fewer input genomes than --min-prevalence asks for.
+    LowPrevalence,
+    /// The cluster has no sequence in the pan-genome reference to search with.
+    NoClusterSequence,
+    /// The genome has no FASTA file to search in.
+    NoFasta,
+}
+
+impl NotSearched {
+    /// The cell state in gene_presence_absence_recore_states.csv.
+    pub(super) fn state(self) -> &'static str {
+        match self {
+            NotSearched::LowPrevalence => "NOT_SEARCHED_LOW_PREVALENCE",
+            NotSearched::NoClusterSequence => "NOT_SEARCHED_NO_CLUSTER_SEQUENCE",
+            NotSearched::NoFasta => "NOT_SEARCHED_NO_FASTA",
+        }
+    }
+}
+
+/// Which gaps the search covered. The default, with empty vectors, is a run
+/// that searched every gap.
+#[derive(Clone, Debug, Default)]
+pub(super) struct SearchCoverage {
+    /// Per cluster, why none of its gaps were searched.
+    pub(super) clusters: Vec<Option<NotSearched>>,
+    /// Per genome, whether it has no FASTA file, so none of its gaps were searched.
+    pub(super) genomes_without_fasta: Vec<bool>,
+}
+
+impl SearchCoverage {
+    pub(super) fn cluster_reason(&self, ci: ClusterIdx) -> Option<NotSearched> {
+        self.clusters.get(ci.val()).copied().flatten()
+    }
+
+    pub(super) fn genome_without_fasta(&self, gi: GenomeIdx) -> bool {
+        self.genomes_without_fasta
+            .get(gi.val())
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Why the gap at this cell was not searched, or None when it was. Only
+    /// meaningful for a cell that is absent. The cluster's reason comes first,
+    /// in the order the pipeline filters gaps, which is also the order of the
+    /// gap counts in the summary.
+    pub(super) fn reason(&self, ci: ClusterIdx, gi: GenomeIdx) -> Option<NotSearched> {
+        self.cluster_reason(ci).or_else(|| {
+            self.genome_without_fasta(gi)
+                .then_some(NotSearched::NoFasta)
+        })
+    }
+
+    pub(super) fn is_complete(&self) -> bool {
+        self.clusters.iter().all(Option::is_none) && !self.genomes_without_fasta.contains(&true)
+    }
+}
+
 pub(super) struct MultistateMatrixInputs<'a> {
     pub(super) pa: &'a crate::parser::PresenceAbsence,
     pub(super) accepted_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
@@ -181,6 +246,7 @@ pub(super) struct MultistateMatrixInputs<'a> {
     pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
     pub(super) output_dir: &'a std::path::Path,
     pub(super) nsc_result: &'a Option<nscluster::NsClusterResult>,
+    pub(super) coverage: &'a SearchCoverage,
 }
 
 pub(super) fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Result<()> {
@@ -262,6 +328,8 @@ pub(super) fn write_multistate_matrix(inputs: MultistateMatrixInputs<'_>) -> Res
                 ));
             } else if nsc_presence.contains(&(ci_val, gi_val)) {
                 row[col_idx].push_str("ALIAS_CLUSTER");
+            } else if let Some(reason) = inputs.coverage.reason(ci, gi) {
+                row[col_idx].push_str(reason.state());
             } else {
                 row[col_idx].push_str("ABSENT");
             }
@@ -1687,7 +1755,7 @@ fn output_file_description(name: &str) -> &'static str {
     match name {
         "gene_presence_absence_recore.csv" => "Corrected binary matrix",
         "gene_presence_absence_recore_states.csv" => {
-            "Multistate matrix: input, corrected, NSC and kept-out codes"
+            "Multistate matrix: input, corrected, NSC, kept-out and not-searched codes"
         }
         "orthology_evidence.tsv" => {
             "Every rescue and rejected candidate, with its decision and why"
@@ -2347,6 +2415,8 @@ fn build_explorer_data_json(
     evidence: &[OrthologyEvidenceRow],
     notices: &[String],
     genome_qc: &[(String, String)],
+    coverage: &SearchCoverage,
+    min_prevalence: f64,
 ) -> Option<(String, String)> {
     use std::fmt::Write as _;
 
@@ -2390,8 +2460,12 @@ fn build_explorer_data_json(
     // Per-genome state totals, used for the tip-burden colour modes. Counting
     // them here costs one pass we are already making; in the browser it would
     // mean decoding every cluster before the first paint.
-    // [present, rescued, NSC, kept out, absent]
-    let mut genome_totals = vec![[0usize; 5]; pa.n_genomes()];
+    // [present, rescued, NSC, kept out, absent, not searched]
+    let mut genome_totals = vec![[0usize; 6]; pa.n_genomes()];
+    // Why each rendered cluster was left out of the search: '0' searched, '1'
+    // below --min-prevalence, '2' no sequence to search with. Genomes without a
+    // FASTA go separately, as a list; the page derives each cell from the two.
+    let mut cluster_search_codes = String::new();
     let mut rendered_index: HashMap<usize, usize> = HashMap::new();
     for ci_val in 0..pa.n_clusters() {
         if clusters_to_skip.contains(&ci_val) {
@@ -2424,10 +2498,17 @@ fn build_explorer_data_json(
                 if slot < 3 {
                     present_after += 1;
                 }
+            } else if coverage.reason(ci, gi).is_some() {
+                totals[5] += 1;
             } else {
                 totals[4] += 1;
             }
         }
+        cluster_search_codes.push(match coverage.cluster_reason(ci) {
+            None => '0',
+            Some(NotSearched::LowPrevalence) => '1',
+            Some(_) => '2',
+        });
         if !first_cluster {
             out.push(',');
         }
@@ -2511,12 +2592,35 @@ fn build_explorer_data_json(
         }
         write!(
             out,
-            "[{},{},{},{},{}]",
-            totals[0], totals[1], totals[2], totals[3], totals[4]
+            "[{},{},{},{},{},{}]",
+            totals[0], totals[1], totals[2], totals[3], totals[4], totals[5]
         )
         .expect("write to String is infallible");
     }
-    out.push_str("],\"evidence\":");
+    out.push_str("],\"notSearched\":");
+    if coverage.is_complete() {
+        out.push_str("null");
+    } else {
+        write!(
+            out,
+            "{{\"minPrevalence\":{},\"clusters\":{},\"genomesWithoutFasta\":[",
+            min_prevalence,
+            json_script_escape(&cluster_search_codes)
+        )
+        .expect("write to String is infallible");
+        let mut first = true;
+        for gi in 0..pa.n_genomes() {
+            if coverage.genome_without_fasta(GenomeIdx(gi)) {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                write!(out, "{gi}").expect("write to String is infallible");
+            }
+        }
+        out.push_str("]}");
+    }
+    out.push_str(",\"evidence\":");
     out.push_str(&explorer_evidence_json(
         evidence,
         &rendered_index,
@@ -2677,6 +2781,8 @@ fn explorer_workspace_html(
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
     evidence: &[OrthologyEvidenceRow],
     genome_qc: &[(String, String)],
+    coverage: &SearchCoverage,
+    min_prevalence: f64,
 ) -> ExplorerWorkspace {
     use std::fmt::Write as _;
 
@@ -2735,6 +2841,8 @@ fn explorer_workspace_html(
             evidence,
             notices,
             genome_qc,
+            coverage,
+            min_prevalence,
         )
     };
     let Some((mut data_json, mut synteny_json)) = build(synteny_blocks, &notices) else {
@@ -2817,6 +2925,7 @@ fn explorer_workspace_html(
     html.push_str("<div class='menu-row'><label class='menu-label' for='matrixColorMode'>Colour cells by</label><select id='matrixColorMode'><option value='state'>Evidence state</option><option value='process'>Mechanism</option></select></div>");
     html.push_str("<div class='menu-row'><label class='menu-label' for='columnOrder'>Column order</label><select id='columnOrder'><option value='matrix'>Input matrix</option><option value='prevalence'>Prevalence</option><option value='mechanism'>Mechanism</option><option value='corrected'>Corrected cells</option><option value='name'>Cluster name</option></select></div>");
     html.push_str("<div class='menu-row'><label class='menu-label' for='referenceOnly'>Reference-absent only</label><input id='referenceOnly' type='checkbox' class='switch' data-tip='Show only clusters absent from the reference genome'></div>");
+    html.push_str("<div class='menu-row'><label class='menu-label' for='searchedOnly'>Searched clusters only</label><input id='searchedOnly' type='checkbox' class='switch' data-tip='Hide clusters whose gaps Recore did not search: below --min-prevalence, or with no sequence to search with'></div>");
     html.push_str("<div class='menu-sep'></div>");
     html.push_str("<div class='menu-title'>Filter columns by mechanism</div>");
     html.push_str("<div id='processLegend' class='process-legend'></div>");
@@ -2881,6 +2990,7 @@ pub(super) fn write_html_report(
     nsc_result: &Option<nscluster::NsClusterResult>,
     phylo_tree: Option<&PhyloTree>,
     evidence: &[OrthologyEvidenceRow],
+    coverage: &SearchCoverage,
     output_dir: &std::path::Path,
 ) -> Result<()> {
     use std::fmt::Write as _;
@@ -2981,6 +3091,8 @@ pub(super) fn write_html_report(
         &explorer_synteny,
         evidence,
         &genome_qc,
+        coverage,
+        args.min_prevalence,
     );
     let has_viewer = workspace.embedded;
 
@@ -3285,6 +3397,41 @@ pub(super) fn write_html_report(
         caveats.push(format!(
             "The synteny and paralog guards rejected {} candidates; they stay absent and are listed with decision rejected.",
             format_count(rejected_total)
+        ));
+    }
+    let not_searched =
+        stats.skipped_by_prevalence + stats.skipped_no_reference + stats.missing_fasta_gaps;
+    if not_searched > 0 {
+        let reasons: Vec<String> = [
+            (
+                stats.skipped_by_prevalence,
+                format!(
+                    "in clusters below the {}% prevalence floor",
+                    trim_number(args.min_prevalence * 100.0)
+                ),
+            ),
+            (
+                stats.skipped_no_reference,
+                "in clusters with no sequence in the pan-genome reference".to_string(),
+            ),
+            (
+                stats.missing_fasta_gaps,
+                "in genomes with no FASTA file".to_string(),
+            ),
+        ]
+        .into_iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, why)| format!("{} {}", format_count(n), why))
+        .collect();
+        caveats.push(format!(
+            "{} gaps were never searched ({}). They are absent because the input matrix says so, not because Recore looked: the states file writes them as NOT_SEARCHED{}.",
+            format_count(not_searched),
+            reasons.join(", "),
+            if has_viewer {
+                " and the matrix draws them hatched"
+            } else {
+                ""
+            }
         ));
     }
     if !args.synteny {

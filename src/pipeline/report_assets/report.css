@@ -71,6 +71,8 @@
   --kept: #c01048;
   --absent: #f4f5f7;
   --absent-stroke: #d4d4d8;
+  /* The hatch drawn over absent cells that were never searched. */
+  --unsearched-line: #b9bec7;
   /* Mechanism families, kept off the cell-state hues and CVD-checked. */
   --mech-retained: #667085;
   --mech-gain: #4ca30d;
@@ -122,6 +124,7 @@
   --kept: #fd6f8e;
   --absent: #1f2026;
   --absent-stroke: #3f3f46;
+  --unsearched-line: #4b4f5a;
   --mech-retained: #667085;
   --mech-gain: #66c61c;
   --mech-loss: #b54708;
@@ -662,6 +665,14 @@ td a {
   white-space: nowrap;
 }
 
+.legend.compact {
+  gap: 7px;
+}
+
+.legend.compact .key-label {
+  display: none;
+}
+
 .legend .key-btn {
   padding: 0;
   border: 0;
@@ -715,6 +726,11 @@ td a {
 .sw.k { background: var(--kept); }
 .sw.a {
   background: var(--absent);
+  border: 1px solid var(--absent-stroke);
+}
+.sw.u {
+  background-color: var(--absent);
+  background-image: repeating-linear-gradient(135deg, var(--unsearched-line) 0 1px, transparent 1px 3.5px);
   border: 1px solid var(--absent-stroke);
 }
 
@@ -2731,6 +2747,10 @@ table.corrections tbody tr:focus-visible {
 .state-chip.k { background: var(--kept); }
 .state-chip.n { background: var(--nsc); }
 .state-chip.a { background: var(--faint); }
+.state-chip.u {
+  background-color: var(--faint);
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0 1px, transparent 1px 4px);
+}
 
 details.parameters {
   margin-top: var(--space-4);
@@ -2748,6 +2768,12 @@ details.parameters dd {
 
 .qc-line {
   margin: 4px 0 0;
+}
+
+.note-line {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .qc-chip {
@@ -2945,11 +2971,14 @@ details.parameters dd {
   color: var(--warning);
 }
 
+/* The legend keeps its width and the count beside the pane name gives way
+   first; when even that is not enough, the legend drops to swatches (see
+   fitCellLegend). */
 .pane-head .legend {
   margin-left: auto;
   font-size: 12px;
   gap: 12px;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   overflow: hidden;
 }
@@ -3525,6 +3554,7 @@ tr[data-cluster]:focus-visible {
     --kept: #c01048;
     --absent: #f4f5f7;
     --absent-stroke: #d4d4d8;
+    --unsearched-line: #b9bec7;
     --mech-retained: #667085;
     --mech-gain: #4ca30d;
     --mech-loss: #7a2e0e;

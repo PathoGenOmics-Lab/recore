@@ -172,19 +172,22 @@ The binary matrix is what downstream tools consume. The multistate matrix is
 what you read:
 
 ```bash
-grep -E "^(Rv0003|Rv0009)," tutorial_out/gene_presence_absence_recore_states.csv \
+grep -E "^(Rv0003|Rv0009|Rv3810)," tutorial_out/gene_presence_absence_recore_states.csv \
   | cut -d, -f1,15-17
 ```
 
 ```title="Output"
 Rv0003,STRICT_PRESENT,STRICT_PRESENT,STRICT_PRESENT
 Rv0009,PRESENT_INPUT,PRESENT_INPUT,PSEUDOGENE
+Rv3810,NOT_SEARCHED_LOW_PREVALENCE,NOT_SEARCHED_LOW_PREVALENCE,NOT_SEARCHED_LOW_PREVALENCE
 ```
 
 Those three columns are `L1_AS00101`, `L1_AS00102` and `L2_AS00201`. `Rv0003`
 shows `STRICT_PRESENT` where its false absences were planted; `Rv0009` is
-untouched in the two L1 genomes and `PSEUDOGENE` in the first L2 one. Nothing was thrown away and
-nothing was quietly upgraded. The ten states are listed in
+untouched in the two L1 genomes and `PSEUDOGENE` in the first L2 one. `Rv3810`
+was never searched, being under the prevalence floor, and says so instead of
+reading as an absence Recore had checked. Nothing was thrown away and
+nothing was quietly upgraded. The thirteen states are listed in
 [Evidence states](../how-it-works/evidence-states.md).
 
 ## 6. Open the report

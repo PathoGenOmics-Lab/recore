@@ -486,3 +486,152 @@ fn test_search_rescues_past_fifty_carriers_with_exact_identity() {
         );
     }
 }
+
+/// A gap the search never looked at used to be written as ABSENT, the word for
+/// a gap that was searched and came back empty. Each of the three ways a gap is
+/// left out of the search has to say so, and a searched empty gap still reads
+/// ABSENT.
+#[test]
+fn test_unsearched_gaps_say_why_instead_of_absent() {
+    if !minimap2_available() {
+        assert!(
+            std::env::var_os("RECORE_REQUIRE_MINIMAP2").is_none(),
+            "RECORE_REQUIRE_MINIMAP2 is set but minimap2 is not in PATH"
+        );
+        eprintln!("SKIPPED: minimap2 not in PATH");
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let base = tmp.path();
+    let mut rng = Lcg(11);
+
+    // At --min-prevalence 0.5: gB (1 of 4) is below the floor, gD (2 of 4)
+    // passes it but has no sequence to search with, and gE's only gap is in s4,
+    // which has no FASTA. gC's gap in s3 is searched and s3 lacks the gene.
+    let genomes = ["s1", "s2", "s3", "s4"];
+    let clusters = ["gA", "gB", "gC", "gD", "gE"];
+    let present = |c: &str, g: &str| match c {
+        "gB" => g == "s1",
+        "gC" => g != "s3",
+        "gD" => g == "s1" || g == "s2",
+        "gE" => g != "s4",
+        _ => true,
+    };
+    let seqs: Vec<String> = clusters.iter().map(|_| rng.orf(150)).collect();
+    let mut fasta = String::new();
+    for (name, seq) in clusters.iter().zip(&seqs) {
+        if *name != "gD" {
+            fasta.push_str(&format!(">{name}\n{seq}\n"));
+        }
+    }
+    write_file(base, "pan_ref.fa", &fasta);
+
+    let mut csv = String::from(
+        "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,\
+         Avg sequences per isolate,Genome Fragment,Order within Fragment,\
+         Accessory Order,QC,Min group size nuc,Max group size nuc,Avg group size nuc,s1,s2,s3,s4\n",
+    );
+    for name in clusters {
+        let cells: Vec<String> = genomes
+            .iter()
+            .map(|g| {
+                if present(name, g) {
+                    format!("{name}_{g}")
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        let n = cells.iter().filter(|c| !c.is_empty()).count();
+        csv.push_str(&format!(
+            "{name},{name},product,{n},{n},1.0,0,0,0,,450,450,450,{}\n",
+            cells.join(",")
+        ));
+    }
+    write_file(base, "pa.csv", &csv);
+    write_file(base, "tree.nwk", "(((s1,s2),s3),s4);\n");
+
+    // s2 carries gB although the matrix says it does not, so had gB been
+    // searched it would have been rescued: the state below is not a search
+    // that found nothing.
+    let genomes_dir = base.join("genomes");
+    for g in ["s1", "s2", "s3"] {
+        let mut contig = rng.seq(300);
+        for (name, seq) in clusters.iter().zip(&seqs) {
+            if present(name, g) || (*name == "gB" && g == "s2") {
+                contig.push_str(seq);
+                contig.push_str(&rng.seq(300));
+            }
+        }
+        write_file(
+            &genomes_dir,
+            &format!("{g}.fasta"),
+            &format!(">{g}_1\n{contig}\n"),
+        );
+    }
+
+    let output_dir = base.join("output");
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_recore"))
+        .args([
+            "-p",
+            base.join("pa.csv").to_str().unwrap(),
+            "-r",
+            base.join("pan_ref.fa").to_str().unwrap(),
+            "-g",
+            genomes_dir.to_str().unwrap(),
+            "-o",
+            output_dir.to_str().unwrap(),
+            "-t",
+            "1",
+            "--min-prevalence",
+            "0.5",
+            "--write-html-report",
+            "--tree",
+            base.join("tree.nwk").to_str().unwrap(),
+        ])
+        .status()
+        .expect("Failed to run recore binary");
+    assert!(status.success(), "recore exited with non-zero status");
+
+    let states =
+        fs::read_to_string(output_dir.join("gene_presence_absence_recore_states.csv")).unwrap();
+    let mut lines = states.lines();
+    let header: Vec<&str> = lines.next().unwrap().split(',').collect();
+    let state = |cluster: &str, genome: &str| -> String {
+        let col = header.iter().position(|h| *h == genome).unwrap();
+        let row = states
+            .lines()
+            .find(|l| l.split(',').next() == Some(cluster))
+            .unwrap();
+        row.split(',').nth(col).unwrap().to_string()
+    };
+    for g in ["s2", "s3", "s4"] {
+        assert_eq!(state("gB", g), "NOT_SEARCHED_LOW_PREVALENCE", "gB/{g}");
+    }
+    for g in ["s3", "s4"] {
+        assert_eq!(state("gD", g), "NOT_SEARCHED_NO_CLUSTER_SEQUENCE", "gD/{g}");
+    }
+    assert_eq!(state("gE", "s4"), "NOT_SEARCHED_NO_FASTA");
+    assert_eq!(
+        state("gC", "s3"),
+        "ABSENT",
+        "a searched empty gap stays ABSENT"
+    );
+    assert_eq!(state("gC", "s1"), "PRESENT_INPUT");
+
+    // The viewer gets the same reasons: one code per cluster and the genomes
+    // without a FASTA, and the run details say how many gaps were not searched.
+    let html = fs::read_to_string(output_dir.join("recore_report.html")).unwrap();
+    assert!(
+        html.contains(
+            "\"notSearched\":{\"minPrevalence\":0.5,\"clusters\":\"01020\",\"genomesWithoutFasta\":[3]}"
+        ),
+        "report payload is missing the not-searched cells"
+    );
+    // Per genome: present, corrected, NSC, kept out, absent, not searched.
+    assert!(
+        html.contains("\"genomeStats\":[[5,0,0,0,0,0],[4,0,0,0,0,1],[2,0,0,0,1,2],[2,0,0,0,0,3]]"),
+        "genome totals must count not-searched cells apart from absent ones"
+    );
+    assert!(html.contains("6 gaps were never searched (3 in clusters below the 50% prevalence floor, 2 in clusters with no sequence in the pan-genome reference, 1 in genomes with no FASTA file)"));
+}

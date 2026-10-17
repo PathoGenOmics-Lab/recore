@@ -435,7 +435,9 @@ Drop-in replacement for Panaroo's CSV. Changes:
 Same shape as the corrected matrix, but genome cells are states rather than
 binary calls: `PRESENT_INPUT`, `ABSENT`, `STRICT_PRESENT`, `ALIAS_CLUSTER`,
 `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or
-`REJECTED_CONTEXT`. This is the preferred output for plotting or reviewing
+`REJECTED_CONTEXT`, and `NOT_SEARCHED_LOW_PREVALENCE`,
+`NOT_SEARCHED_NO_CLUSTER_SEQUENCE` or `NOT_SEARCHED_NO_FASTA` for a gap that
+was never searched, so it is not mistaken for one searched and found empty. This is the preferred output for plotting or reviewing
 ambiguous biology without forcing it into a clean 0/1 matrix.
 
 ### summary.txt

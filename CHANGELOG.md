@@ -9,6 +9,13 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- A gap Recore never searched no longer reads like one it searched and found
+  empty. The states file writes `NOT_SEARCHED_LOW_PREVALENCE`,
+  `NOT_SEARCHED_NO_CLUSTER_SEQUENCE` or `NOT_SEARCHED_NO_FASTA` where it wrote
+  `ABSENT`, and the report draws those cells hatched, with their own legend key,
+  counts, tooltip reason and a "Searched clusters only" filter. Under the default
+  `--min-prevalence` most empty cells of a pangenome are of this kind. Scripts
+  that expect only the ten earlier states need the three new ones.
 - A gene across the origin of a circular contig, which comes back as two
   pieces at opposite ends of the same contig, is rescued as one gene (with
   `fragment_note` `wraps_origin:<start>-<end>`). It used to get no rescue at

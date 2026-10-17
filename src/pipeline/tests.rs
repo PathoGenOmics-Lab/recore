@@ -273,6 +273,7 @@ fn html_report_summarizes_run_outputs() {
         &None,
         None,
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();
@@ -417,6 +418,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         &None,
         Some(&tree),
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();
@@ -505,7 +507,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     // group_1 is present in genome 0 and group_2 in genome 1.
     assert!(text.contains("\"cellEncoding\":\"recore.cells.v2\""));
     assert!(text.contains("\"cells\":[\"AgEAAAAAAAA=\",\"AgIAAAAAAAA=\"]"));
-    assert!(text.contains("\"genomeStats\":[[1,0,0,0,1],[1,0,0,0,1]]"));
+    // Present, corrected, NSC, kept out, absent, not searched. Every gap of this
+    // run was searched, so nothing is sent about gaps outside the search.
+    assert!(text.contains("\"genomeStats\":[[1,0,0,0,1,0],[1,0,0,0,1,0]]"));
+    assert!(text.contains("\"notSearched\":null"));
     assert!(text.contains("matrixCanvas"));
     // Canvases must be allocated at the device ratio, and wide columns must be named.
     assert!(text.contains("devicePixelRatio"));
@@ -1317,6 +1322,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         &Some(nsc),
         Some(&tree),
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();
@@ -2739,6 +2745,7 @@ fn hostile_names_cannot_break_out_of_the_data_block() {
         &None,
         None,
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();

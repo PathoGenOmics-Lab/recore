@@ -37,7 +37,8 @@ use self::evolution::{
 use self::output::{
     clear_optional_outputs, count_core_after, count_soft_core_after, write_corrected_csv,
     write_corrected_gffs, write_html_report, write_multistate_matrix, write_nsc_report,
-    write_run_manifest, write_summary, MultistateMatrixInputs, SummaryStats,
+    write_run_manifest, write_summary, MultistateMatrixInputs, NotSearched, SearchCoverage,
+    SummaryStats,
 };
 use self::quality::{
     cluster_prevalences, cluster_sequence_lengths, orthology_quality,
@@ -173,8 +174,11 @@ pub fn run(args: &Args) -> Result<()> {
     let mut filtered_gaps = 0usize;
     let mut skipped_by_prevalence = 0usize;
     let mut skipped_no_reference = 0usize;
+    // Why each cluster's gaps were left out of the search, kept so the outputs
+    // can say "not searched" instead of "absent" for them.
+    let mut cluster_not_searched: Vec<Option<NotSearched>> = vec![None; n_clusters];
 
-    for ci_val in 0..n_clusters {
+    for (ci_val, not_searched) in cluster_not_searched.iter_mut().enumerate() {
         let ci = ClusterIdx(ci_val);
         let present = pa.present_count(ci);
         let missing = n_genomes.saturating_sub(present);
@@ -186,12 +190,14 @@ pub fn run(args: &Args) -> Result<()> {
         };
         if prevalence < min_prevalence {
             skipped_by_prevalence += missing;
+            *not_searched = Some(NotSearched::LowPrevalence);
             continue;
         }
         // No sequence to search with: these gaps cannot be searched, and used to
         // be counted as "Gaps searched" all the same.
         if !pan_ref.contains_key(pa.cluster_name(ci)) {
             skipped_no_reference += missing;
+            *not_searched = Some(NotSearched::NoClusterSequence);
             continue;
         }
         for (gi_val, &present) in pa.presence_row(ci).iter().enumerate() {
@@ -261,6 +267,12 @@ pub fn run(args: &Args) -> Result<()> {
         .iter()
         .map(|(_, clusters)| clusters.len())
         .sum();
+    let coverage = SearchCoverage {
+        clusters: cluster_not_searched,
+        genomes_without_fasta: (0..n_genomes)
+            .map(|gi| !genome_files.contains_key(pa.genome_name(GenomeIdx(gi))))
+            .collect(),
+    };
 
     // ── 4. Load GFF annotations ──
     let mut gff_paths: HashMap<GenomeIdx, PathBuf> = HashMap::new();
@@ -1003,6 +1015,7 @@ pub fn run(args: &Args) -> Result<()> {
         gene_to_cluster_maps: &gene_to_cluster_maps,
         output_dir: &args.output,
         nsc_result: &nsc_result,
+        coverage: &coverage,
     })?;
     let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
     if n_relationships > 0 {
@@ -1113,6 +1126,7 @@ pub fn run(args: &Args) -> Result<()> {
             &nsc_result,
             phylo_tree.as_ref(),
             &evidence_rows,
+            &coverage,
             &args.output,
         )?;
     }
