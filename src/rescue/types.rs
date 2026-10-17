@@ -96,6 +96,12 @@ pub struct RescueEvent {
     pub synteny_ok: Option<bool>,
     pub synteny_evidence: SyntenyEvidence,
     pub fragment_evidence: FragmentEvidence,
+    /// Where the single alignment this rescue rests on starts on the query,
+    /// the cluster's representative CDS. The representative begins at its
+    /// start codon, so this fixes the reading frame of the span on the contig
+    /// (and the phase of the feature in a corrected GFF). `None` when the
+    /// rescue was built from several alignments or the position is unknown.
+    pub query_start: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

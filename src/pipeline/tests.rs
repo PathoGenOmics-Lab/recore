@@ -50,6 +50,7 @@ fn rescue_with_type(rescue_type: RescueType, synteny_ok: Option<bool>) -> Rescue
         synteny_ok,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        query_start: None,
     }
 }
 
@@ -272,6 +273,7 @@ fn html_report_summarizes_run_outputs() {
         &None,
         None,
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();
@@ -416,6 +418,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         &None,
         Some(&tree),
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();
@@ -491,6 +494,13 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("id='clusterOmnibox'"));
     assert!(text.contains("id='paletteList'"));
     assert!(text.contains("id='shortcutSheet'"));
+    // The find field is a combobox, the one-letter shortcuts can be switched
+    // off, gaps outside the search can be filtered away, and P pins a genome.
+    assert!(text.contains("id='clusterSearch' type='search' role='combobox'"));
+    assert!(text.contains("id='singleKeys' type='checkbox'"));
+    assert!(text.contains("id='searchedOnly' type='checkbox'"));
+    assert!(text.contains("Pin or unpin the open genome, to compare two"));
+    assert!(text.contains("function togglePin"));
     assert!(text.contains("id='treeMenu'"));
     assert!(text.contains("id='matrixMenu'"));
     assert!(text.contains("id='genomeDetails'"));
@@ -504,7 +514,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     // group_1 is present in genome 0 and group_2 in genome 1.
     assert!(text.contains("\"cellEncoding\":\"recore.cells.v2\""));
     assert!(text.contains("\"cells\":[\"AgEAAAAAAAA=\",\"AgIAAAAAAAA=\"]"));
-    assert!(text.contains("\"genomeStats\":[[1,0,0,0,1],[1,0,0,0,1]]"));
+    // Present, corrected, NSC, kept out, absent, not searched. Every gap of this
+    // run was searched, so nothing is sent about gaps outside the search.
+    assert!(text.contains("\"genomeStats\":[[1,0,0,0,1,0],[1,0,0,0,1,0]]"));
+    assert!(text.contains("\"notSearched\":null"));
     assert!(text.contains("matrixCanvas"));
     // Canvases must be allocated at the device ratio, and wide columns must be named.
     assert!(text.contains("devicePixelRatio"));
@@ -798,6 +811,7 @@ fn rich_sample_report_renders_full_explorer() {
                 matched_downstream: 5,
             },
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
+            query_start: None,
         }
     };
 
@@ -1315,6 +1329,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         &Some(nsc),
         Some(&tree),
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();
@@ -1425,6 +1440,41 @@ fn corrected_gff_writes_rescues_on_the_gff_seqid_after_a_remap() {
     let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
     assert!(text.contains("chr1\tRecore\tCDS\t100\t180"), "{text}");
     assert!(!text.contains("g1_contig1\tRecore"));
+}
+
+/// The CDS phase of a rescue feature comes from where its alignment starts on
+/// the representative: it was always written as 0.
+#[test]
+fn corrected_gff_phase_follows_the_alignment_start() {
+    let out = tempfile::tempdir().unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["clA".into(), "clB".into(), "clC".into()],
+        vec!["g1".into()],
+        vec![vec!["".into()], vec!["".into()], vec!["".into()]],
+    );
+    let mk = |cluster: usize, start: u64, query_start: Option<u64>| RescueEvent {
+        cluster_idx: ClusterIdx(cluster),
+        genome_idx: GenomeIdx(0),
+        contig: "ctg".into(),
+        start,
+        end: start + 300,
+        query_start,
+        ..rescue_with_type(RescueType::MissingCds, Some(true))
+    };
+    let rescues = vec![mk(0, 100, Some(0)), mk(1, 1000, Some(2)), mk(2, 2000, None)];
+    write_corrected_gffs(&rescues, &pa, &HashMap::new(), &[], out.path()).unwrap();
+    let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
+    let phase_at = |start: u64| -> String {
+        text.lines()
+            .find(|l| l.contains(&format!("\tCDS\t{}\t", start + 1)))
+            .and_then(|l| l.split('\t').nth(7))
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(phase_at(100), "0");
+    // Two query bases unaligned: drop one more to reach the next codon.
+    assert_eq!(phase_at(1000), "1");
+    assert_eq!(phase_at(2000), "0", "unknown frame keeps the old default");
 }
 
 #[test]
@@ -1909,6 +1959,7 @@ fn mobile_element_detection_uses_gff_aliases() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        query_start: None,
     };
 
     let mobile = nearest_mobile_element_for_rescue(&rescue, &pa, &gff_indices, &[], 1_000).unwrap();
@@ -1957,6 +2008,7 @@ fn mobile_element_sequence_hits_are_name_agnostic_and_prioritized() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        query_start: None,
     };
     let mobile_hits = vec![MobileElementHit {
         genome_idx: GenomeIdx(0),
@@ -2700,6 +2752,7 @@ fn hostile_names_cannot_break_out_of_the_data_block() {
         &None,
         None,
         &[],
+        &SearchCoverage::default(),
         out.path(),
     )
     .unwrap();

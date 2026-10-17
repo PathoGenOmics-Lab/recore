@@ -91,6 +91,43 @@ pub fn check_internal_stops_in_cds(
     (n_stops > 0).then_some(n_stops)
 }
 
+/// Internal stops in an alignment span, read in the frame the alignment fixes.
+///
+/// `query_start` is where the alignment starts on the cluster's
+/// representative, which begins at its start codon; so the first whole codon
+/// of the span, read in the gene's direction, starts `(3 - query_start % 3) %
+/// 3` bases in. A rescue with no annotation used to be scanned in all three
+/// frames and judged by the cleanest, so a premature stop hid whenever another
+/// frame happened to be stop-free, which G/C-ending codons make common, and a
+/// pseudogene went into the matrix as present.
+pub fn check_internal_stops_in_span(
+    contig: &str,
+    start: u64,
+    end: u64,
+    strand: char,
+    query_start: u64,
+    genome_seqs: &HashMap<String, Vec<u8>>,
+) -> Option<usize> {
+    let contig_seq = genome_seqs.get(contig)?;
+    let start = start as usize;
+    let end = (end as usize).min(contig_seq.len());
+    if start >= end || end - start < 6 {
+        return None;
+    }
+    let region = &contig_seq[start..end];
+    let oriented = if strand == '-' {
+        reverse_complement(region)
+    } else {
+        region.to_vec()
+    };
+    let offset = ((3 - query_start % 3) % 3) as usize;
+    if oriented.len() < offset + 6 {
+        return None;
+    }
+    let n_stops = count_stops_in_frame(&oriented[offset..]);
+    (n_stops > 0).then_some(n_stops)
+}
+
 /// Reverse complement a DNA sequence.
 pub(super) fn reverse_complement(seq: &[u8]) -> Vec<u8> {
     seq.iter()

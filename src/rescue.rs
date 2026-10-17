@@ -14,7 +14,9 @@ pub use self::conflicts::resolve_conflicts;
 pub use self::genes::build_gene_to_cluster_with_gff_aliases;
 pub(crate) use self::genes::panaroo_gene_id_suffix_variants;
 pub use self::gff::{GffGene, GffIndex};
-pub use self::orf::{check_internal_stops_in_cds, check_internal_stops_in_hit};
+pub use self::orf::{
+    check_internal_stops_in_cds, check_internal_stops_in_hit, check_internal_stops_in_span,
+};
 pub(crate) use self::synteny::{validate_synteny_with_cache, SyntenyReferenceCache};
 pub use self::types::{
     FragmentEvidence, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence,
@@ -52,6 +54,9 @@ struct FragmentChain {
     /// The other contig, for a gene split across an assembly break. The chain's
     /// own contig and span are those of its larger piece.
     across_contigs: Option<String>,
+    /// The two pieces are one gene across the origin of a circular contig; the
+    /// chain's span is that of its larger piece.
+    wraps_origin: bool,
 }
 
 /// How close to a contig's end a piece of a gene has to reach to count as cut
@@ -69,19 +74,22 @@ const CONTIG_EDGE_BP: u64 = 50;
 /// FRAGMENTED. The pieces may sit on different strands, because the second
 /// contig can be assembled in either orientation; what matters is that each
 /// piece reaches its contig's edge on the side where the gene carries on.
+/// Whether a piece of a gene runs off its contig on the side where its query
+/// end (`at_query_end`) or its query start falls.
+fn reaches_contig_edge(hit: &Hit, at_query_end: bool) -> bool {
+    if hit.target_length == 0 {
+        return false;
+    }
+    let low_side = (hit.strand == '-') == at_query_end;
+    if low_side {
+        hit.target_start <= CONTIG_EDGE_BP
+    } else {
+        hit.target_length.saturating_sub(hit.target_end) <= CONTIG_EDGE_BP
+    }
+}
+
 fn cross_contig_chain(hits: &[&Hit]) -> Option<FragmentChain> {
-    // The side of a piece where its query end, or its query start, falls.
-    let reaches_edge = |hit: &Hit, at_query_end: bool| -> bool {
-        if hit.target_length == 0 {
-            return false;
-        }
-        let low_side = (hit.strand == '-') == at_query_end;
-        if low_side {
-            hit.target_start <= CONTIG_EDGE_BP
-        } else {
-            hit.target_length.saturating_sub(hit.target_end) <= CONTIG_EDGE_BP
-        }
-    };
+    let reaches_edge = reaches_contig_edge;
 
     let mut best: Option<FragmentChain> = None;
     for a in hits {
@@ -139,6 +147,7 @@ fn cross_contig_chain(hits: &[&Hit]) -> Option<FragmentChain> {
                     note: None,
                 },
                 across_contigs: Some(other.target.clone()),
+                wraps_origin: false,
             };
             if best
                 .as_ref()
@@ -324,11 +333,119 @@ fn build_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
             note: None,
         },
         across_contigs: None,
+        wraps_origin: false,
     })
 }
 
+/// A gene across the origin of a circular contig.
+///
+/// A circular chromosome or plasmid is assembled as a line cut at some point,
+/// and a gene that crosses that point comes back as two pieces on the same
+/// contig and strand: one runs off one end, the other carries on from the
+/// other end, and together they cover the gene in order. Chained as one
+/// stretch of the contig they read as non-colinear, so the rescue was dropped
+/// without a trace and the evolutionary audit then called the gene lost.
+fn origin_wrap_chain(hits: &[&Hit]) -> Option<FragmentChain> {
+    let mut best: Option<FragmentChain> = None;
+    for a in hits {
+        for b in hits {
+            if a.target != b.target
+                || a.strand != b.strand
+                || a.query != b.query
+                || a.query_length != b.query_length
+                || a.query_length == 0
+                || a.query_start >= b.query_start
+            {
+                continue;
+            }
+            // In order on the gene, without a real gap or a real overlap.
+            if b.query_start > a.query_end + CONTIG_EDGE_BP
+                || a.query_end > b.query_start + CONTIG_EDGE_BP
+            {
+                continue;
+            }
+            // The gene's first piece runs off one end and its second carries on
+            // from the other, so on the contig they sit in the opposite order.
+            if !reaches_contig_edge(a, true) || !reaches_contig_edge(b, false) {
+                continue;
+            }
+            let opposite_ends = if a.strand == '-' {
+                a.target_end <= b.target_start
+            } else {
+                b.target_end <= a.target_start
+            };
+            if !opposite_ends {
+                continue;
+            }
+            let covered = b.query_end.max(a.query_end)
+                - a.query_start
+                - b.query_start.saturating_sub(a.query_end);
+            let coverage = covered as f64 / a.query_length as f64 * 100.0;
+            let total_aln = a.alignment_length + b.alignment_length;
+            let avg_identity = if total_aln > 0 {
+                (a.matches + b.matches) as f64 / total_aln as f64 * 100.0
+            } else {
+                0.0
+            };
+            let (main, other) = if a.target_end - a.target_start >= b.target_end - b.target_start {
+                (*a, *b)
+            } else {
+                (*b, *a)
+            };
+            let query_gap = b.query_start.saturating_sub(a.query_end);
+            // Contig bases between the pieces, through the origin.
+            let target_gap = if a.strand == '-' {
+                a.target_start + a.target_length.saturating_sub(b.target_end)
+            } else {
+                a.target_length.saturating_sub(a.target_end) + b.target_start
+            };
+            let chain = FragmentChain {
+                hits: vec![(*a).clone(), (*b).clone()],
+                coverage,
+                avg_identity,
+                n_fragments: 2,
+                contig: main.target.clone(),
+                strand: main.strand,
+                start: main.target_start,
+                end: main.target_end,
+                evidence: FragmentEvidence {
+                    n_fragments: 2,
+                    total_query_gap_bp: query_gap,
+                    max_query_gap_bp: query_gap,
+                    total_target_gap_bp: target_gap,
+                    max_target_gap_bp: target_gap,
+                    colinear: Some(true),
+                    same_cds: None,
+                    note: Some(format!(
+                        "wraps_origin:{}-{}",
+                        other.target_start + 1,
+                        other.target_end
+                    )),
+                },
+                across_contigs: None,
+                wraps_origin: true,
+            };
+            if best
+                .as_ref()
+                .is_none_or(|current| chain.coverage > current.coverage)
+            {
+                best = Some(chain);
+            }
+        }
+    }
+    best
+}
+
 fn best_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
-    let within = best_within_contig_chain(hits);
+    // Across the origin of a circular contig only when no colinear chain on the
+    // contig explains as much of the gene.
+    let within = match (best_within_contig_chain(hits), origin_wrap_chain(hits)) {
+        (Some(w), Some(o)) if w.evidence.colinear != Some(true) || o.coverage > w.coverage => {
+            Some(o)
+        }
+        (Some(w), _) => Some(w),
+        (None, o) => o,
+    };
     match (within, cross_contig_chain(hits)) {
         // A split across contigs only when it explains more of the gene than
         // any chain on a single contig does.
@@ -621,6 +738,7 @@ pub fn classify_hits(
                 note: Some("missing_cds_no_substantial_gff_overlap".to_string()),
                 ..FragmentEvidence::default()
             },
+            query_start: Some(missing_cds_hit.query_start),
         });
     }
 
@@ -661,6 +779,7 @@ pub fn classify_hits(
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: Some(best.query_start),
         });
     }
 
@@ -670,6 +789,48 @@ pub fn classify_hits(
         if chain.coverage >= min_coverage && chain.n_fragments >= 2 {
             if chain.evidence.colinear != Some(true) {
                 return None;
+            }
+
+            if chain.wraps_origin {
+                // One intact gene across the origin: what kind of rescue it is
+                // follows the locus of its larger piece, and how well it
+                // matches follows both pieces.
+                let main = chain
+                    .hits
+                    .iter()
+                    .max_by_key(|hit| hit.target_end - hit.target_start)
+                    .expect("a wrapped chain has two pieces");
+                let (rescue_type, annotation_match, confidence) =
+                    if is_missing_cds_candidate(main, gff_index) {
+                        (
+                            RescueType::MissingCds,
+                            None,
+                            chain.avg_identity / 100.0 * chain.coverage / 100.0,
+                        )
+                    } else {
+                        let (rescue_type, annotation_match, confidence) =
+                            classify_single_hit(main, ci, pa, gff_index, gene_to_cluster);
+                        // Its confidence counted the larger piece's coverage only.
+                        let scale = chain.coverage / main.query_coverage().max(1e-9);
+                        (rescue_type, annotation_match, confidence * scale)
+                    };
+                return Some(RescueEvent {
+                    cluster_idx: ci,
+                    genome_idx: gi,
+                    rescue_type,
+                    identity: chain.avg_identity,
+                    coverage: chain.coverage,
+                    contig: chain.contig.clone(),
+                    start: chain.start,
+                    end: chain.end,
+                    strand: chain.strand,
+                    annotation_match,
+                    confidence,
+                    synteny_ok: None,
+                    synteny_evidence: SyntenyEvidence::default(),
+                    query_start: Some(main.query_start),
+                    fragment_evidence: chain.evidence,
+                });
             }
 
             if let Some(other) = chain.across_contigs.clone() {
@@ -693,6 +854,7 @@ pub fn classify_hits(
                     synteny_ok: None,
                     synteny_evidence: SyntenyEvidence::default(),
                     fragment_evidence: chain.evidence,
+                    query_start: None,
                 });
             }
 
@@ -758,6 +920,7 @@ pub fn classify_hits(
                     synteny_ok: None,
                     synteny_evidence: SyntenyEvidence::default(),
                     fragment_evidence: chain.evidence,
+                    query_start: None,
                 });
             }
 
@@ -817,6 +980,7 @@ pub fn classify_hits(
                 synteny_ok: None,
                 synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: chain.evidence,
+                query_start: None,
             });
         }
     }
@@ -872,6 +1036,7 @@ pub fn classify_hits(
                 synteny_ok: None,
                 synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence,
+                query_start: None,
             });
         }
     }

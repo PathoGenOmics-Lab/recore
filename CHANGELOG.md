@@ -9,6 +9,22 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- A gap Recore never searched no longer reads like one it searched and found
+  empty. The states file writes `NOT_SEARCHED_LOW_PREVALENCE`,
+  `NOT_SEARCHED_NO_CLUSTER_SEQUENCE` or `NOT_SEARCHED_NO_FASTA` where it wrote
+  `ABSENT`, and the report draws those cells hatched, with their own legend key,
+  counts, tooltip reason and a "Searched clusters only" filter. Under the default
+  `--min-prevalence` most empty cells of a pangenome are of this kind. Scripts
+  that expect only the ten earlier states need the three new ones.
+- A gene across the origin of a circular contig, which comes back as two
+  pieces at opposite ends of the same contig, is rescued as one gene (with
+  `fragment_note` `wraps_origin:<start>-<end>`). It used to get no rescue at
+  all, and the evolutionary audit then called it a deletion.
+- Unannotated rescues are scanned for internal stops in the reading frame
+  their alignment fixes, instead of the cleanest of three frames, so a
+  premature stop in a gene of G/C-ending codons is caught and the pseudogene
+  stays out of the matrix. Corrected GFF3 files write the matching CDS phase
+  instead of always 0.
 - `--write-html-report` no longer fails, and no longer drops a cluster's
   mechanism and wording, when a genome or cluster name starts with a double
   quote: recore's TSVs are read back without CSV quoting.
@@ -197,6 +213,17 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- The report can pin two genomes: their rows stay in a band under the column
+  header whatever the scroll, and the genome card counts the clusters where
+  they differ (noting differences that rest on a gap never searched), lists
+  them, and filters the matrix to them. `P` pins the open genome.
+- Accessibility pass on the report: the shortcut sheet and the run details keep
+  focus inside while open and give it back on closing; Esc closes tooltips on
+  their own and returns focus to the menu button; the find field is a combobox
+  with its active result announced; the pane seams report their size; a switch
+  turns the one-letter shortcuts off; small text holds 4.5:1 contrast in both
+  themes; tabs, chips and toggles reach 24 px; and the long instruction line
+  steps aside after the first hover.
 - The automation the other tools in the lab run, adapted to what Recore is:
   CodeQL over Rust, the report's JavaScript, the Python in `benchmarks/` and the
   workflows themselves; dependency review on pull requests; Dependabot for cargo

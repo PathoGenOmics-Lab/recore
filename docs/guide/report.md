@@ -75,7 +75,7 @@ hollow ring for zero, and a key under the top bar gives the ramp's maximum.
 
 ## The matrix
 
-Each cell is one cluster in one genome, in one of five states:
+Each cell is one cluster in one genome, in one of six states:
 
 | State | Colour | Meaning |
 |-------|--------|---------|
@@ -83,12 +83,22 @@ Each cell is one cluster in one genome, in one of five states:
 | corrected | blue | absent in the input; Recore found the gene and corrected the cell |
 | NSC | orange | absent in the input; near-identical clusters were merged and the merged cluster is present (only when NSC ran) |
 | kept out | crimson | Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix |
-| absent | pale | absent, with no evidence |
+| absent | pale | absent; Recore searched the gap and found no evidence |
+| not searched | pale, hatched | absent in the input and never searched: the cluster is below `--min-prevalence` or has no sequence to search with, or the genome has no FASTA |
 
 Input presence is the quiet background on purpose, so what Recore found is what
 draws the eye at any zoom. The five colours stay distinguishable under deutan and
-protan colour vision. The legend in the matrix header only lists the states the
-run has.
+protan colour vision, and not-searched cells add a hatch rather than a sixth
+colour. The legend in the matrix header only lists the states the run has, and
+drops to swatches when the pane is too narrow for the labels; each swatch still
+names its state on hover.
+
+**Absent or not searched.** An absent cell is a gap Recore searched and found
+nothing in. A hatched cell is a gap it never searched, so its absence is the
+input's call and not a finding. Under the default `--min-prevalence` of 0.1 every
+cluster in fewer than one genome in ten is hatched. Its tooltip and cell card say
+why it was not searched, the cluster card says so for a whole cluster, and in the
+tree a tip with a dashed ring is a genome the selected cluster was not searched in.
 
 **Cell evidence.** Hover a cell for its genome, cluster and state; for a
 corrected or kept-out cell the tooltip adds the rescue type, identity and
@@ -104,7 +114,9 @@ change, artifact or unresolved), while corrected and kept-out cells keep their
 own colours. The legend key opens the full list, with counts and filters.
 
 The sliders icon in the matrix header holds cell colour, column order, the
-reference-absent filter and the mechanism filter.
+reference-absent filter, the searched-clusters filter and the mechanism filter.
+**Searched clusters only** hides the clusters whose gaps were never searched and
+refits the columns, leaving the part of the matrix Recore actually audited.
 
 **Column order.** Input matrix order, prevalence, mechanism, number of corrected
 cells, or cluster name.
@@ -114,7 +126,7 @@ checklist, with each one's description in its tip. Ticking one shows only its
 clusters and refits the columns to the pane; active filters appear as chips
 beside the matrix count, and a click on a chip removes it. **Download TSV**
 saves the clusters in view with their counts of input, corrected, NSC,
-kept-out and absent cells.
+kept-out, absent and not-searched cells.
 
 **Corrections by lineage.** For MTBC-style genome names the cluster card shows,
 per lineage, how many genomes were corrected or had evidence kept out, out of
@@ -130,11 +142,33 @@ Press ++z++ to see the whole matrix at once. When that makes cells smaller than
 a pixel, the matrix is drawn as density: each pixel shows the share of present
 cells it covers, between the absent and present colours, and is tinted blue
 where any cell in it was corrected (crimson where evidence was kept out), more
-strongly the larger that share. Zoom in on a region to get back to single cells.
+strongly the larger that share. The hatch carries on in density, as strong as
+the share of not-searched cells in the pixel. Zoom in on a region to get back to
+single cells.
 
 Above 40 columns a strip under the matrix shows the mean prevalence of the
 clusters at each position, with a blue mark where any of them has a changed
 cell, and the current viewport outlined. Clicking it jumps.
+
+The open genome's row stays outlined in the tree and the matrix after the
+pointer moves on, so a genome found from the find field is still easy to spot.
+
+## Comparing two genomes
+
+Two genomes far apart in the tree are far apart in the matrix. **Pin to
+compare** in the genome card, or ++p++, keeps a genome's row in a band under the
+column header, aligned with every column whatever the scroll; its name sits
+level with it in the tree pane's header, marked **A** or **B**, and its tip gets
+a blue ring. Pinning a third genome unpins the oldest. Hover a cell of the band
+for its state; click it to open that cell.
+
+With two genomes pinned, the genome card compares them over every cluster of the
+corrected matrix: how many are in both, only in A, only in B and in neither,
+and the clusters that differ, each one a click away. When a difference rests on
+a gap that was never searched, the card says so, because then the input matrix,
+not Recore, says the gene is missing. **Show only the clusters that differ**
+filters the matrix to them and refits the columns; a chip beside the matrix
+count takes the filter off again.
 
 ## Synteny
 
@@ -200,7 +234,10 @@ every candidate. The live panes are swapped for the figure only while printing.
 
 ## Keyboard shortcuts
 
-Press ++question++ for this list in the report itself.
+Press ++question++ for this list in the report itself. A switch at its top turns
+the one-letter shortcuts off, for example when they fire by accident with speech
+input; ++cmd+k++ and the arrows keep working, and the choice is remembered in
+that browser.
 
 | Keys | Action |
 |------|--------|
@@ -215,6 +252,7 @@ Press ++question++ for this list in the report itself.
 | ++c++ | phylogram or cladogram |
 | ++r++ | reroot at the midpoint |
 | ++z++ | fit the matrix to the window |
+| ++p++ | pin or unpin the open genome, to compare two |
 | ++cmd++ / ++ctrl++ + wheel, or pinch | zoom columns under the pointer |
 | ++alt++ + wheel | zoom rows under the pointer |
 | ++shift++ + wheel | scroll sideways |

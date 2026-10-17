@@ -63,6 +63,8 @@ The value after `SPLIT:` is the cluster that actually contains the annotation.
 
 A gene split across two contigs is FRAGMENTED too: two pieces, in order along the gene, each reaching its contig's end on the side where the gene carries on. The contigs may be assembled in either orientation. Such a rescue reports the larger piece's coordinates, and its `fragment_note` reads `split_across_contigs:<other contig>`.
 
+A gene across the origin of a circular contig is not fragmented, and is not reported as such. A circular chromosome or plasmid is assembled as a line cut somewhere, and a gene over the cut comes back as two pieces on the same contig and strand: the first runs off one end and the second carries on from the other. Recore joins them into one gene and classifies it like a single full-length hit at the larger piece's locus (usually MISSING_CDS, since annotators tend to miss these genes), with the coverage and identity of both pieces. The rescue reports the larger piece's coordinates, and its `fragment_note` reads `wraps_origin:<start>-<end>`, the span of the other piece.
+
 **Confidence:** `avg_identity × total_coverage × 0.8`
 
 **Example:**

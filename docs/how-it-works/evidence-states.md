@@ -8,7 +8,10 @@ binary matrix is the file to feed downstream tools.
 | State | Meaning | Corrected in the binary matrix under `balanced` |
 |-------|---------|--------------------------------------------------|
 | `PRESENT_INPUT` | present in the original matrix | already present |
-| `ABSENT` | no accepted evidence found | no |
+| `ABSENT` | searched, and no accepted evidence found | no |
+| `NOT_SEARCHED_LOW_PREVALENCE` | never searched: the cluster is in fewer genomes than `--min-prevalence` | no |
+| `NOT_SEARCHED_NO_CLUSTER_SEQUENCE` | never searched: the cluster has no sequence in the pan-genome reference | no |
+| `NOT_SEARCHED_NO_FASTA` | never searched: the genome has no FASTA file | no |
 | `STRICT_PRESENT` | same-locus evidence from annotation or synteny | yes |
 | `ALIAS_CLUSTER` | the same biological locus assigned to another cluster | yes |
 | `SEQUENCE_ONLY` | full-length sequence evidence, without stronger annotation context | yes |
@@ -21,17 +24,32 @@ binary matrix is the file to feed downstream tools.
 The last five rows are the point of the tool. Under `balanced`, none of them
 becomes a presence call, and all of them stay visible with the reason attached.
 
+## Absent or not searched
+
+`ABSENT` is a finding: Recore searched that gap and nothing cleared the
+thresholds. A gap outside the search is not, and says why instead. Under the
+default `--min-prevalence` of 0.1 that is every gap of a cluster in fewer than
+one genome in ten, which in most pangenomes is most of the empty cells. Before
+this distinction both read `ABSENT`.
+
+When two reasons apply, the cluster's is written, in the order the pipeline
+filters gaps: prevalence, then a missing cluster sequence, then a missing FASTA.
+That is the order of the gap lines in `summary.txt`, which count the same cells
+except those NSC later filled or merged away.
+
 ## Reading the states in the report
 
-The HTML viewer collapses these ten states into the four colours a matrix can
+The HTML viewer collapses these thirteen states into the six a matrix can
 actually be read in:
 
-| Colour | States |
-|--------|--------|
+| Cell | States |
+|------|--------|
 | input | `PRESENT_INPUT` |
-| rescued | the states corrected by the active policy |
+| corrected | the states corrected by the active policy |
 | NSC | presence merged in from a nucleotide-redundant cluster |
-| absent | everything not corrected |
+| kept out | evidence the policy, a quality floor or a guard kept out of the matrix |
+| absent | `ABSENT` and the other states that are not corrected |
+| not searched, hatched | the three `NOT_SEARCHED_*` states |
 
 Switching the matrix to mechanism colouring instead shows the evolutionary call
 from `evolutionary_events.tsv`, which answers a different question: not "is it

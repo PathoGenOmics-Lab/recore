@@ -42,9 +42,13 @@
   --panel: #ffffff;
   --ink: #18181b;
   --ink-soft: #3f3f46;
-  --muted: #71717a;
+  /* Text greys hold 4.5:1 on every surface they sit on, the hover tint
+     included; --faint is for strokes and icons, --faint-text for words. */
+  --muted: #6b6b73;
   --subtle: #52525b;
   --faint: #a1a1aa;
+  --faint-text: #6b6b73;
+  --switch-off: #8a8a93;
   --line: #e4e4e7;
   --line-strong: #d4d4d8;
   --soft-line: #efefef;
@@ -71,6 +75,8 @@
   --kept: #c01048;
   --absent: #f4f5f7;
   --absent-stroke: #d4d4d8;
+  /* The hatch drawn over absent cells that were never searched. */
+  --unsearched-line: #b9bec7;
   /* Mechanism families, kept off the cell-state hues and CVD-checked. */
   --mech-retained: #667085;
   --mech-gain: #4ca30d;
@@ -99,6 +105,8 @@
   --muted: #a1a1aa;
   --subtle: #d4d4d8;
   --faint: #71717a;
+  --faint-text: #8e8e96;
+  --switch-off: #71717a;
   --line: #27272a;
   --line-strong: #3f3f46;
   --soft-line: #232327;
@@ -122,6 +130,7 @@
   --kept: #fd6f8e;
   --absent: #1f2026;
   --absent-stroke: #3f3f46;
+  --unsearched-line: #4b4f5a;
   --mech-retained: #667085;
   --mech-gain: #66c61c;
   --mech-loss: #b54708;
@@ -501,7 +510,7 @@ th.sortable:focus-visible {
 
 th.sortable::after {
   content: " ⇅";
-  color: var(--faint);
+  color: var(--faint-text);
   font-size: 10px;
 }
 
@@ -662,6 +671,14 @@ td a {
   white-space: nowrap;
 }
 
+.legend.compact {
+  gap: 7px;
+}
+
+.legend.compact .key-label {
+  display: none;
+}
+
 .legend .key-btn {
   padding: 0;
   border: 0;
@@ -715,6 +732,11 @@ td a {
 .sw.k { background: var(--kept); }
 .sw.a {
   background: var(--absent);
+  border: 1px solid var(--absent-stroke);
+}
+.sw.u {
+  background-color: var(--absent);
+  background-image: repeating-linear-gradient(135deg, var(--unsearched-line) 0 1px, transparent 1px 3.5px);
   border: 1px solid var(--absent-stroke);
 }
 
@@ -960,8 +982,11 @@ td a {
   color: var(--muted);
 }
 
+/* Active filters never give way: a chip cut in half is a filter you cannot
+   see or remove. The legend drops to swatches first (see fitCellLegend). */
 .filter-chips {
   display: inline-flex;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: 4px;
   overflow: hidden;
@@ -972,6 +997,7 @@ td a {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-height: 24px;
   padding: 1px 8px;
   border: 1px solid var(--accent);
   border-radius: var(--radius-pill);
@@ -1682,7 +1708,7 @@ kbd {
   font-weight: 550;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 .readout.pos b { color: var(--positive); }
@@ -1917,13 +1943,23 @@ a.ghost-btn:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 28px;
+  min-height: 32px;
 }
 
 .menu-label {
   font-size: 12.5px;
   color: var(--ink-soft);
   white-space: nowrap;
+}
+
+/* A label that toggles its switch is part of the target, so it fills the row:
+   the switch alone is 18px tall. */
+label.menu-label,
+.sheet-toggle label {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .menu-row select {
@@ -1953,8 +1989,13 @@ a.ghost-btn:hover {
 }
 
 .menu-row .segmented-control {
-  height: 28px;
+  height: auto;
+  min-height: 30px;
   flex: 0 1 172px;
+}
+
+.menu-row .segmented-control button {
+  min-height: 24px;
 }
 
 .menu-row .segmented-control button {
@@ -1973,7 +2014,7 @@ a.ghost-btn:hover {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 .menu-hint {
@@ -1991,7 +2032,7 @@ input.switch {
   height: 18px;
   margin: 0;
   border-radius: var(--radius-pill);
-  background: var(--line-strong);
+  background: var(--switch-off);
   position: relative;
   cursor: pointer;
   transition: background var(--transition);
@@ -2039,6 +2080,7 @@ input.switch:focus-visible {
   appearance: none;
   border: 0;
   background: transparent;
+  min-height: 24px;
   padding: 0 10px;
   font: inherit;
   font-size: 12.5px;
@@ -2144,7 +2186,7 @@ input.switch:focus-visible {
 }
 
 .palette-input input::placeholder {
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 .palette-tabs {
@@ -2207,7 +2249,7 @@ input.switch:focus-visible {
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 .palette-item.active .palette-kind {
@@ -2246,7 +2288,7 @@ input.switch:focus-visible {
 .palette-badge {
   flex: 0 0 auto;
   font-size: 11px;
-  color: var(--faint);
+  color: var(--faint-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2267,7 +2309,7 @@ input.switch:focus-visible {
   gap: 14px;
   padding: 7px 12px;
   font-size: 11.5px;
-  color: var(--faint);
+  color: var(--faint-text);
   background: var(--bg-subtle);
 }
 
@@ -2299,6 +2341,19 @@ input.switch:focus-visible {
   margin: 0;
   font-size: 15px;
   font-weight: 650;
+}
+
+.sheet-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  margin: 0 0 var(--space-3);
+  padding: 0 0 var(--space-3);
+  border-bottom: 1px solid var(--soft-line);
+  font-size: 13px;
+  color: var(--ink-soft);
 }
 
 .sheet-grid {
@@ -2376,7 +2431,7 @@ input.switch:focus-visible {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 /* ===== Cell readout =====
@@ -2420,6 +2475,67 @@ input.switch:focus-visible {
   margin-right: 0;
   flex: 0 0 auto;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-elev) 40%, transparent);
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-subtle);
+  color: var(--ink-soft);
+}
+
+.pin-pill {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.compare-card {
+  margin: 0 0 var(--space-4);
+  padding: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.pin-list {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+}
+
+.pin-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+}
+
+.pin-list .link-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.pin-x {
+  flex: 0 0 auto;
+}
+
+/* "Only in A": the left half has the gene, the right half does not. */
+.sw.pin-a { background: linear-gradient(90deg, var(--present) 50%, var(--absent) 50%); border: 1px solid var(--absent-stroke); }
+.sw.pin-b { background: linear-gradient(90deg, var(--absent) 50%, var(--present) 50%); border: 1px solid var(--absent-stroke); }
+
+.pair-sw {
+  display: inline-flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.pair-sw .sw {
+  margin: 0;
 }
 
 .cell-card {
@@ -2717,20 +2833,43 @@ table.corrections tbody tr:focus-visible {
   background: var(--bg-hover);
 }
 
+/* The state is the swatch; the words stay dark on a quiet chip, because white
+   on the orange, or on any of the dark theme's state colours, failed 4.5:1. */
 .state-chip {
-  display: inline-block;
-  padding: 1px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-pill);
   font-size: 11px;
   font-weight: 600;
-  color: #ffffff;
-  background: var(--muted);
+  color: var(--ink-soft);
+  background: var(--bg-subtle);
+  white-space: nowrap;
 }
 
-.state-chip.r { background: var(--rescue); }
-.state-chip.k { background: var(--kept); }
-.state-chip.n { background: var(--nsc); }
-.state-chip.a { background: var(--faint); }
+.state-chip::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--chip, var(--faint));
+}
+
+.state-chip.p { --chip: var(--present); }
+.state-chip.r { --chip: var(--rescue); }
+.state-chip.k { --chip: var(--kept); }
+.state-chip.n { --chip: var(--nsc); }
+.state-chip.a { --chip: var(--absent); }
+.state-chip.u::before {
+  background-color: var(--absent);
+  background-image: repeating-linear-gradient(135deg, var(--unsearched-line) 0 1px, transparent 1px 3px);
+}
+.state-chip.a::before,
+.state-chip.u::before {
+  box-shadow: inset 0 0 0 1px var(--absent-stroke);
+}
 
 details.parameters {
   margin-top: var(--space-4);
@@ -2748,6 +2887,12 @@ details.parameters dd {
 
 .qc-line {
   margin: 4px 0 0;
+}
+
+.note-line {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .qc-chip {
@@ -2820,7 +2965,7 @@ details.parameters dd {
 .count-row small {
   min-width: 44px;
   text-align: right;
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 .genome-actions {
@@ -2945,11 +3090,14 @@ details.parameters dd {
   color: var(--warning);
 }
 
+/* The legend keeps its width and the count beside the pane name gives way
+   first; when even that is not enough, the legend drops to swatches (see
+   fitCellLegend). */
 .pane-head .legend {
   margin-left: auto;
   font-size: 12px;
   gap: 12px;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   overflow: hidden;
 }
@@ -3026,9 +3174,41 @@ tr[data-cluster]:focus-visible {
    same screen position. Without it the tree sat a whole header higher than the
    matrix, and tip N did not line up with row N. */
 .tree-head-spacer {
+  position: relative;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--soft-line);
   background: var(--bg-subtle);
+}
+
+/* Names of the pinned rows, level with the band under the column header. */
+.pin-labels {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  display: grid;
+  grid-auto-rows: 14px;
+  row-gap: 2px;
+  padding: 0 8px;
+}
+
+.pin-label {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.pin-label b,
+.pin-letter {
+  display: inline-block;
+  min-width: 14px;
+  margin-right: 6px;
+  color: var(--accent-ink);
+  font-weight: 700;
 }
 
 .lineage-strip {
@@ -3259,7 +3439,7 @@ tr[data-cluster]:focus-visible {
   margin-left: auto;
   flex: 0 0 auto;
   font-size: 11px;
-  color: var(--faint);
+  color: var(--faint-text);
 }
 
 .status-hint .dot {
@@ -3516,6 +3696,7 @@ tr[data-cluster]:focus-visible {
     --muted: #52525b;
     --subtle: #3f3f46;
     --faint: #71717a;
+    --faint-text: #52525b;
     --line: #d4d4d8;
     --line-strong: #a1a1aa;
     --soft-line: #e4e4e7;
@@ -3525,6 +3706,7 @@ tr[data-cluster]:focus-visible {
     --kept: #c01048;
     --absent: #f4f5f7;
     --absent-stroke: #d4d4d8;
+    --unsearched-line: #b9bec7;
     --mech-retained: #667085;
     --mech-gain: #4ca30d;
     --mech-loss: #7a2e0e;

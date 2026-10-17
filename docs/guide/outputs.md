@@ -339,7 +339,12 @@ call.
 
 Possible states:
 - `PRESENT_INPUT`: present in the original matrix.
-- `ABSENT`: no evidence under current thresholds.
+- `ABSENT`: searched, and no evidence under current thresholds.
+- `NOT_SEARCHED_LOW_PREVALENCE`: never searched, because the cluster is in fewer
+  genomes than `--min-prevalence`.
+- `NOT_SEARCHED_NO_CLUSTER_SEQUENCE`: never searched, because the cluster has no
+  sequence in the pan-genome reference.
+- `NOT_SEARCHED_NO_FASTA`: never searched, because the genome has no FASTA file.
 - `STRICT_PRESENT`: accepted same-locus rescue.
 - `ALIAS_CLUSTER`: accepted split/alias or NSC-compatible cluster evidence.
 - `SEQUENCE_ONLY`: full-length sequence evidence without context/annotation support.
@@ -350,7 +355,9 @@ Possible states:
 
 Use this file when a binary matrix would overstate biology, especially for
 pseudogenes, partial genes, PE/PPE-like families, or publication figures that
-need to show uncertainty explicitly.
+need to show uncertainty explicitly. A `NOT_SEARCHED_*` cell is absent because
+the input matrix says so; Recore did not test it. When a cell has two reasons,
+the cluster's is written, in the order of the gap lines in `summary.txt`.
 
 ---
 

@@ -194,10 +194,13 @@ DROPPED and MISSING_CDS rescues are post-processed for pseudogene detection. For
 
 1. Load genome FASTA contigs on-demand (not preloaded for all genomes)
 2. If the rescue sits on an annotated CDS, extract that CDS and read it in its own frame, from its start codon to its stop, counting stops before the last codon. That is the reading frame this genome's annotation asserts, and it ends at this genome's own stop.
-3. Otherwise extract the aligned region, reverse-complement it on the minus strand, scan all three frames for internal stops (TAA, TAG, TGA) and keep the frame with the fewest.
-4. If stops are found, reclassify as PSEUDOGENE:InternalStop, confidence × 0.5
+3. Otherwise extract the aligned region, reverse-complement it on the minus strand, and read it in the frame the alignment fixes. The cluster's representative begins at its start codon, so an alignment that starts `q` bases into the representative puts the first whole codon `(3 - q mod 3) mod 3` bases into the region. Count internal stops (TAA, TAG, TGA) before the last codon.
+4. Only when neither is known (a rescue built from several alignments) scan all three frames and keep the frame with the fewest.
+5. If stops are found, reclassify as PSEUDOGENE:InternalStop, confidence × 0.5
 
-The minimum over three frames is only the fallback: a premature stop in the true frame can hide behind another frame that happens to be stop-free, which GC-rich third positions make common, and the aligned region follows the cluster's representative, so a representative that reads through its stop extends it past this genome's canonical one.
+The minimum over three frames is only the last resort: a premature stop in the true frame can hide behind another frame that happens to be stop-free, which G/C-ending codons make common. An unannotated pseudogene of that kind used to be inserted into the matrix as present.
+
+The same alignment start sets the phase of the rescue's CDS feature in `corrected_gff/`.
 
 ---
 
@@ -432,7 +435,9 @@ Drop-in replacement for Panaroo's CSV. Changes:
 Same shape as the corrected matrix, but genome cells are states rather than
 binary calls: `PRESENT_INPUT`, `ABSENT`, `STRICT_PRESENT`, `ALIAS_CLUSTER`,
 `SEQUENCE_ONLY`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or
-`REJECTED_CONTEXT`. This is the preferred output for plotting or reviewing
+`REJECTED_CONTEXT`, and `NOT_SEARCHED_LOW_PREVALENCE`,
+`NOT_SEARCHED_NO_CLUSTER_SEQUENCE` or `NOT_SEARCHED_NO_FASTA` for a gap that
+was never searched, so it is not mistaken for one searched and found empty. This is the preferred output for plotting or reviewing
 ambiguous biology without forcing it into a clean 0/1 matrix.
 
 ### summary.txt

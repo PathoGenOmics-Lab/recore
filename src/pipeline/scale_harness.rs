@@ -547,6 +547,7 @@ fn scale_report() {
                 matched_downstream: 4,
             },
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
+            query_start: None,
         }
     };
     for (ci, draft) in drafts.iter().enumerate() {
@@ -1004,6 +1005,22 @@ fn scale_report() {
         cluster_seq_lengths: &seq_lengths,
         matrix_policy: MatrixPolicy::Balanced,
     });
+    // Clusters under the prevalence floor go unsearched, as in a real run, so
+    // the not-searched cells are drawn at this size too. The synthetic rescues
+    // ignore the floor, so a cluster with any stays searched.
+    let rescued_clusters: ahash::HashSet<usize> =
+        events.iter().map(|e| e.cluster_idx.val()).collect();
+    let coverage = SearchCoverage {
+        clusters: prevalences
+            .iter()
+            .enumerate()
+            .map(|(ci, &p)| {
+                (p < args.min_prevalence && !rescued_clusters.contains(&ci))
+                    .then_some(NotSearched::LowPrevalence)
+            })
+            .collect(),
+        genomes_without_fasta: Vec::new(),
+    };
     let rss_before = sampler.take();
     let t_report = Instant::now();
     write_html_report(
@@ -1014,6 +1031,7 @@ fn scale_report() {
         &nsc,
         Some(&tree),
         &evidence,
+        &coverage,
         &work,
     )
     .unwrap();

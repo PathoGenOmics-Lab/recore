@@ -17,6 +17,45 @@ if (!data.clusters.length) {
     notices.hidden = false;
   }
 }
+/* ---- Gaps outside the search ----------------------------------------------
+   An absent cell is either a gap Recore searched and found nothing in, or one
+   it never searched: the cluster is below --min-prevalence or has no sequence
+   to search with, or the genome has no FASTA. Both used to be drawn and named
+   "absent", and under the default prevalence floor most absent cells in a
+   pangenome are the second kind. The writer sends one code per cluster and the
+   genomes without a FASTA, and each cell is derived from the two. */
+const notSearched = data.notSearched || null;
+const clusterSearchCodes = notSearched ? String(notSearched.clusters || "") : "";
+const genomesWithoutFasta = notSearched ? notSearched.genomesWithoutFasta || [] : [];
+const genomeWithoutFasta = new Uint8Array(data.genomes.length);
+for (const gi of genomesWithoutFasta) genomeWithoutFasta[gi] = 1;
+/** Why none of a cluster's gaps were searched: "prevalence", "sequence" or "". */
+function clusterSkip(clusterIdx) {
+  const code = clusterSearchCodes.charCodeAt(clusterIdx);
+  return code === 49 ? "prevalence" : code === 50 ? "sequence" : "";
+}
+function isUnsearched(clusterIdx, genomeIdx) {
+  return clusterSkip(clusterIdx) !== "" || genomeWithoutFasta[genomeIdx] === 1;
+}
+function prevalenceFloorText() {
+  return `${+(notSearched.minPrevalence * 100).toFixed(3)}%`;
+}
+function clusterSkipWhy(clusterIdx) {
+  return clusterSkip(clusterIdx) === "prevalence"
+    ? `the cluster is in ${formatInt(countsForCluster(clusterIdx).P)} of ${plural(data.genomes.length, "input genome")}, below the ${prevalenceFloorText()} prevalence floor (--min-prevalence)`
+    : "the cluster has no sequence in the pan-genome reference, so there was nothing to search with";
+}
+/** Why a cell was not searched: a few words, or the full sentence. */
+function notSearchedReason(clusterIdx, genomeIdx, full) {
+  const skip = clusterSkip(clusterIdx);
+  if (!full) {
+    if (skip === "prevalence") return `below the ${prevalenceFloorText()} prevalence floor`;
+    if (skip === "sequence") return "no sequence to search with";
+    return "no FASTA for this genome";
+  }
+  const why = skip ? clusterSkipWhy(clusterIdx) : "there is no FASTA file for this genome";
+  return `Not searched: ${why}. The cell keeps the input matrix's call.`;
+}
 /* `source` is an optional declaration block to read instead of the live root:
    figures always take the light palette, whatever the screen is in. */
 function readThemeVar(name, fallback, source) {
@@ -49,11 +88,13 @@ function refreshThemeColors(source) {
   colors.N = readVar("--nsc", "#e07b00");
   colors.K = readVar("--kept", "#c01048");
   colors.A = readVar("--absent", "#f4f5f7");
+  colors.U = colors.A;
   strokes.P = colors.P;
   strokes.R = colors.R;
   strokes.N = colors.N;
   strokes.K = colors.K;
   strokes.A = readVar("--absent-stroke", "#d0d5dd");
+  strokes.U = readVar("--unsearched-line", "#b9bec7");
   for (const family of Object.keys(mechanismFamilyColors)) {
     mechanismFamilyColors[family] = readVar(`--mech-${family}`, mechanismFamilyColors[family]);
   }
@@ -72,8 +113,8 @@ function refreshThemeColors(source) {
   labelInk = readVar("--subtle", "#475467");
 }
 const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
-const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7"};
-const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd"};
+const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7", U:"#f4f5f7"};
+const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd", U:"#b9bec7"};
 let burdenLow = "#e4e4e7";
 const qcColors = {pass: "#a1a1aa", review: "#d97706", fail: "#dc2626"};
 let panelBg = "#ffffff";
@@ -85,14 +126,15 @@ let selectColTint = "#eef4ff";
 let selectStroke = "#1d4ed8";
 let gridStroke = "#98a2b3";
 let labelInk = "#475467";
-const labels = {P:"present in input", R:"corrected by Recore", N:"supported by NSC", K:"found, kept out of matrix", A:"absent"};
-const shortLabels = {P:"input", R:"corrected", N:"NSC", K:"kept out", A:"absent"};
+const labels = {P:"present in input", R:"corrected by Recore", N:"supported by NSC", K:"found, kept out of matrix", A:"absent", U:"not searched"};
+const shortLabels = {P:"input", R:"corrected", N:"NSC", K:"kept out", A:"absent", U:"not searched"};
 const stateDefinitions = {
   P:"Present in the input matrix.",
   R:"Absent in the input. Recore found the gene in this genome and corrected the cell.",
   N:"Absent in the input. Near-identical clusters were merged (NSC), and the merged cluster is present here.",
   K:"Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix. Click the cell for the reason.",
-  A:"Absent, and Recore found no evidence for it.",
+  A:"Absent. Recore searched this gap and found no evidence for the gene.",
+  U:"Absent in the input, and never searched: the cluster is below the prevalence floor or has no sequence to search with, or the genome has no FASTA. The absence is the input's call, not a finding.",
 };
 /* Sixteen mechanisms cannot get sixteen colours anyone can tell apart, so they
    are drawn in six families. The family hues stay off the cell-state hues and
@@ -221,6 +263,7 @@ const columnOrder = document.getElementById("columnOrder");
 const rootMode = document.getElementById("rootMode");
 const labelToggle = document.getElementById("tipLabels");
 const referenceToggle = document.getElementById("referenceOnly");
+const searchedToggle = document.getElementById("searchedOnly");
 const syntenyToggle = document.getElementById("toggleSynteny");
 const syntenyZoomControl = document.getElementById("syntenyZoom");
 const fullscreenButton = document.getElementById("explorerFullscreen");
@@ -304,6 +347,13 @@ const LABEL_HORIZONTAL_CELL_W = 54;
 const LABEL_BAND_H_FLAT = 26;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 const defaultStatus = "Hover a cell for its evidence, click it for the full row. Ctrl or Cmd and the wheel zoom columns, Alt and the wheel zoom rows, Z fits everything. Drag the seams between panes to resize.";
+/* The instructions are for a first look. Once a cell or tip has been hovered
+   they have been read, and repeating them on every mouse-out turned the status
+   line into a wall of text that hid what had just been said. */
+let hoveredOnce = false;
+function idleStatus() {
+  return hoveredOnce ? "" : defaultStatus;
+}
 // Below this width the inspector is a bottom sheet (see report.css).
 const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 1100px)") : null;
 let selected = 0;
@@ -320,6 +370,7 @@ let visibleClusters = [];
 let genomeStats = [];
 let maxGenomeStats = {R:1, N:1, A:1, correction:1};
 let anyKeptOut = false;
+let anyNotSearched = false;
 let maxDepth = 0;
 let maxDistance = 0;
 let treeHeight = 0;
@@ -347,6 +398,7 @@ let detailsKey = "";
 let syntenyKey = "";
 let treeMode = "phylogram";
 let referenceOnly = false;
+let searchedOnly = false;
 let syntenyHidden = true;
 let selectedSyntenyBlock = 0;
 let selectedSyntenyReference = false;
@@ -354,6 +406,16 @@ let selectedSyntenyCarriers = new Set();
 let mechanismFilters = new Set();
 /* Rows matching the genome search, marked on the tree and the lineage strip. */
 let highlightedRows = new Set();
+/* Pinned genomes, oldest first (see "Pinned genomes" below). Declared up
+   here because the first render reads them. */
+const MAX_PINNED = 2;
+const PIN_ROW_H = 14;
+const PIN_LETTERS = ["A", "B"];
+const DIFF_SHOWN = 20;
+let pinnedGenomes = [];
+let diffOnly = false;
+let pinnedDiffCache = null;
+let pinLabelsKey = "";
 let overviewKey = "";
 /* Set once the genome card exists (it is declared further down); render() runs
    before that during start-up. */
@@ -522,10 +584,11 @@ function evidenceRowHtml(row) {
     (notes.length ? `<dl class="cluster-dl ev-notes">${notes.join("")}</dl>` : "") +
     `</div>`;
 }
-function emptyCellText(state) {
+function emptyCellText(state, clusterIdx, genomeIdx) {
   if (state === "P") return "Present in the input matrix. Recore had nothing to correct here.";
   if (state === "N") return "Merged into a near-identical cluster by NSC; no search evidence row.";
-  return "No evidence row. Either Recore searched this gap and found nothing, or the gap was outside the search (see the prevalence filter in Run details).";
+  if (state === "U") return notSearchedReason(clusterIdx, genomeIdx, true);
+  return "No evidence row: Recore searched this gap and found nothing that cleared the identity and coverage thresholds.";
 }
 /** The selected cell: what it is, and every evidence row behind it. */
 function cellCardHtml() {
@@ -534,7 +597,7 @@ function cellCardHtml() {
   const rows = cellEvidence(selected, selectedGenome);
   const body = rows.length
     ? rows.map(evidenceRowHtml).join("")
-    : `<p class="muted cell-empty">${escapeHtml(emptyCellText(state))}</p>`;
+    : `<p class="muted cell-empty">${escapeHtml(emptyCellText(state, selected, selectedGenome))}</p>`;
   return `<section class="cell-card" aria-label="Selected cell">` +
     `<div class="cell-card-head"><span class="card-title">Cell</span>` +
     `<button type="button" class="icon-btn ghost-icon cell-close" data-clear-cell="1" aria-label="Clear the selected cell" data-tip="Clear the selected cell">&times;</button></div>` +
@@ -725,7 +788,7 @@ function stateAt(clusterIdx, genomeIdx) {
   for (let state = STORED_STATES - 1; state >= 0; state -= 1) {
     if (setContains(sets[state], genomeIdx)) return STATE_CODES[state];
   }
-  return "A";
+  return isUnsearched(clusterIdx, genomeIdx) ? "U" : "A";
 }
 function countsForCluster(clusterIdx) {
   const n = data.genomes.length;
@@ -738,11 +801,24 @@ function countsForCluster(clusterIdx) {
     A: 0,
   };
   counts.A = Math.max(0, n - counts.P - counts.R - counts.N - counts.K);
+  counts.U = 0;
+  if (clusterSkip(clusterIdx)) {
+    counts.U = counts.A;
+    counts.A = 0;
+  } else {
+    for (const gi of genomesWithoutFasta) if (stateAt(clusterIdx, gi) === "U") counts.U += 1;
+    counts.A -= counts.U;
+  }
   return counts;
 }
 function passesActiveFilters(idx, includeMechanism = true) {
   const cluster = data.clusters[idx];
   if (referenceOnly && !cluster.referenceAbsent) return false;
+  if (searchedOnly && clusterSkip(idx)) return false;
+  if (diffOnly) {
+    const d = pinnedDiff();
+    if (d && !d.flags[idx]) return false;
+  }
   if (includeMechanism && mechanismFilters.size && !mechanismFilters.has(processKind(cluster))) return false;
   return true;
 }
@@ -790,14 +866,16 @@ function refreshVisibleClusters() {
     .map((_, idx) => idx)
     .filter(idx => passesActiveFilters(idx, true)));
   if (!visibleClusters.length) {
-    if (referenceOnly) {
+    if (referenceOnly || searchedOnly) {
       referenceOnly = false;
+      searchedOnly = false;
       visibleClusters = sortVisibleClusters(data.clusters
         .map((_, idx) => idx)
         .filter(idx => passesActiveFilters(idx, true)));
     }
-    if (!visibleClusters.length && mechanismFilters.size) {
+    if (!visibleClusters.length && (mechanismFilters.size || diffOnly)) {
       mechanismFilters.clear();
+      diffOnly = false;
       visibleClusters = sortVisibleClusters(data.clusters.map((_, idx) => idx));
     }
   }
@@ -820,6 +898,10 @@ function refreshVisibleClusters() {
     );
     referenceToggle.disabled = !data.referenceGenome;
   }
+  if (searchedToggle) {
+    searchedToggle.checked = searchedOnly;
+    searchedToggle.disabled = !clusterSearchCodes.includes("1") && !clusterSearchCodes.includes("2");
+  }
 }
 function selectedVisibleColumn() {
   return visibleClusters.indexOf(selected);
@@ -831,14 +913,16 @@ function computeGenomeStats() {
   // Totals come precomputed from the writer: deriving them here would mean
   // decoding every cluster before the first paint.
   genomeStats = data.genomes.map((_, gi) => {
-    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0];
-    return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4]};
+    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0, 0];
+    return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4], U: totals[5] || 0};
   });
   anyKeptOut = genomeStats.some(s => s.K > 0);
+  anyNotSearched = genomeStats.some(s => s.U > 0);
   maxGenomeStats = genomeStats.reduce((acc, s) => ({
     R: Math.max(acc.R, s.R),
     N: Math.max(acc.N, s.N),
-    A: Math.max(acc.A, s.A),
+    // The absence burden counts every absent cell, searched or not.
+    A: Math.max(acc.A, s.A + s.U),
     correction: Math.max(acc.correction, s.R + s.N),
   }), {R:1, N:1, A:1, correction:1});
 }
@@ -891,15 +975,16 @@ let cellLegendKey = "";
 function renderCellLegend() {
   if (!cellLegend) return;
   const byProcess = matrixColorMode.value === "process";
-  const key = byProcess ? `m|${visibleClusters.length}|${mechanismFilterKey()}` : `s|${anyKeptOut}|${data.nscEnabled}`;
+  const key = byProcess ? `m|${visibleClusters.length}|${mechanismFilterKey()}` : `s|${anyKeptOut}|${data.nscEnabled}|${anyNotSearched}`;
   if (key === cellLegendKey) return;
   cellLegendKey = key;
   const item = (cls, style, label, tip) =>
-    `<span class="key" data-tip="${escapeHtml(tip)}"><i class="sw ${cls}"${style ? ` style="${style}"` : ""}></i>${escapeHtml(label)}</span>`;
+    `<span class="key" data-tip="${escapeHtml(tip)}"><i class="sw ${cls}"${style ? ` style="${style}"` : ""}></i><span class="key-label">${escapeHtml(label)}</span></span>`;
   if (!byProcess) {
     cellLegend.innerHTML = shownStates()
       .map(state => item(state.toLowerCase(), "", shortLabels[state], stateDefinitions[state]))
       .join("");
+    fitCellLegend();
     return;
   }
   const families = new Map();
@@ -914,10 +999,22 @@ function renderCellLegend() {
     .map(family => `${mechanismFamilyLabels[family]}: ${plural(families.get(family), "cluster")}`)
     .join("; ");
   const stack = present.map(family => `<i class="sw" style="background:var(--mech-${family})"></i>`).join("");
-  const keys = [`<button type="button" class="key key-btn" data-open-mechanisms="1" data-tip="${escapeHtml(`Input cells take the colour of their cluster's mechanism family. ${tip}. Click for the list and filters.`)}"><span class="sw-stack">${stack}</span>mechanism</button>`];
+  const keys = [`<button type="button" class="key key-btn" data-open-mechanisms="1" data-tip="${escapeHtml(`Input cells take the colour of their cluster's mechanism family. ${tip}. Click for the list and filters.`)}"><span class="sw-stack">${stack}</span><span class="key-label">mechanism</span></button>`];
   keys.push(item("r", "", shortLabels.R, stateDefinitions.R));
   if (anyKeptOut) keys.push(item("k", "", shortLabels.K, stateDefinitions.K));
+  if (anyNotSearched) keys.push(item("u", "", shortLabels.U, stateDefinitions.U));
   cellLegend.innerHTML = keys.join("");
+  fitCellLegend();
+}
+/* Six keys can outgrow the pane header, and the legend was clipped on its
+   left. Short of room it keeps only the swatches, each still named by its tip. */
+function fitCellLegend() {
+  if (!cellLegend) return;
+  const head = cellLegend.parentElement;
+  cellLegend.classList.remove("compact");
+  const tight = cellLegend.scrollWidth > cellLegend.clientWidth + 1 ||
+    (head && head.scrollWidth > head.clientWidth + 1);
+  cellLegend.classList.toggle("compact", tight);
 }
 function renderLineageLegend() {
   if (!lineageLegend) return;
@@ -990,14 +1087,14 @@ function tipStyle(genomeIdx) {
   }
   if (mode === "cluster") {
     const state = stateAt(selected, genomeIdx);
-    return {fill: colors[state], stroke: strokes[state], title: labels[state]};
+    return {fill: colors[state], stroke: strokes[state], title: labels[state], dashed: state === "U"};
   }
   if (mode === "process") {
     const cluster = data.clusters[selected] || {};
     const state = stateAt(selected, genomeIdx);
     const mechanism = processKind(cluster);
     const color = processColor(mechanism);
-    if (state === "A") return {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)}; absent`};
+    if (state === "A" || state === "U") return {fill: colors.A, stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`, dashed: state === "U"};
     if (state === "R" || state === "K") return {fill: colors[state], stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`};
     return {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
   }
@@ -1013,7 +1110,7 @@ function tipStyle(genomeIdx) {
     const color = lineageColor(lineage);
     return {fill: color, stroke: color, title: lineageLabel(lineage)};
   }
-  const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
+  const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0, U:0};
   const [value, max, high, noun] = burdenOf(mode, stats);
   // Zero is a hollow ring, so "none" never passes for a pale "some" in either
   // theme, and the ramp runs from the line colour to the state's own colour.
@@ -1023,7 +1120,7 @@ function tipStyle(genomeIdx) {
 /** The value a burden tip mode shows, its maximum, its colour and its name. */
 function burdenOf(mode, stats) {
   if (mode === "rescue") return [stats.R, maxGenomeStats.R, colors.R, "corrected cells"];
-  if (mode === "absence") return [stats.A, maxGenomeStats.A, labelInk, "absent cells"];
+  if (mode === "absence") return [stats.A + (stats.U || 0), maxGenomeStats.A, labelInk, "absent cells"];
   return [stats.R + stats.N, maxGenomeStats.correction, colors.R, "corrected or NSC cells"];
 }
 function subtreeLineage(node) {
@@ -1509,6 +1606,8 @@ function selectMatrixClusterByName(name) {
   if (idx < 0) return false;
   if (!passesActiveFilters(idx, true)) {
     referenceOnly = false;
+    searchedOnly = false;
+    diffOnly = false;
     mechanismFilters.clear();
     refreshVisibleClusters();
   }
@@ -1965,11 +2064,25 @@ function applyLayout() {
     layoutState.syntenyH = syntenyH;
   }
   explorerSection.style.setProperty("--synteny-h", `${Math.round(syntenyH)}px`);
+  // A focusable separator is a window splitter, and has to say where it is.
+  const maxTree = Math.max(MIN_TREE_W, bodyW - MIN_MATRIX_W - (inspectorShown ? inspectorW : 0) - 12);
+  const maxInspector = Math.max(MIN_INSPECTOR_W, bodyW - MIN_MATRIX_W - treeW - 12);
+  setSeparatorValue(treeHandle, treeW, MIN_TREE_W, maxTree, "Phylogeny pane", "wide");
+  setSeparatorValue(document.getElementById("inspectorHandle"), inspectorW, MIN_INSPECTOR_W, maxInspector, "Inspector", "wide");
+  setSeparatorValue(syntenyHandle, syntenyH, MIN_SYNTENY_H, Math.max(MIN_SYNTENY_H, Math.round(workspaceH * MAX_SYNTENY_FRACTION)), "Synteny panel", "tall");
   viewerBody.style.setProperty("--tree-w", `${treeW}px`);
   viewerBody.style.setProperty("--inspector-w", `${inspectorW}px`);
   viewerSplit.style.setProperty("--tree-w", `${treeW}px`);
   viewerSplit.style.setProperty("--inspector-w", `${inspectorW}px`);
   treeWidth = Math.max(160, Math.round(treeW) - LINEAGE_STRIP_W - 4);
+}
+function setSeparatorValue(handle, value, min, max, name, dimension) {
+  if (!handle) return;
+  const now = Math.round(value);
+  handle.setAttribute("aria-valuemin", String(Math.round(min)));
+  handle.setAttribute("aria-valuemax", String(Math.max(Math.round(min), Math.round(max))));
+  handle.setAttribute("aria-valuenow", String(now));
+  handle.setAttribute("aria-valuetext", `${name} ${now} pixels ${dimension}`);
 }
 /* Two synteny rows are the point of the panel, so open at the height that shows
    them rather than at a number picked in advance. Once the reader drags the
@@ -2269,6 +2382,12 @@ function paintDensity(context, opts) {
   const N = new Uint32Array(nPix);
   const colsAt = new Uint32Array(W);
   const bulk = new Int32Array(W);
+  // Absent cells outside the search: the columns of clusters that were left
+  // out (less what is present in them), and the rows of genomes without a FASTA.
+  const uCols = new Uint32Array(anyNotSearched ? W : 0);
+  const bulkU = new Int32Array(anyNotSearched ? W : 0);
+  const PU = new Int32Array(anyNotSearched ? nPix : 0);
+  const uRowsAt = new Uint32Array(anyNotSearched ? H : 0);
   // Each visible row covers [y0, y1) device rows.
   const nRows = Math.max(0, lastRow - firstRow);
   const y0s = new Int32Array(nRows);
@@ -2281,6 +2400,9 @@ function paintDensity(context, opts) {
     y0s[i] = a;
     y1s[i] = b;
     for (let y = a; y < b; y += 1) rowsAt[y] += 1;
+    if (anyNotSearched && genomeWithoutFasta[leafOrder[r]]) {
+      for (let y = a; y < b; y += 1) uRowsAt[y] += 1;
+    }
   }
   const addRow = (arr, x0, x1, r, sign) => {
     const i = r - firstRow;
@@ -2296,6 +2418,13 @@ function paintDensity(context, opts) {
     const x0 = Math.max(0, Math.min(W - 1, Math.floor((c * cw - left) * scale)));
     const x1 = Math.max(x0 + 1, Math.min(W, Math.floor(((c + 1) * cw - left) * scale)));
     for (let x = x0; x < x1; x += 1) colsAt[x] += 1;
+    const outCol = anyNotSearched && clusterSkip(clusterIdx) !== "";
+    if (outCol) for (let x = x0; x < x1; x += 1) uCols[x] += 1;
+    // What is present in a column outside the search is counted twice: once by
+    // state, and once to take it out of that column's not-searched cells.
+    const add = outCol
+      ? (arr, a, b, r, sign) => { addRow(arr, a, b, r, sign); addRow(PU, a, b, r, sign); }
+      : addRow;
     const sets = clusterSets(clusterIdx);
     const rowsets = clusterRowSets(clusterIdx);
     const targets = [P, R, N, K];
@@ -2306,23 +2435,24 @@ function paintDensity(context, opts) {
       if (set.kind === "list") {
         if (!rows || !rows.length) continue;
         let i = lowerBound(rows, firstRow);
-        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], 1);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) add(arr, x0, x1, rows[i], 1);
         continue;
       }
       // "all" or "complement": count the column in bulk, then take out the
       // excluded rows. Only input presence is ever that dense.
       if (arr !== P) {
-        for (let r = firstRow; r < lastRow; r += 1) addRow(arr, x0, x1, r, 1);
+        for (let r = firstRow; r < lastRow; r += 1) add(arr, x0, x1, r, 1);
         if (set.kind === "complement" && rows) {
           let i = lowerBound(rows, firstRow);
-          for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+          for (; i < rows.length && rows[i] < lastRow; i += 1) add(arr, x0, x1, rows[i], -1);
         }
         continue;
       }
       for (let x = x0; x < x1; x += 1) bulk[x] += 1;
+      if (outCol) for (let x = x0; x < x1; x += 1) bulkU[x] += 1;
       if (set.kind === "complement" && rows) {
         let i = lowerBound(rows, firstRow);
-        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) add(arr, x0, x1, rows[i], -1);
       }
     }
   }
@@ -2332,6 +2462,13 @@ function paintDensity(context, opts) {
   const rescue = hexRgb(colors.R);
   const kept = hexRgb(colors.K);
   const panel = hexRgb(panelBg);
+  const hatch = hexRgb(strokes.U);
+  // The same hatch as the cell view, in device pixels and anchored at the
+  // matrix origin; a pixel's lines are as strong as its share of cells that
+  // were not searched.
+  const hatchPeriod = Math.max(3, Math.round(HATCH_CSS_PX * scale));
+  const hatchWidth = Math.max(1, Math.round(scale));
+  const hatchPhase = Math.round((left + top) * scale) % hatchPeriod;
   const image = context.createImageData(W, H);
   const out = image.data;
   for (let y = 0; y < H; y += 1) {
@@ -2353,6 +2490,13 @@ function paintDensity(context, opts) {
           const share = (R[idx] || K[idx]) / cells;
           const w = 0.3 + 0.7 * Math.min(1, share / 0.05);
           rgb = [0, 1, 2].map(k => rgb[k] * (1 - w) + finding[k] * w);
+        } else if (anyNotSearched && (x + y + hatchPhase) % hatchPeriod < hatchWidth) {
+          let u = Math.max(0, uCols[x] * rowsHere - PU[idx] - bulkU[x] * rowsHere);
+          // Rows without a FASTA in searched columns, taken as absent as the
+          // pixel is on average.
+          if (uRowsAt[y]) u += (colsAt[x] - uCols[x]) * uRowsAt[y] * a;
+          const w = Math.min(a, u / cells);
+          if (w > 0) rgb = [0, 1, 2].map(k => rgb[k] * (1 - w) + hatch[k] * w);
         }
       }
       const o = idx * 4;
@@ -2364,6 +2508,64 @@ function paintDensity(context, opts) {
   }
   context.putImageData(image, dx, dy);
 }
+/* The not-searched hatch: thin diagonal lines over the absent fill. A pattern
+   is a bitmap, so it is built per context and per scale (the screen and an
+   exported figure differ in both), and it is anchored at the matrix origin so
+   the lines scroll with the cells instead of sliding under them. */
+const HATCH_CSS_PX = 6;
+const hatchTiles = new WeakMap();
+function notSearchedPattern(context, left, top) {
+  const scale = (context.getTransform && context.getTransform().a) || 1;
+  const key = `${scale}|${colors.A}|${strokes.U}`;
+  let entry = hatchTiles.get(context);
+  if (!entry || entry.key !== key) {
+    const size = Math.max(3, Math.round(HATCH_CSS_PX * scale));
+    const tile = document.createElement("canvas");
+    tile.width = size;
+    tile.height = size;
+    const t = tile.getContext("2d");
+    t.fillStyle = colors.A;
+    t.fillRect(0, 0, size, size);
+    t.strokeStyle = strokes.U;
+    t.lineWidth = Math.max(1, Math.round(scale));
+    t.beginPath();
+    // The line through the tile and the two through its corners, so tiles join.
+    for (const k of [0, size, 2 * size]) {
+      t.moveTo(-1, k + 1);
+      t.lineTo(k + 1, -1);
+    }
+    t.stroke();
+    entry = {key, size, scale, pattern: context.createPattern(tile, "repeat")};
+    hatchTiles.set(context, entry);
+  }
+  const period = entry.size / entry.scale;
+  if (entry.pattern.setTransform && typeof DOMMatrix === "function") {
+    entry.pattern.setTransform(new DOMMatrix([1 / entry.scale, 0, 0, 1 / entry.scale, -(left % period), -(top % period)]));
+  }
+  return entry.pattern;
+}
+/* Cells outside the search, under everything else: whole columns for the
+   clusters that were left out, whole rows for the genomes without a FASTA.
+   Every other state paints over them, so only absent cells keep the hatch. */
+function paintNotSearched(context, opts) {
+  const {firstCol, lastCol, firstRow, lastRow, left, top, cw, ch, dataW, dataH} = opts;
+  context.fillStyle = notSearchedPattern(context, left, top);
+  const xAt = c => (cw < 1 ? Math.floor(c * cw - left) : c * cw - left);
+  let run = -1;
+  for (let c = firstCol; c <= lastCol; c += 1) {
+    const out = c < lastCol && clusterSkip(originalClusterAtVisibleColumn(c)) !== "";
+    if (out && run < 0) run = c;
+    if (!out && run >= 0) {
+      context.fillRect(xAt(run), 0, Math.max(1, xAt(c) - xAt(run)), dataH);
+      run = -1;
+    }
+  }
+  for (const gi of genomesWithoutFasta) {
+    const r = rowOfGenome[gi];
+    if (r < firstRow || r >= lastRow) continue;
+    context.fillRect(0, r * ch - top, dataW, ch);
+  }
+}
 /* Paints the cells of columns [firstCol, lastCol) and rows [firstRow, lastRow),
    with the matrix origin at (left, top) and cw x ch cells. The screen and the
    exported figure both draw through here, so they cannot disagree. */
@@ -2373,6 +2575,7 @@ function paintCells(context, opts) {
   // run does not look like an empty pane.
   context.fillStyle = colors.A;
   context.fillRect(0, 0, dataW, dataH);
+  if (anyNotSearched) paintNotSearched(context, opts);
   // Cells never shrink below a hairline, so a dense matrix stays legible instead
   // of fading out when several clusters share a pixel column.
   const drawW = Math.max(1, cw > 2 ? cw - 1 : cw);
@@ -2506,7 +2709,10 @@ function columnLabelBand() {
 function renderColumnHeader() {
   const cols = visibleClusters.length;
   const band = columnLabelBand();
-  const cssH = headerH + band;
+  // Pinned rows sit in a band under the ticks, right above the matrix rows.
+  const pinH = pinBandHeight();
+  const base = headerH + band;
+  const cssH = base + pinH;
   const view = viewportSize(headerScroller);
   const width = Math.max(1, view.w);
   sizeCanvas(headerCanvas, headerCtx, width, cssH, canvasScale(width, cssH));
@@ -2514,6 +2720,7 @@ function renderColumnHeader() {
   if (headerWrap) headerWrap.style.height = `${cssH}px`;
   // Keep the tree pane's first row level with the matrix's first row.
   if (treeHeadSpacer) treeHeadSpacer.style.height = `${cssH}px`;
+  renderPinLabels();
   headerCtx.fillStyle = headerBg;
   headerCtx.fillRect(0, 0, width, cssH);
 
@@ -2528,7 +2735,7 @@ function renderColumnHeader() {
   if (!byProcess && cellW <= 2) {
     headerCtx.fillStyle = gridStroke;
     const x0 = firstCol * cellW - left;
-    headerCtx.fillRect(x0, cssH - 9, Math.max(1, (lastCol - firstCol) * cellW), 6);
+    headerCtx.fillRect(x0, base - 9, Math.max(1, (lastCol - firstCol) * cellW), 6);
   }
   for (let c = firstCol; c < lastCol && (byProcess || cellW > 2); c += 1) {
     const clusterIdx = originalClusterAtVisibleColumn(c);
@@ -2537,7 +2744,7 @@ function renderColumnHeader() {
     headerCtx.fillStyle = byProcess
       ? processColor(processKind(data.clusters[clusterIdx]))
       : gridStroke;
-    headerCtx.fillRect(x, cssH - 9, tickW, 6);
+    headerCtx.fillRect(x, base - 9, tickW, 6);
     if (byProcess && band) {
       headerCtx.fillRect(x, band, tickW, 6);
     }
@@ -2549,6 +2756,7 @@ function renderColumnHeader() {
     headerCtx.strokeStyle = selectStroke;
     headerCtx.strokeRect(x + 0.5, 0.5, Math.max(1, cellW - 1), cssH - 1);
   }
+  if (pinH) paintPinBand(headerCtx, {firstCol, lastCol, left, y0: base, width, selectedCol});
   if (!band) return;
   const flat = columnLabelsFlat();
   headerCtx.save();
@@ -2780,10 +2988,20 @@ function drawTreeNode(root, top, firstRow, lastRow, viewH, showLabels) {
     if (radius >= 1.5) {
       treeCtx.strokeStyle = style.stroke;
       treeCtx.lineWidth = 1;
+      // A dashed ring is a genome this cluster was never searched in.
+      if (style.dashed) treeCtx.setLineDash([1.5, 1.5]);
       treeCtx.stroke();
+      if (style.dashed) treeCtx.setLineDash([]);
     }
     if (highlightedRows.has(node.row)) {
       treeCtx.strokeStyle = "#0ea5e9";
+      treeCtx.lineWidth = 1.6;
+      treeCtx.beginPath();
+      treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
+      treeCtx.stroke();
+    }
+    if (!drawingFigure && pinnedGenomes.includes(node.genome)) {
+      treeCtx.strokeStyle = selectStroke;
       treeCtx.lineWidth = 1.6;
       treeCtx.beginPath();
       treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
@@ -2854,6 +3072,7 @@ function shownStates() {
   if (data.nscEnabled) states.push("N");
   if (anyKeptOut) states.push("K");
   states.push("A");
+  if (anyNotSearched) states.push("U");
   return states;
 }
 function stateCountRows(counts, total) {
@@ -2873,7 +3092,7 @@ function prevalenceBar(present, total, pct) {
 function renderClusterDetails() {
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
-    ? `${selected}|${selectedGenome}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
+    ? `${selected}|${selectedGenome}|${referenceOnly}|${searchedOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
     : "none";
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
@@ -2904,6 +3123,7 @@ function renderClusterDetails() {
       ${prevalenceBar(cluster.present, total, prevalencePct)}
       <div class="card-title">Evidence in ${plural(total, "genome")}</div>
       <div class="count-rows">${stateCountRows(counts, total)}</div>
+      ${clusterSkip(selected) ? `<p class="note-line">None of this cluster's gaps were searched: ${escapeHtml(clusterSkipWhy(selected))}.</p>` : ""}
       ${lineageBreakdownHtml(selected)}
       ${changedCellsHtml(selected)}
       <div class="card-title">Mechanism</div>
@@ -3009,16 +3229,35 @@ function renderOverlays() {
       o.fillStyle = markInk;
       markColumn(o, selectedCol * cellW - left, cellW, h, cellW >= 3 ? 2 : 1);
     }
+    // The pinned rows and the open genome's row stay marked, so a row found
+    // from the palette or a tip is still findable after the pointer moves on.
+    if (h > 0) markGenomeRows(o, top, w);
   }
   if (clearOverlay(headerOverlay, headerOverlayCtx, headerCanvas) && hoverCol >= 0) {
     const o = headerOverlayCtx;
     o.fillStyle = hoverStroke;
     markColumn(o, hoverCol * cellW - left, cellW, headerCanvas.clientHeight, 1);
   }
-  if (clearOverlay(treeOverlay, treeOverlayCtx, treeCanvas) && hoverRow >= 0) {
+  if (clearOverlay(treeOverlay, treeOverlayCtx, treeCanvas)) {
     const o = treeOverlayCtx;
-    o.fillStyle = hoverStroke;
-    markRow(o, hoverRow * cellH - top, cellH, treeCanvas.clientWidth, 1);
+    markGenomeRows(o, top, treeCanvas.clientWidth);
+    if (hoverRow >= 0) {
+      o.fillStyle = hoverStroke;
+      markRow(o, hoverRow * cellH - top, cellH, treeCanvas.clientWidth, 1);
+    }
+  }
+}
+function markGenomeRows(o, top, w) {
+  for (const gi of pinnedGenomes) {
+    const r = rowOfGenome[gi];
+    if (r < 0) continue;
+    o.fillStyle = selectStroke;
+    markRow(o, r * cellH - top, cellH, w, 1);
+  }
+  const r = selectedGenome >= 0 ? rowOfGenome[selectedGenome] : -1;
+  if (r >= 0) {
+    o.fillStyle = markInk;
+    markRow(o, r * cellH - top, cellH, w, cellH >= 3 ? 2 : 1);
   }
 }
 let overlayQueued = false;
@@ -3034,7 +3273,8 @@ function setHover(row, col, text) {
   const changed = hoverRow !== row || hoverCol !== col;
   hoverRow = row;
   hoverCol = col;
-  if (text) status.textContent = text;
+  if (row >= 0 || col >= 0) hoveredOnce = true;
+  if (typeof text === "string") status.textContent = text;
   if (changed) scheduleOverlays();
 }
 function setTreeMode(mode) {
@@ -3118,6 +3358,9 @@ if (typeof ResizeObserver !== "undefined") {
     render(false);
   });
   ro.observe(viewerBody);
+  if (cellLegend && cellLegend.parentElement) {
+    new ResizeObserver(() => fitCellLegend()).observe(cellLegend.parentElement);
+  }
 }
 let lastPixelRatio = window.devicePixelRatio || 1;
 window.addEventListener("resize", () => {
@@ -3172,7 +3415,7 @@ function anyPaneMenuOpen() {
    two minutes ago silently explains a matrix that looks wrong. */
 function syncMenuIndicators() {
   if (matrixMenuBtn && matrixMenu.hidden) {
-    matrixMenuBtn.classList.toggle("active", mechanismFilters.size > 0 || referenceOnly);
+    matrixMenuBtn.classList.toggle("active", mechanismFilters.size > 0 || referenceOnly || searchedOnly || diffOnly);
   }
   if (treeMenuBtn && treeMenu.hidden) {
     treeMenuBtn.classList.toggle("active", rootMode ? rootMode.value !== defaultRootMode : false);
@@ -3215,6 +3458,12 @@ referenceToggle.addEventListener("change", () => {
   resetMatrixCache();
   render(true);
 });
+if (searchedToggle) {
+  searchedToggle.addEventListener("change", () => {
+    searchedOnly = searchedToggle.checked;
+    applyMechanismFilters();
+  });
+}
 if (prevClusterButton) prevClusterButton.addEventListener("click", () => stepCluster(-1));
 if (nextClusterButton) nextClusterButton.addEventListener("click", () => stepCluster(1));
 function setSynteny(open) {
@@ -3289,11 +3538,11 @@ function clearSyntenyHighlight() {
 }
 /** The clusters in view, with what the matrix shows for each, as TSV. */
 function visibleClustersTsv() {
-  const lines = [["cluster", "annotation", "mechanism", "present_in_input", "corrected", "nsc", "kept_out", "absent"].join("\t")];
+  const lines = [["cluster", "annotation", "mechanism", "present_in_input", "corrected", "nsc", "kept_out", "absent", "not_searched"].join("\t")];
   for (const idx of visibleClusters) {
     const cluster = data.clusters[idx];
     const c = countsForCluster(idx);
-    lines.push([cluster.name, cluster.annotation || "", processKind(cluster), c.P, c.R, c.N, c.K, c.A]
+    lines.push([cluster.name, cluster.annotation || "", processKind(cluster), c.P, c.R, c.N, c.K, c.A, c.U]
       .map(v => String(v).replace(/[\t\n]/g, " ")).join("\t"));
   }
   return `${lines.join("\n")}\n`;
@@ -3309,11 +3558,23 @@ function renderFilterChips() {
     topMatrixMeta.after(box);
   }
   if (!box) return;
-  const key = mechanismFilterKey();
+  const key = `${mechanismFilterKey()}|${diffOnly}`;
   if (box.dataset.key === key) return;
   box.dataset.key = key;
-  box.innerHTML = [...mechanismFilters].sort().map(mechanism =>
-    `<button type="button" class="filter-chip" data-remove-mechanism="${escapeHtml(mechanism)}" data-tip="Remove this filter"><i style="background:${processCss(mechanism)}"></i>${escapeHtml(processLabel(mechanism))} &times;</button>`).join("");
+  box.innerHTML = (diffOnly ? `<button type="button" class="filter-chip" data-remove-diff="1" data-tip="Show every cluster again">A and B differ &times;</button>` : "") +
+    [...mechanismFilters].sort().map(mechanism =>
+      `<button type="button" class="filter-chip" data-remove-mechanism="${escapeHtml(mechanism)}" data-tip="Remove this filter"><i style="background:${processCss(mechanism)}"></i>${escapeHtml(processLabel(mechanism))} &times;</button>`).join("");
+  fitCellLegend();
+}
+function setDiffOnly(on) {
+  diffOnly = Boolean(on) && pinnedGenomes.length === 2;
+  applyMechanismFilters();
+  const d = pinnedDiff();
+  const text = diffOnly && d
+    ? `Showing the ${plural(d.onlyA + d.onlyB, "cluster")} where the pinned genomes differ.`
+    : "Showing every cluster.";
+  status.textContent = text;
+  announce(text);
 }
 function applyMechanismFilters() {
   refreshVisibleClusters();
@@ -3326,6 +3587,10 @@ function applyMechanismFilters() {
   render(true);
 }
 document.addEventListener("click", event => {
+  if (event.target.closest("[data-remove-diff]")) {
+    setDiffOnly(false);
+    return;
+  }
   const chip = event.target.closest("[data-remove-mechanism]");
   if (!chip) return;
   mechanismFilters.delete(chip.getAttribute("data-remove-mechanism"));
@@ -3525,18 +3790,49 @@ if (treeScroll) {
     tooltip.style.display = "none";
     setHover(r, -1, detail);
   });
-  treeScroll.addEventListener("mouseleave", () => setHover(-1, -1, defaultStatus));
+  treeScroll.addEventListener("mouseleave", () => setHover(-1, -1, idleStatus()));
 }
 
+/** The pinned genome under the pointer in the header's band, or -1. */
+function pinnedAtPointer(event) {
+  if (!pinnedGenomes.length) return -1;
+  const rect = headerScroller.getBoundingClientRect();
+  const y = event.clientY - rect.top - (headerH + columnLabelBand()) - 3;
+  if (y < 0) return -1;
+  const k = Math.floor(y / (PIN_ROW_H + 2));
+  return k < pinnedGenomes.length && y - k * (PIN_ROW_H + 2) < PIN_ROW_H ? pinnedGenomes[k] : -1;
+}
 headerScroller.addEventListener("mousemove", event => {
   const c = columnAtPointer(event, headerScroller);
   if (c < 0) return;
-  const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
+  const clusterIdx = originalClusterAtVisibleColumn(c);
+  const cluster = data.clusters[clusterIdx];
   if (!cluster) return;
+  const pinned = pinnedAtPointer(event);
+  if (pinned >= 0) {
+    const state = stateAt(clusterIdx, pinned);
+    const why = state === "U" ? `: ${notSearchedReason(clusterIdx, pinned, false)}` : "";
+    setHover(rowOfGenome[pinned], c, `Pinned ${pinLabel(pinned)}, ${data.genomes[pinned]} / ${cluster.name}: ${labels[state]}${why}`);
+    return;
+  }
   setHover(-1, c, `${cluster.name}: ${cluster.annotation || "No annotation provided"}`);
 });
-headerScroller.addEventListener("mouseleave", () => setHover(-1, -1, defaultStatus));
-headerScroller.addEventListener("click", event => selectVisibleColumn(columnAtPointer(event, headerScroller)));
+headerScroller.addEventListener("mouseleave", () => setHover(-1, -1, idleStatus()));
+headerScroller.addEventListener("click", event => {
+  // A click on a pinned row opens that cell, as a click in the matrix does.
+  const pinned = pinnedAtPointer(event);
+  if (pinned >= 0) selectedGenome = pinned;
+  selectVisibleColumn(columnAtPointer(event, headerScroller));
+});
+if (treeHeadSpacer) {
+  treeHeadSpacer.addEventListener("click", event => {
+    const label = event.target.closest("[data-pin-label]");
+    if (!label) return;
+    const genomeIdx = Number(label.getAttribute("data-pin-label"));
+    inspectGenome(genomeIdx);
+    scrollToGenome(genomeIdx);
+  });
+}
 
 matrixPane.addEventListener("mousemove", event => {
   const c = columnAtPointer(event, matrixPane);
@@ -3553,7 +3849,9 @@ matrixPane.addEventListener("mousemove", event => {
   // The cell's own evidence first, the cluster's mechanism after and labelled as
   // the cluster's, so it does not read as the reason for this cell.
   const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
-  const stateLine = evidence ? `${labels[state]}: ${evidenceSummary(evidence)}` : labels[state];
+  const stateLine = evidence
+    ? `${labels[state]}: ${evidenceSummary(evidence)}`
+    : state === "U" ? `${labels.U}: ${notSearchedReason(clusterIdx, genomeIdx, false)}` : labels[state];
   setHover(r, c, `${data.genomes[genomeIdx]} / ${cluster.name}: ${stateLine}`);
   const key = `${clusterIdx}|${genomeIdx}`;
   if (tooltip.dataset.key !== key) {
@@ -3577,7 +3875,7 @@ matrixPane.addEventListener("mousemove", event => {
    Every evidence row as a list a reader can copy or download, built from the
    same per-cluster data the cell card reads. The preview is built when the
    drawer first opens; the full text only when it is asked for. */
-const CELL_STATE_WORDS = {P: "present", R: "corrected", N: "NSC", K: "kept out", A: "absent"};
+const CELL_STATE_WORDS = {P: "present", R: "corrected", N: "NSC", K: "kept out", A: "absent", U: "not searched"};
 const CORRECTION_COLUMNS = ["genome", "cluster", "cell_state", "decision", "rescue_type", "identity", "coverage", "contig", "start", "end", "strand", "synteny", "synteny_score", "orf_integrity_signal", "matrix_action", "publication_status", "rejection_reason", "risk_flags"];
 function correctionRecord(clusterIdx, row) {
   const value = column => {
@@ -3698,7 +3996,10 @@ function cellReadout(row, col) {
   if (!cluster || genomeIdx === undefined) return "";
   const state = stateAt(clusterIdx, genomeIdx);
   const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
-  return `${data.genomes[genomeIdx]}, ${cluster.name}: ${labels[state]}${evidence ? `, ${evidenceSummary(evidence)}` : ""}`;
+  const detail = evidence
+    ? `, ${evidenceSummary(evidence)}`
+    : state === "U" ? `, ${notSearchedReason(clusterIdx, genomeIdx, false)}` : "";
+  return `${data.genomes[genomeIdx]}, ${cluster.name}: ${labels[state]}${detail}`;
 }
 function moveCursor(row, col) {
   const rows = leafOrder.length;
@@ -3722,7 +4023,7 @@ matrixPane.addEventListener("focus", () => {
   const row = selectedGenome >= 0 ? rowOfGenome[selectedGenome] : Math.floor(matrixPane.scrollTop / cellH);
   moveCursor(Math.max(0, row), Math.max(0, selectedVisibleColumn()));
 });
-matrixPane.addEventListener("blur", () => setHover(-1, -1, defaultStatus));
+matrixPane.addEventListener("blur", () => setHover(-1, -1, idleStatus()));
 matrixPane.addEventListener("keydown", event => {
   if (event.metaKey || event.altKey) return;
   const view = viewportSize(matrixViewport);
@@ -3757,7 +4058,7 @@ matrixPane.addEventListener("keydown", event => {
 matrixPane.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
   tooltip.dataset.key = "";
-  setHover(-1, -1, defaultStatus);
+  setHover(-1, -1, idleStatus());
 });
 matrixPane.addEventListener("click", event => {
   // A cell is a cluster and a genome. Selecting only the cluster left an open
@@ -3948,9 +4249,9 @@ function drawFigure(forceWhole = false) {
   f.textBaseline = "middle";
   f.textAlign = "left";
   for (const state of shownStates()) {
-    f.fillStyle = colors[state];
+    f.fillStyle = state === "U" ? notSearchedPattern(f, 0, 0) : colors[state];
     f.fillRect(x, keyY, 10, 10);
-    if (state === "A") {
+    if (state === "A" || state === "U") {
       f.strokeStyle = strokes.A;
       f.strokeRect(x + 0.5, keyY + 0.5, 9, 9);
     }
@@ -4201,28 +4502,225 @@ function genomeQcHtml(genomeIdx) {
   const flags = qc.flags ? qc.flags.split(";").filter(Boolean).map(flag => flag.replace(/_/g, " ")) : [];
   return `<p class="qc-line"><span class="qc-chip ${escapeHtml(qc.status)}">QC ${escapeHtml(qc.status)}</span>${flags.length ? ` <small class="muted">${escapeHtml(flags.join("; "))}</small>` : ""}</p>`;
 }
+/* ---- Pinned genomes -------------------------------------------------------
+   Two genomes far apart in the tree are far apart in the matrix, and reading
+   one row against the other meant scrolling between them. A pinned genome's
+   row stays in a band under the column header, aligned with every column
+   whatever the scroll, and with two pinned the genome card counts and lists
+   the clusters where they differ, and can filter the matrix to those. */
+function pinBandHeight() {
+  return pinnedGenomes.length ? 4 + pinnedGenomes.length * (PIN_ROW_H + 2) : 0;
+}
+function inCorrectedMatrix(state) {
+  return state === "P" || state === "R" || state === "N";
+}
+function pinLabel(genomeIdx) {
+  const at = pinnedGenomes.indexOf(genomeIdx);
+  return at < 0 ? "" : PIN_LETTERS[at];
+}
+function applyPinChange() {
+  pinnedDiffCache = null;
+  if (pinnedGenomes.length < 2) diffOnly = false;
+  refreshVisibleClusters();
+  populateOptions();
+  resetMatrixCache();
+  syncMenuIndicators();
+  // The band changes the header's height, so size the header before the panes.
+  renderColumnHeader();
+  render(false);
+}
+function togglePin(genomeIdx) {
+  if (genomeIdx < 0 || genomeIdx >= data.genomes.length) return;
+  const name = data.genomes[genomeIdx];
+  const at = pinnedGenomes.indexOf(genomeIdx);
+  let note = "";
+  if (at >= 0) {
+    pinnedGenomes.splice(at, 1);
+  } else {
+    pinnedGenomes.push(genomeIdx);
+    if (pinnedGenomes.length > MAX_PINNED) {
+      note = ` ${data.genomes[pinnedGenomes.shift()]} was unpinned to make room.`;
+    }
+  }
+  applyPinChange();
+  const text = `${at >= 0 ? "Unpinned" : "Pinned"} ${name}.${note}`;
+  status.textContent = text;
+  announce(text);
+}
+function unpinAll() {
+  if (!pinnedGenomes.length) return;
+  pinnedGenomes = [];
+  applyPinChange();
+  status.textContent = "Unpinned both genomes.";
+  announce("Unpinned both genomes.");
+}
+/** The pinned pair's agreement over every cluster, in the corrected matrix. */
+function pinnedDiff() {
+  if (pinnedGenomes.length < 2) return null;
+  const [a, b] = pinnedGenomes;
+  if (pinnedDiffCache && pinnedDiffCache.a === a && pinnedDiffCache.b === b) return pinnedDiffCache;
+  const n = data.clusters.length;
+  const d = {a, b, both: 0, onlyA: 0, onlyB: 0, neither: 0, untested: 0, clusters: [], flags: new Uint8Array(n)};
+  for (let ci = 0; ci < n; ci += 1) {
+    const sa = stateAt(ci, a);
+    const sb = stateAt(ci, b);
+    const inA = inCorrectedMatrix(sa);
+    const inB = inCorrectedMatrix(sb);
+    if (inA === inB) {
+      if (inA) d.both += 1;
+      else d.neither += 1;
+      continue;
+    }
+    d.flags[ci] = 1;
+    d.clusters.push(ci);
+    if (inA) d.onlyA += 1;
+    else d.onlyB += 1;
+    // The side without the gene was never searched there: the difference is
+    // the input matrix's, not something Recore checked.
+    if ((inA ? sb : sa) === "U") d.untested += 1;
+  }
+  pinnedDiffCache = d;
+  return d;
+}
+function paintPinBand(context, {firstCol, lastCol, left, y0, width, selectedCol}) {
+  const h = pinBandHeight();
+  context.fillStyle = panelBg;
+  context.fillRect(0, y0, width, h);
+  const byProcess = matrixColorMode.value === "process";
+  const wide = cellW > 2;
+  const drawW = wide ? cellW - 1 : cellW;
+  pinnedGenomes.forEach((genomeIdx, k) => {
+    const y = y0 + 3 + k * (PIN_ROW_H + 2);
+    const hatch = anyNotSearched ? notSearchedPattern(context, left, y) : null;
+    const fillOf = (clusterIdx, state) => {
+      if (state === "U") return hatch || colors.A;
+      if (byProcess && (state === "P" || state === "N")) return processColor(processKind(data.clusters[clusterIdx]));
+      return colors[state];
+    };
+    // Runs of one fill are one rect each; wide cells keep their gutters.
+    let runFill = null;
+    let runX = 0;
+    let runEnd = 0;
+    const flush = () => {
+      if (runFill === null || runEnd <= runX) return;
+      context.fillStyle = runFill;
+      context.fillRect(runX, y, runEnd - runX, PIN_ROW_H);
+    };
+    for (let c = firstCol; c < lastCol; c += 1) {
+      const clusterIdx = originalClusterAtVisibleColumn(c);
+      if (clusterIdx < 0) continue;
+      const fill = fillOf(clusterIdx, stateAt(clusterIdx, genomeIdx));
+      if (wide) {
+        context.fillStyle = fill;
+        context.fillRect(c * cellW - left, y, drawW, PIN_ROW_H);
+        continue;
+      }
+      const x = cellW < 1 ? Math.floor(c * cellW - left) : c * cellW - left;
+      const xEnd = Math.max(x + 1, cellW < 1 ? Math.floor((c + 1) * cellW - left) : x + cellW);
+      if (fill === runFill && x <= runEnd) {
+        runEnd = Math.max(runEnd, xEnd);
+        continue;
+      }
+      flush();
+      runFill = fill;
+      runX = x;
+      runEnd = xEnd;
+    }
+    flush();
+    // Findings last, as in the matrix: below a pixel per column a corrected
+    // cell would otherwise lose its pixel to whatever came after it.
+    if (!wide && cellW < 1) {
+      for (let c = firstCol; c < lastCol; c += 1) {
+        const clusterIdx = originalClusterAtVisibleColumn(c);
+        const state = clusterIdx < 0 ? "" : stateAt(clusterIdx, genomeIdx);
+        if (state !== "R" && state !== "K") continue;
+        context.fillStyle = colors[state];
+        context.fillRect(Math.floor(c * cellW - left), y, 1, PIN_ROW_H);
+      }
+    }
+  });
+  if (selectedCol >= firstCol && selectedCol < lastCol) {
+    context.strokeStyle = selectStroke;
+    context.strokeRect(selectedCol * cellW - left + 0.5, y0 + 0.5, Math.max(1, cellW - 1), h - 1);
+  }
+}
+/* The names of the pinned rows, level with them in the tree pane's header. */
+function renderPinLabels() {
+  if (!treeHeadSpacer) return;
+  const key = pinnedGenomes.join(",");
+  if (key === pinLabelsKey) return;
+  pinLabelsKey = key;
+  treeHeadSpacer.innerHTML = pinnedGenomes.length
+    ? `<div class="pin-labels">${pinnedGenomes.map((gi, k) =>
+      `<div class="pin-label" data-pin-label="${gi}" title="${escapeHtml(`Pinned ${PIN_LETTERS[k]}: ${data.genomes[gi]}. Click to open it.`)}"><b>${PIN_LETTERS[k]}</b>${escapeHtml(data.genomes[gi])}</div>`).join("")}</div>`
+    : "";
+}
+function compareHtml() {
+  if (!pinnedGenomes.length) return "";
+  const pins = pinnedGenomes.map((gi, k) =>
+    `<li><b class="pin-letter">${PIN_LETTERS[k]}</b>` +
+    `<button type="button" class="link-btn" data-find-tip="${gi}">${escapeHtml(data.genomes[gi])}</button>` +
+    `<button type="button" class="icon-btn ghost-icon pin-x" data-unpin="${gi}" aria-label="${escapeHtml(`Unpin ${data.genomes[gi]}`)}" data-tip="Unpin">&times;</button></li>`).join("");
+  if (pinnedGenomes.length < 2) {
+    return `<section class="compare-card" aria-label="Pinned genomes"><div class="card-title">Pinned</div>` +
+      `<ul class="pin-list">${pins}</ul><p class="note-line">Its row stays under the column header. Pin a second genome to compare the two.</p></section>`;
+  }
+  const d = pinnedDiff();
+  const total = data.clusters.length;
+  const differ = d.onlyA + d.onlyB;
+  const rows = d.clusters.slice(0, DIFF_SHOWN).map(ci => {
+    const sa = stateAt(ci, d.a);
+    const sb = stateAt(ci, d.b);
+    const side = inCorrectedMatrix(sa) ? "A" : "B";
+    const untested = (side === "A" ? sb : sa) === "U" ? `; not searched in ${side === "A" ? "B" : "A"}` : "";
+    return `<li><button type="button" class="changed-cell" data-diff-cluster="${ci}">` +
+      `<span class="pair-sw"><i class="sw ${sa.toLowerCase()}"></i><i class="sw ${sb.toLowerCase()}"></i></span>` +
+      `<span class="changed-genome">${escapeHtml(data.clusters[ci].name)}</span>` +
+      `<small>only in ${side}${untested}</small></button></li>`;
+  }).join("");
+  const more = d.clusters.length > DIFF_SHOWN
+    ? `<p class="muted changed-more">and ${plural(d.clusters.length - DIFF_SHOWN, "more cluster")}; show only the clusters that differ to see them all in the matrix.</p>`
+    : "";
+  return `<section class="compare-card" aria-label="Pinned genomes compared">` +
+    `<div class="card-title">Pinned genomes compared</div><ul class="pin-list">${pins}</ul>` +
+    `<div class="count-rows">` +
+    countRow("in both", d.both, total, "p") +
+    countRow("only in A", d.onlyA, total, "pin-a") +
+    countRow("only in B", d.onlyB, total, "pin-b") +
+    countRow("in neither", d.neither, total, "a") +
+    `</div>` +
+    (d.untested ? `<p class="note-line">${escapeHtml(`${plural(d.untested, "difference")} of ${formatInt(differ)} rest on a gap that was never searched, so the input matrix, not Recore, says the gene is missing.`)}</p>` : "") +
+    `<div class="genome-actions">` +
+    (differ ? `<button type="button" class="ghost-btn" data-diff-only="1" aria-pressed="${diffOnly}">${diffOnly ? "Show every cluster" : `Show only the ${plural(differ, "cluster")} that differ`}</button>` : "") +
+    `<button type="button" class="ghost-btn" data-unpin-all="1">Unpin both</button></div>` +
+    (differ ? `<ul class="changed-cells">${rows}</ul>${more}` : `<p class="muted">The two genomes agree on every cluster in the corrected matrix.</p>`) +
+    `</section>`;
+}
 function renderGenomeDetails() {
   if (!genomeDetails) return;
   if (selectedGenome < 0) {
-    genomeDetails.innerHTML = "<p class='muted'>Click a tip in the phylogeny to inspect that genome.</p>";
+    genomeDetails.innerHTML = `${compareHtml()}<p class='muted'>Click a tip in the phylogeny to inspect that genome.</p>`;
     return;
   }
   const name = data.genomes[selectedGenome] || "";
-  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, K: 0, A: 0};
-  const assessed = totals.P + totals.R + totals.N + totals.K + totals.A;
+  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, K: 0, A: 0, U: 0};
+  const assessed = totals.P + totals.R + totals.N + totals.K + totals.A + totals.U;
   const lineage = lineageOfGenomeName(name);
   const node = findLeafByGenome(treeRoot, selectedGenome);
   const state = stateAt(selected, selectedGenome);
   const cluster = data.clusters[selected];
   const row = rowOfGenome[selectedGenome];
   const isReference = data.referenceGenome && data.referenceGenome.index === selectedGenome;
-  genomeDetails.innerHTML = `
+  const pinned = pinLabel(selectedGenome);
+  genomeDetails.innerHTML = `${compareHtml()}
     <div class="cluster-head">
       <h3>${escapeHtml(name)}</h3>
       ${isReference ? "<span class='pill'>reference</span>" : ""}
+      ${pinned ? `<span class='pill pin-pill'>pinned ${pinned}</span>` : ""}
     </div>
     <p class="muted">Tip ${row >= 0 ? formatInt(row + 1) : "?"} of ${formatInt(leafOrder.length)}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
     ${genomeQcHtml(selectedGenome)}
+    ${genomeWithoutFasta[selectedGenome] ? "<p class='note-line'>No FASTA file was found for this genome, so none of its gaps were searched.</p>" : ""}
     <dl class="cluster-dl">
       <dt>In the selected cluster</dt>
       <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong>${(() => {
@@ -4239,6 +4737,7 @@ function renderGenomeDetails() {
         : "not on the displayed tree"}</dd>
     </dl>
     <div class="genome-actions">
+      <button type="button" class="ghost-btn" data-pin-genome="${selectedGenome}" aria-pressed="${Boolean(pinned)}" data-tip="${pinned ? "Take this genome's row out of the pinned band" : "Keep this genome's row under the column header, to compare with another (P)"}">${pinned ? "Unpin" : "Pin to compare"}</button>
       <button type="button" class="ghost-btn" data-root-here="${selectedGenome}">Root the tree here</button>
       <button type="button" class="ghost-btn" data-find-tip="${selectedGenome}">Scroll to this tip</button>
     </div>`;
@@ -4246,6 +4745,31 @@ function renderGenomeDetails() {
 
 if (genomeDetails) {
   genomeDetails.addEventListener("click", event => {
+    const pin = event.target.closest("[data-pin-genome]");
+    if (pin) {
+      togglePin(Number(pin.getAttribute("data-pin-genome")));
+      return;
+    }
+    const unpin = event.target.closest("[data-unpin]");
+    if (unpin) {
+      togglePin(Number(unpin.getAttribute("data-unpin")));
+      return;
+    }
+    if (event.target.closest("[data-unpin-all]")) {
+      unpinAll();
+      return;
+    }
+    if (event.target.closest("[data-diff-only]")) {
+      setDiffOnly(!diffOnly);
+      return;
+    }
+    const diffCluster = event.target.closest("[data-diff-cluster]");
+    if (diffCluster) {
+      const clusterIdx = Number(diffCluster.getAttribute("data-diff-cluster"));
+      const cluster = data.clusters[clusterIdx];
+      if (cluster) selectMatrixClusterByName(cluster.name);
+      return;
+    }
     const rootHere = event.target.closest("[data-root-here]");
     if (rootHere) {
       rootOnGenome(Number(rootHere.getAttribute("data-root-here")));
@@ -4309,6 +4833,7 @@ function openPalette(scope) {
   if (scope) setPaletteScope(scope);
   palette.hidden = false;
   if (omnibox) omnibox.setAttribute("aria-expanded", "true");
+  search.setAttribute("aria-expanded", "true");
   search.select();
   search.focus();
   refreshPalette();
@@ -4317,6 +4842,8 @@ function openPalette(scope) {
 function closePalette() {
   if (!palette) return;
   palette.hidden = true;
+  search.setAttribute("aria-expanded", "false");
+  search.removeAttribute("aria-activedescendant");
   if (omnibox) {
     omnibox.setAttribute("aria-expanded", "false");
     omnibox.focus();
@@ -4407,13 +4934,17 @@ function refreshPalette() {
     paletteList.innerHTML = `<li class="palette-empty">Nothing matches ${query ? `"${escapeHtml(query)}"` : "the current filters"}.</li>`;
   } else {
     paletteList.innerHTML = rows.map((row, i) =>
-      `<li class="palette-item${i === 0 ? " active" : ""}" role="option" aria-selected="${i === 0}" data-index="${i}">` +
+      `<li class="palette-item${i === 0 ? " active" : ""}" id="paletteOpt${i}" role="option" aria-selected="${i === 0}" data-index="${i}">` +
       `<span class="palette-kind">${row.kind}</span>` +
       `<span class="palette-name">${markMatch(row.name, query)}</span>` +
       `<span class="palette-note">${escapeHtml(row.note)}</span>` +
       `<span class="palette-badge">${escapeHtml(row.badge)}</span></li>`
     ).join("");
   }
+  // The field is a combobox: the active option is announced without moving
+  // focus out of it.
+  if (rows.length) search.setAttribute("aria-activedescendant", "paletteOpt0");
+  else search.removeAttribute("aria-activedescendant");
   if (paletteCount) {
     paletteCount.textContent = total > rows.length
       ? `${formatInt(rows.length)} of ${formatInt(total)}`
@@ -4430,6 +4961,7 @@ function movePaletteActive(delta) {
     item.setAttribute("aria-selected", String(on));
     if (on) item.scrollIntoView({block: "nearest"});
   });
+  search.setAttribute("aria-activedescendant", `paletteOpt${paletteActive}`);
 }
 
 function commitPaletteRow(row) {
@@ -4472,9 +5004,11 @@ if (palette) {
     else if (event.key === "Enter") { event.preventDefault(); commitPaletteRow(paletteRows[paletteActive]); }
     else if (event.key === "Escape") { event.preventDefault(); closePalette(); }
     else if (event.key === "Tab") {
+      // Tab and Shift+Tab walk the scopes, and keep focus in the dialog.
       event.preventDefault();
       const order = ["all", "cluster", "genome"];
-      setPaletteScope(order[(order.indexOf(paletteScope) + 1) % order.length]);
+      const step = event.shiftKey ? order.length - 1 : 1;
+      setPaletteScope(order[(order.indexOf(paletteScope) + step) % order.length]);
       refreshPalette();
     }
   });
@@ -4487,9 +5021,65 @@ document.querySelectorAll(".status-hint kbd").forEach(node => {
   if (node.textContent === "⌘K") node.textContent = isApple ? "⌘K" : "Ctrl K";
 });
 
+/* The sheet is a modal dialog: opening moves focus into it, Tab stays inside,
+   and closing hands focus back to whatever opened it. */
+let sheetOpener = null;
 function setSheetOpen(open) {
   if (!shortcutSheet) return;
+  if (open === !shortcutSheet.hidden) return;
   shortcutSheet.hidden = !open;
+  if (open) {
+    sheetOpener = document.activeElement;
+    document.getElementById("closeShortcuts")?.focus();
+  } else if (sheetOpener && document.contains(sheetOpener)) {
+    sheetOpener.focus();
+    sheetOpener = null;
+  }
+}
+/** Keep Tab inside `container`; true when it moved focus. */
+function trapFocus(container, event) {
+  if (event.key !== "Tab" || !container) return false;
+  const items = [...container.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+    .filter(el => !el.disabled && el.getClientRects().length);
+  if (!items.length) return false;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const inside = container.contains(document.activeElement);
+  if (event.shiftKey && (document.activeElement === first || !inside)) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && (document.activeElement === last || !inside)) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+if (shortcutSheet) {
+  shortcutSheet.addEventListener("keydown", event => trapFocus(shortcutSheet.querySelector(".sheet-box"), event));
+}
+/* One-letter shortcuts can be switched off (WCAG 2.1.4): they fire on speech
+   input and on stray keys. The choice is remembered in this browser only. */
+let singleKeysOn = true;
+try {
+  singleKeysOn = localStorage.getItem("recore.singleKeys") !== "off";
+} catch (_e) {
+  singleKeysOn = true;
+}
+const singleKeysToggle = document.getElementById("singleKeys");
+if (singleKeysToggle) {
+  singleKeysToggle.checked = singleKeysOn;
+  singleKeysToggle.addEventListener("change", () => {
+    singleKeysOn = singleKeysToggle.checked;
+    try {
+      localStorage.setItem("recore.singleKeys", singleKeysOn ? "on" : "off");
+    } catch (_e) {
+      // Private windows may refuse storage; the switch still holds for this visit.
+    }
+    status.textContent = singleKeysOn ? "Single-key shortcuts on." : "Single-key shortcuts off. Ctrl or Cmd K still finds, and the keyboard button lists the rest.";
+  });
 }
 if (shortcutsButton) shortcutsButton.addEventListener("click", () => setSheetOpen(shortcutSheet.hidden));
 const sheetScrim = document.getElementById("sheetScrim");
@@ -4510,10 +5100,25 @@ document.addEventListener("keydown", event => {
     return;
   }
   if (event.key === "Escape") {
+    // A tooltip goes first and on its own (WCAG 1.4.13), without closing
+    // anything else.
+    if (tooltip && tooltip.style.display === "block") {
+      tooltip.style.display = "none";
+      tooltip.dataset.key = "";
+      return;
+    }
     if (paletteIsOpen()) { closePalette(); return; }
     if (inspectorPane && inspectorPane.classList.contains("sheet-open")) { closeInspectorSheet(); return; }
     if (shortcutSheet && !shortcutSheet.hidden) { setSheetOpen(false); return; }
-    if (anyPaneMenuOpen()) { setPaneMenu(null, false); return; }
+    if (anyPaneMenuOpen()) {
+      // Focus left inside a menu that closes would fall to the page; it goes
+      // back to the button that opened the menu.
+      const open = paneMenus.find(({menu}) => !menu.hidden);
+      const hadFocus = open && open.menu.contains(document.activeElement);
+      setPaneMenu(null, false);
+      if (hadFocus) open.button.focus();
+      return;
+    }
     return;
   }
   if (event.defaultPrevented || paletteIsOpen() || typingInField(event.target)) return;
@@ -4525,6 +5130,8 @@ document.addEventListener("keydown", event => {
   // A focused seam uses the arrows to resize itself.
   if (event.target.closest && event.target.closest("[role='separator']")) return;
 
+  // With single-key shortcuts off, only the arrows (not character keys) act.
+  if (!singleKeysOn && event.key.length === 1) return;
   switch (event.key) {
     case "/":
       event.preventDefault();
@@ -4573,6 +5180,13 @@ document.addEventListener("keydown", event => {
         status.textContent = "Tree rerooted: Midpoint.";
       }
       break;
+    case "p": {
+      // The genome under the keyboard cursor, else the open one.
+      const genomeIdx = document.activeElement === matrixPane && cursor.row >= 0 ? leafOrder[cursor.row] : selectedGenome;
+      if (genomeIdx >= 0) togglePin(genomeIdx);
+      else status.textContent = "Open a genome first: click a tip, or a cell, then press P to pin it.";
+      break;
+    }
     case "z":
       fitZoomToData(true);
       resetMatrixCache();
@@ -4709,7 +5323,7 @@ if (overviewStrip) {
    selection, not only a click on a tip. */
 let genomeCardKey = "";
 afterRender = () => {
-  const key = `${selected}|${selectedGenome}`;
+  const key = `${selected}|${selectedGenome}|${pinnedGenomes.join(",")}|${diffOnly}`;
   if (key === genomeCardKey) return;
   genomeCardKey = key;
   renderGenomeDetails();
