@@ -304,6 +304,8 @@ const LABEL_HORIZONTAL_CELL_W = 54;
 const LABEL_BAND_H_FLAT = 26;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 const defaultStatus = "Hover a cell for its evidence, click it for the full row. Ctrl or Cmd and the wheel zoom columns, Alt and the wheel zoom rows, Z fits everything. Drag the seams between panes to resize.";
+// Below this width the inspector is a bottom sheet (see report.css).
+const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 1100px)") : null;
 let selected = 0;
 let selectedGenome = -1;
 // True while an exported figure is being drawn (see drawFigure).
@@ -1932,7 +1934,9 @@ function applyLayout() {
   const measured = bodyW >= MIN_TREE_W + MIN_MATRIX_W;
   let treeW = layoutState.treeW;
   let inspectorW = layoutState.inspectorW;
-  const inspectorShown = !!inspectorPane && getComputedStyle(inspectorPane).display !== "none";
+  // A bottom sheet (narrow windows) floats over the workspace and takes no width.
+  const inspectorStyle = inspectorPane ? getComputedStyle(inspectorPane) : null;
+  const inspectorShown = !!inspectorStyle && inspectorStyle.display !== "none" && inspectorStyle.position !== "fixed";
   if (measured) {
     // The matrix keeps its floor; the tree and the inspector give way first.
     const used = treeW + (inspectorShown ? inspectorW : 0) + 12;
@@ -3069,8 +3073,10 @@ function fitZoomToData(whole = false) {
   const tips = Math.max(1, leafOrder.length);
   const cols = Math.max(1, visibleClusters.length);
   const bodyW = viewerBody ? viewerBody.clientWidth : 0;
+  // The inspector takes a column only when it is not a bottom sheet.
+  const inspectorTakesWidth = !(narrowQuery && narrowQuery.matches);
   const matrixW = bodyW > 0
-    ? Math.max(220, bodyW - layoutState.treeW - layoutState.inspectorW - 24)
+    ? Math.max(220, bodyW - layoutState.treeW - (inspectorTakesWidth ? layoutState.inspectorW : 0) - 24)
     : FIT_TARGET_W;
   const viewH = matrixViewport ? matrixViewport.clientHeight : 0;
   const targetH = viewH > 120 ? viewH - 4 : FIT_TARGET_H;
@@ -3490,6 +3496,7 @@ function columnAtPointer(event, element) {
 }
 function selectVisibleColumn(c) {
   if (c < 0) return;
+  openInspectorSheet();
   selected = originalClusterAtVisibleColumn(c);
   selectedSyntenyReference = false;
   populateOptions();
@@ -4138,11 +4145,20 @@ if (details) {
 }
 if (genomeTab) genomeTab.addEventListener("click", () => setInspectorTab("genome"));
 
+/* In a narrow window the inspector is a bottom sheet: a selection opens it. */
+function openInspectorSheet() {
+  if (inspectorPane && narrowQuery && narrowQuery.matches) inspectorPane.classList.add("sheet-open");
+}
+function closeInspectorSheet() {
+  if (inspectorPane) inspectorPane.classList.remove("sheet-open");
+}
+document.getElementById("closeInspector")?.addEventListener("click", closeInspectorSheet);
 function inspectGenome(genomeIdx, {focus = true} = {}) {
   if (genomeIdx < 0) return;
   selectedGenome = genomeIdx;
   renderGenomeDetails();
   if (focus) setInspectorTab("genome");
+  openInspectorSheet();
 }
 
 function genomeQc(genomeIdx) {
@@ -4460,6 +4476,7 @@ document.addEventListener("keydown", event => {
   }
   if (event.key === "Escape") {
     if (paletteIsOpen()) { closePalette(); return; }
+    if (inspectorPane && inspectorPane.classList.contains("sheet-open")) { closeInspectorSheet(); return; }
     if (shortcutSheet && !shortcutSheet.hidden) { setSheetOpen(false); return; }
     if (anyPaneMenuOpen()) { setPaneMenu(null, false); return; }
     return;

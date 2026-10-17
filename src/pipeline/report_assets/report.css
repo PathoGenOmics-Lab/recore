@@ -1712,7 +1712,7 @@ kbd {
   .readout:nth-child(7) { display: none; }
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1360px) {
   .topbar-title,
   .brand-rule { display: none; }
 }
@@ -3123,6 +3123,11 @@ tr[data-cluster]:focus-visible {
   border: 0;
 }
 
+.sheet-close {
+  display: none !important;
+  margin-left: auto;
+}
+
 .inspector {
   flex: 0 0 auto;
   width: var(--inspector-w, 320px);
@@ -3381,13 +3386,34 @@ tr[data-cluster]:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* A narrow window cannot give the inspector a column, and hiding it meant a
+   click opened tabs nobody could see. It becomes a sheet over the bottom of
+   the workspace instead, opened by a selection and closed with x or Esc. */
 @media (max-width: 1100px) {
-  .inspector,
   .inspector-handle {
     display: none;
   }
-  .topbar-title {
-    display: none;
+  .inspector {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto !important;
+    height: 45vh;
+    z-index: 40;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    background: var(--bg-elev);
+    box-shadow: var(--shadow-3);
+    overflow: auto;
+    transform: translateY(100%);
+    transition: transform var(--transition);
+  }
+  .inspector.sheet-open {
+    transform: translateY(0);
+  }
+  .sheet-close {
+    display: inline-flex !important;
   }
 }
 

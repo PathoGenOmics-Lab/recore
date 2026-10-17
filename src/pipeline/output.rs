@@ -2796,7 +2796,7 @@ fn explorer_workspace_html(
     // Inspector. Tabbed, because a tip click should be able to answer a question
     // about a genome without evicting what you know about the cluster.
     html.push_str("<aside class='pane inspector' id='inspectorPane' aria-label='Inspector'>");
-    html.push_str("<header class='pane-head inspector-head'><div class='tab-bar' role='tablist' aria-label='Inspector'><button type='button' id='clusterTab' class='tab active' role='tab' aria-selected='true' aria-controls='clusterDetails' data-panel='cluster'>Cluster</button><button type='button' id='genomeTab' class='tab' role='tab' aria-selected='false' aria-controls='genomeDetails' data-panel='genome'>Genome</button></div></header>");
+    html.push_str("<header class='pane-head inspector-head'><div class='tab-bar' role='tablist' aria-label='Inspector'><button type='button' id='clusterTab' class='tab active' role='tab' aria-selected='true' aria-controls='clusterDetails' data-panel='cluster'>Cluster</button><button type='button' id='genomeTab' class='tab' role='tab' aria-selected='false' aria-controls='genomeDetails' data-panel='genome'>Genome</button></div><button id='closeInspector' type='button' class='icon-btn ghost-icon sheet-close' aria-label='Close the inspector' data-tip='Close (Esc)'>&times;</button></header>");
     html.push_str("<div id='clusterDetails' class='cluster-details' role='tabpanel' aria-labelledby='clusterTab'></div>");
     html.push_str("<div id='genomeDetails' class='cluster-details' role='tabpanel' aria-labelledby='genomeTab' hidden></div>");
     html.push_str("</aside>");
