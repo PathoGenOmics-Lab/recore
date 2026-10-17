@@ -669,7 +669,7 @@ pub fn run(args: &Args) -> Result<()> {
             .count();
         let skipped = rescues.iter().filter(|r| r.synteny_ok.is_none()).count();
         info!(
-            "Synteny: {} validated, {} failed, {} skipped (no flanking genes found)",
+            "Synteny: {} validated, {} failed, {} not assessed (no clustered flanking genes, or no annotated copy to compare with)",
             validated, failed, skipped
         );
         if validated == 0 && failed == 0 && skipped > 0 {

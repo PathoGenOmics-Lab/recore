@@ -2770,3 +2770,27 @@ fn report_reads_tsvs_without_csv_quoting() {
     assert_eq!(rows[0], ("review".to_string(), "missing_gff".to_string()));
     assert_eq!(rows[1].0, "pass");
 }
+
+/// A cluster whose carriers are all off the tree has no phylogenetic reading.
+/// It was rated "moderate" and scored above a cluster with no tree at all.
+#[test]
+fn clusters_absent_from_the_tree_are_not_assessed() {
+    let phylo = evolution::PhyloPatternSummary {
+        assessed: true,
+        matched_tips: 11,
+        present_tips: 0,
+        absent_tips: 11,
+        parsimony_changes: 0,
+        gains: 0,
+        losses: 0,
+        root_state: "absent",
+        root_state_ambiguous: false,
+        carrier_monophyly: false,
+        max_carrier_clade_fraction: 0.0,
+        carrier_mrca_tips: 0,
+        carrier_mrca_purity: 0.0,
+        dollo_loss_events_in_mrca: 0,
+        pattern: "absent_from_tree",
+    };
+    assert_eq!(evolution::phylogenetic_reliability(&phylo), "not_assessed");
+}

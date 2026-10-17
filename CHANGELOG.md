@@ -20,6 +20,16 @@ and Recore uses semantic versioning.
   seqid was mapped onto a differently named FASTA contig.
 - `benchmarks/recore_report.py` writes `recore_compact_report.html` and refuses
   to replace the binary's interactive `recore_report.html` without `--force`.
+- Synteny no longer FAILs, and rejects the rescue as an incompatible context,
+  when no genome carrying the cluster has it in a GFF: with nothing to compare
+  with, synteny is left unassessed. Reference copies found next to no clustered
+  gene still FAIL.
+- Overlapping rescues are resolved strongest first, so a rescue that loses no
+  longer removes another one whose only conflict was with it.
+- A cluster whose carriers are all off the tree reads `not_assessed` for
+  phylogenetic reliability and blink, instead of `moderate`.
+- `cluster_locus_summary.tsv` writes an empty `dominant_context_fraction` when
+  no context could be mapped, instead of 0.000.
 
 ### Changed
 

@@ -219,7 +219,7 @@ For the rescued gene at position (contig, start, end) in the target genome:
 6. Recore keeps the best assessment across neighbour windows, preferring passing assessments, then higher score, then the smallest informative window.
 7. Otherwise -> FAIL.
 
-Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty.
+Explicit FAIL candidates are written to `synteny_rejected_report.tsv` and are not used to correct the output matrix. Rescues with no mappable flanking context remain in `rescue_report.tsv` with `synteny` empty, and so do rescues whose context no genome carrying the cluster can be compared with (for example when those genomes have no GFF): a missing comparison is not an incompatible one.
 
 PARALOG candidates are more conservative: if they do not have explicit `synteny=PASS`, they are written to `paralog_rejected_report.tsv` and are not inserted into the corrected matrix.
 

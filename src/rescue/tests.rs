@@ -402,6 +402,102 @@ fn test_synteny_context_rejects_different_locus_paralog() {
 }
 
 #[test]
+fn test_synteny_without_any_reference_annotation_is_not_assessed() {
+    // Same target, but the genome carrying the cluster has no GFF: there is
+    // nothing to compare with, which used to be a FAIL that rejected the rescue.
+    let pa = PresenceAbsence::new_for_test(
+        vec![
+            "target_gene".into(),
+            "target_up".into(),
+            "target_down".into(),
+        ],
+        vec!["target".into(), "reference".into()],
+        vec![
+            vec!["".into(), "ref_center".into()],
+            vec!["target_up_gene".into(), "".into()],
+            vec!["target_down_gene".into(), "".into()],
+        ],
+    );
+
+    let target_gff = GffIndex::build(vec![
+        GffGene {
+            contig: "chr".into(),
+            start: 100,
+            end: 200,
+            strand: '+',
+            gene_id: "target_up_gene".into(),
+        },
+        GffGene {
+            contig: "chr".into(),
+            start: 200,
+            end: 300,
+            strand: '+',
+            gene_id: "target_center".into(),
+        },
+        GffGene {
+            contig: "chr".into(),
+            start: 300,
+            end: 400,
+            strand: '+',
+            gene_id: "target_down_gene".into(),
+        },
+    ]);
+    let ref_gff = GffIndex::build(vec![
+        GffGene {
+            contig: "chr".into(),
+            start: 100,
+            end: 200,
+            strand: '+',
+            gene_id: "ref_up_other".into(),
+        },
+        GffGene {
+            contig: "chr".into(),
+            start: 200,
+            end: 300,
+            strand: '+',
+            gene_id: "ref_center".into(),
+        },
+        GffGene {
+            contig: "chr".into(),
+            start: 300,
+            end: 400,
+            strand: '+',
+            gene_id: "ref_down_other".into(),
+        },
+    ]);
+
+    let mut gff_indices = HashMap::new();
+    gff_indices.insert(GenomeIdx(0), target_gff);
+    drop(ref_gff);
+
+    let mut g2c = HashMap::new();
+    g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
+    g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+
+    let mut rescue = RescueEvent {
+        cluster_idx: ClusterIdx(0),
+        genome_idx: GenomeIdx(0),
+        rescue_type: RescueType::Split {
+            other_cluster: "paralogous_cluster".into(),
+        },
+        identity: 99.0,
+        coverage: 99.0,
+        contig: "chr".into(),
+        start: 200,
+        end: 300,
+        strand: '+',
+        annotation_match: Some("target_center".into()),
+        confidence: 1.0,
+        synteny_ok: None,
+        synteny_evidence: SyntenyEvidence::default(),
+        fragment_evidence: FragmentEvidence::default(),
+    };
+
+    validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
+    assert_eq!(rescue.synteny_ok, None);
+}
+
+#[test]
 fn test_synteny_uses_all_present_genomes_deterministically() {
     let pa = PresenceAbsence::new_for_test(
         vec![
@@ -2282,4 +2378,35 @@ fn test_stop_in_frame_is_not_hidden_by_a_clean_other_frame() {
         check_internal_stops_in_cds("chr", 0, seq.len() as u64, '+', &contigs),
         Some(1)
     );
+}
+
+/// A [1000,2000] 0.8, B [1000,1600] 0.5, C [1500,2600] 0.9. B overlaps C by
+/// 17% of B, so B's only real conflict is A, which loses to C: B and C stay.
+/// The old pairwise sweep let A remove B before A itself was removed.
+#[test]
+fn a_rescue_that_loses_does_not_remove_an_innocent_one() {
+    let mk = |cluster: usize, start: u64, end: u64, confidence: f64| RescueEvent {
+        cluster_idx: ClusterIdx(cluster),
+        genome_idx: GenomeIdx(0),
+        rescue_type: RescueType::Dropped,
+        identity: 99.0,
+        coverage: 99.0,
+        contig: "ctg".into(),
+        start,
+        end,
+        strand: '+',
+        annotation_match: None,
+        confidence,
+        synteny_ok: None,
+        synteny_evidence: Default::default(),
+        fragment_evidence: Default::default(),
+    };
+    let mut rescues = vec![
+        mk(0, 1000, 2000, 0.8),
+        mk(1, 1000, 1600, 0.5),
+        mk(2, 1500, 2600, 0.9),
+    ];
+    resolve_conflicts(&mut rescues);
+    let kept: Vec<usize> = rescues.iter().map(|r| r.cluster_idx.val()).collect();
+    assert_eq!(kept, vec![1, 2]);
 }

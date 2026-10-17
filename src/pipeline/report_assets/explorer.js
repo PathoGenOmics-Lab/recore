@@ -3497,7 +3497,11 @@ function columnAtPointer(event, element) {
 function selectVisibleColumn(c) {
   if (c < 0) return;
   openInspectorSheet();
-  selected = originalClusterAtVisibleColumn(c);
+  const next = originalClusterAtVisibleColumn(c);
+  // A new cluster starts on its first synteny block, as stepping does; the
+  // previous cluster's block number used to carry over.
+  if (next !== selected) selectedSyntenyBlock = 0;
+  selected = next;
   selectedSyntenyReference = false;
   populateOptions();
   render(true);
@@ -4330,24 +4334,29 @@ function setPaletteScope(scope) {
 
 /* Name hits beat annotation hits, and a prefix beats a hit in the middle, so the
    thing you half-remembered the start of comes first. */
-function scoreHit(name, note, query) {
+/* Lower is better. An exact name, with its case, beats the same name in
+   another case: Enter on "Group_1" opened group_1 when both existed. */
+function scoreHit(name, note, query, raw = query) {
   const lowName = name.toLowerCase();
-  if (!query) return 3;
-  if (lowName.startsWith(query)) return 0;
-  if (lowName.includes(query)) return 1;
-  if (note && note.toLowerCase().includes(query)) return 2;
+  if (!query) return 5;
+  if (name === raw) return 0;
+  if (lowName === query) return 1;
+  if (lowName.startsWith(query)) return 2;
+  if (lowName.includes(query)) return 3;
+  if (note && note.toLowerCase().includes(query)) return 4;
   return -1;
 }
 
 function buildPaletteRows() {
-  const query = search.value.trim().toLowerCase();
+  const raw = search.value.trim();
+  const query = raw.toLowerCase();
   const hits = [];
   if (paletteScope !== "genome") {
     for (let i = 0; i < visibleClusters.length; i += 1) {
       const idx = visibleClusters[i];
       const cluster = data.clusters[idx];
       const note = cluster.annotation || "";
-      const score = scoreHit(cluster.name, note, query);
+      const score = scoreHit(cluster.name, note, query, raw);
       if (score < 0) continue;
       hits.push({
         kind: "cluster",
@@ -4365,7 +4374,7 @@ function buildPaletteRows() {
       const name = data.genomes[genomeIdx] || "";
       const lineage = lineageOfGenomeName(name);
       const note = lineage && lineage !== "unknown" ? `lineage ${lineage}` : "";
-      const score = scoreHit(name, note, query);
+      const score = scoreHit(name, note, query, raw);
       if (score < 0) continue;
       hits.push({
         kind: "genome",

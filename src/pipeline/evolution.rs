@@ -1081,7 +1081,9 @@ pub(super) fn paralog_locus_risk(
 }
 
 pub(super) fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static str {
-    if !phylo.assessed {
+    // No carrier on the tree is no reading at all, not a moderate one: it used
+    // to score above a cluster with no tree.
+    if !phylo.assessed || phylo.pattern == "absent_from_tree" {
         return "not_assessed";
     }
     if matches!(
@@ -1340,7 +1342,7 @@ pub(super) fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
 }
 
 fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
-    if !phylo.assessed {
+    if !phylo.assessed || phylo.pattern == "absent_from_tree" {
         "not_assessed"
     } else if matches!(
         phylo.pattern,
@@ -2308,7 +2310,13 @@ pub(super) fn write_cluster_locus_contexts(
                 summary.n_unresolved.to_string(),
                 summary.n_unique_contexts.to_string(),
                 summary.dominant_count.to_string(),
-                format!("{:.3}", summary.dominant_fraction),
+                // 0 of 0 is no reading, not a fraction of 0: blank, so a filter
+                // for multi-locus clusters (fraction < 0.5) does not pick it up.
+                if summary.n_mapped == 0 {
+                    String::new()
+                } else {
+                    format!("{:.3}", summary.dominant_fraction)
+                },
                 summary.interpretation.to_string(),
             ],
         )?;

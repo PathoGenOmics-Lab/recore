@@ -45,15 +45,17 @@ Primary output. One row per rescued gene. Tab-separated.
 | `fragment_same_cds` | bool | Whether the chain is contained in one compatible CDS |
 | `fragment_note` | string | Fragment interpretation, such as `alignment_split`, `biological_gap`, `frameshift_gap`, or `same_cds_alignment_split` |
 
+Fields that do not apply to a row (the fragment columns of a single-hit rescue, an annotation match where none overlapped) are written empty, and booleans are `TRUE` or `FALSE`.
+
 ### Example
 
 ```tsv
 gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	synteny_score	synteny_support_n	synteny_reference_contexts	synteny_neighbors	synteny_upstream_matches	synteny_downstream_matches	orf_integrity_signal	annotation_match	fragment_n	fragment_query_gap_bp	fragment_target_gap_bp	fragment_colinear	fragment_same_cds	fragment_note
-group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	1.000	12	18	1	1	1	in_frame_span	Rv0210c	NA	NA	NA	NA	NA	NA
-group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS	0.833	4	5	2	1	1	in_frame_span		NA	NA	NA	NA	NA	missing_cds_no_substantial_gff_overlap
-group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	1.000	8	9	1	1	1	in_frame_span	Rv1099c	NA	NA	NA	NA	NA	NA
-group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	0.750	3	4	2	1	1	disrupted_orf	Rv2651c	NA	NA	NA	NA	NA	NA
-group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS	1.000	6	6	1	1	1	fragmented_orf		2	9	9	true	false	alignment_split
+group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	1.000	12	18	1	1	1	in_frame_span	Rv0210c						
+group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS	0.833	4	5	2	1	1	in_frame_span							missing_cds_no_substantial_gff_overlap
+group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	1.000	8	9	1	1	1	in_frame_span	Rv1099c						
+group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	0.750	3	4	2	1	1	disrupted_orf	Rv2651c						
+group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS	1.000	6	6	1	1	1	fragmented_orf		2	9	9	TRUE	FALSE	alignment_split
 ```
 
 ### Filtering suggestions
@@ -267,7 +269,7 @@ Written when GFF annotations are loaded. One row per cluster.
 | `n_unresolved_gene_ids` | Present genomes where the cell gene ID could not be resolved in the GFF |
 | `n_unique_contexts` | Number of distinct upstream/downstream context signatures |
 | `dominant_context_count` | Number of genomes in the largest context |
-| `dominant_context_fraction` | Dominant context count divided by mapped contexts |
+| `dominant_context_fraction` | Dominant context count divided by mapped contexts; blank when no context could be mapped |
 | `interpretation` | `stable_single_locus`, `stable_single_locus_minor_noise`, `mostly_stable_review_minor_contexts`, `possible_multilocus_or_paralog`, or `insufficient_context` |
 
 Clusters flagged as `possible_multilocus_or_paralog` are not automatically
@@ -677,7 +679,7 @@ timestamps removed:
 [INFO recore::pipeline] Raw rescues before filtering: 11
 [INFO recore::pipeline] Upgraded 3 sequence-only rescues to PSEUDOGENE:internal_stop
 [INFO recore::pipeline] Validating synteny...
-[INFO recore::pipeline] Synteny: 11 validated, 0 failed, 0 skipped (no flanking genes found)
+[INFO recore::pipeline] Synteny: 11 validated, 0 failed, 0 not assessed (no clustered flanking genes, or no annotated copy to compare with)
 [INFO recore::pipeline] Final rescues: 11 (DROPPED: 6, MISSING_CDS: 2, SPLIT: 0, FRAGMENTED: 0, ALIGNMENT_SPLIT: 0, START_VARIANT: 0, PARALOG: 0, PSEUDOGENE: 3)
 [INFO recore::pipeline] Core genome: 14 → 17 (+3)
 ```
