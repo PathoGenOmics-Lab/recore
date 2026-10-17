@@ -1,13 +1,26 @@
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/recore_logo_dark.svg">
-    <img src="assets/recore_logo.svg" alt="Recore" width="450">
-  </picture>
+  <a href="https://pathogenomics-lab.github.io/recore/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/recore_logo_dark.svg">
+      <img src="assets/recore_logo.svg" alt="Recore" width="420">
+    </picture>
+  </a>
 
-**Post-hoc rescue, audit, and quality control of pangenome presence/absence matrices.**
-**Pure Rust · one external dependency · Linux and macOS**
+### Missing from the matrix. Still in the genome.
 
-[Documentation](#documentation) · [Install](#installation) · [Quick start](#quick-start) · [Tutorial](docs/getting-started/tutorial.md) · [Citation](#citation)
+Recore searches every empty cell of a pangenome matrix in the assemblies,<br>
+puts back the genes that are really there, and keeps the evidence for each one.
+
+<a href="https://pathogenomics-lab.github.io/recore/"><img src="https://img.shields.io/badge/Open_the_website_%E2%86%92-5aa2ff?style=for-the-badge" alt="Open the website"></a>
+
+[Install](https://pathogenomics-lab.github.io/recore/#start) ·
+[Your command](https://pathogenomics-lab.github.io/recore/#command) ·
+[Try it](https://pathogenomics-lab.github.io/recore/#try) ·
+[How it works](https://pathogenomics-lab.github.io/recore/how-it-works.html) ·
+[Docs](https://pathogenomics-lab.github.io/recore/documentation.html) ·
+[Reference](https://pathogenomics-lab.github.io/recore/reference.html)
+
+<sub>For Panaroo, Roary, PPanGGOLiN, PanTA and PIRATE · pure Rust · Linux and macOS</sub>
 
 <a href="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml"><img src="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
@@ -15,151 +28,171 @@
 
 </div>
 
-## What is Recore?
+__Paula Ruiz-Rodriguez<sup>1</sup>__
+__and Mireia Coscolla<sup>1</sup>__
+<br>
+<sub> 1. I<sup>2</sup>SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain </sub>
 
-Pangenome pipelines can mark a gene as absent even when the sequence is still
-present in the assembly. These false absences inflate the accessory genome,
-shrink the core genome, and create lineage-specific signals that are artefacts
-of graph cleaning rather than biology.
+<p align="center">
+  <a href="https://pathogenomics-lab.github.io/recore/how-it-works.html"><img src="assets/how-it-works.gif" alt="How Recore decides one empty cell, in seven steps: the matrix says absent, take the gene's sequence, search the assembly, look at what is there, check the neighbours, decide, write it down" width="760"></a><br>
+  <sub>One empty cell, seven steps. <a href="https://pathogenomics-lab.github.io/recore/how-it-works.html">The interactive version</a> lets you pick what the search finds.</sub>
+</p>
 
-Recore searches every absent cell against the genome assemblies with minimap2,
-classifies the evidence, validates orthology against annotation and synteny when
-they are available, and writes both:
+## 1 · Install
 
-- a **Panaroo-compatible corrected binary matrix** for downstream analyses,
-  as CSV and as the 1/0 `.Rtab` that pyseer and most R code read
-- a **multistate evidence matrix** for audit, plotting, and manuscript review
-
-It reads the output of Panaroo, Roary, PPanGGOLiN, PanTA and PIRATE, can write
-the rescued genes as nucleotide and protein FASTA for functional annotation,
-and with `--search-cache` reruns with another policy or threshold without
-aligning again.
-
-The central design choice is conservative. Recore separates *sequence evidence*
-from *clean binary presence*: full-length evidence can be corrected in the binary
-matrix, while partial homology, pseudogenes, paralog traps and
-incompatible-context hits stay visible in audit outputs instead of silently
-becoming presence calls.
-
-## Installation
-
-Needs [Rust 1.85+](https://www.rust-lang.org/tools/install) to build and
-[minimap2](https://github.com/lh3/minimap2) on `PATH` to run.
+Two commands. Recore uses [minimap2](https://github.com/lh3/minimap2) to search.
 
 ```bash
 conda install -c bioconda minimap2     # or: brew install minimap2 / sudo apt install minimap2
 cargo install --git https://github.com/PathoGenOmics-Lab/recore --locked
-recore --version
 ```
 
-Or build a clone with `cargo build --release` (the binary lands at
-`target/release/recore`). `--nsc-engine mmseqs2` also needs
-[MMseqs2](https://github.com/soedinglab/MMseqs2) on `PATH`; the default engine
-is built in.
+Needs Rust 1.85 or newer ([rustup.rs](https://rustup.rs)), about a minute to
+build. Check with `recore --version`. From a clone, `cargo build --release`
+puts the binary at `target/release/recore`.
 
-## Quick start
+## 2 · Your command
+
+Give it what your pangenome tool wrote and one assembly per genome, named like
+the matrix columns.
 
 ```bash
 recore \
   -p gene_presence_absence.csv \
   -r pan_genome_reference.fa \
   -g genomes/ \
-  -a annotations/ \
-  --synteny --multi-allele \
-  --matrix-policy balanced \
-  --reference-genome AS00146 \
-  --tree species.tree \
+  -a annotations/ --synteny \
   --write-html-report \
   -t 8 -o recore_output/
 ```
 
-Four outputs answer most questions:
+That is Panaroo with GFF files.
+[The website writes it for your tool and the files you have](https://pathogenomics-lab.github.io/recore/#command),
+and [Inputs](docs/getting-started/inputs.md) says how the names have to match.
 
-| File | For |
-|---|---|
-| `gene_presence_absence_recore.csv` | the corrected binary matrix, for downstream tools |
-| `gene_presence_absence_recore.Rtab` | the same matrix as 1/0, for pyseer and Rtab readers |
-| `gene_presence_absence_recore_states.csv` | audit and figures, one biological state per cell |
-| `orthology_evidence.tsv` | publication wording and manual review |
-| `recore_report.html` | the whole run in one self-contained page |
+## 3 · Or try it first
 
-`--matrix-policy balanced` is the recommendation for anything that will be
-published: it rescues full-length false absences while keeping partial or
-disrupted homologues as audit-only evidence. The other two policies, and the
-adaptive guard that sits on top of all three, are in
-[Matrix policies](docs/guide/matrix-policies.md).
-
-To see it work on data with known answers before pointing it at your own, the
-[tutorial](docs/getting-started/tutorial.md) generates a twelve-genome dataset
-with eleven false absences planted in it and walks through the run.
-
-## Documentation
-
-The quickest way in is the website in [`docs/`](docs/index.html): an install
-line, a command builder for your pangenome tool, a one-minute example, the
-example report to click through, an illustrated walk through how one empty cell
-is decided, a reference page with every option, output file and cell state, and
-a Docs tab with every page below, searchable. It is plain HTML with no build
-step, so open `docs/index.html` from a clone; once the repository is public,
-GitHub Pages can serve it straight from `main` and `/docs`. The Docs pages are
-built from the markdown by `tools/build_docs.py`, and `tools/check_site.py`
-keeps the site honest in CI: the pages match their markdown, every option it
-shows exists, the defaults match `recore --help`, the walkthrough decides by
-the code's rules, and the example run gives the numbers the page promises.
-
-The same pages are markdown files in this repository and read here on GitHub.
-
-| Start here | |
-|---|---|
-| [Tutorial](docs/getting-started/tutorial.md) | a full run on a generated dataset with known answers |
-| [Inputs](docs/getting-started/inputs.md) | what each input is, and how the names have to match |
-
-| Reference | |
-|---|---|
-| [Parameters](docs/guide/parameters.md) | every option, with its default and what it changes |
-| [Matrix policies](docs/guide/matrix-policies.md) | which evidence reaches the binary matrix |
-| [Output files](docs/guide/outputs.md) | every table, column by column |
-| [Run report](docs/guide/report.md) | the self-contained HTML viewer |
-
-| How it works | |
-|---|---|
-| [Algorithm](docs/how-it-works/algorithm.md) | each pipeline phase, its data structures and complexity |
-| [Evidence states](docs/how-it-works/evidence-states.md) | the ten states of the multistate matrix |
-| [Rescue types](docs/how-it-works/rescue-types.md) | rescue classes and biological interpretation |
-| [Evolutionary events](docs/how-it-works/evolutionary-events.md) | how a mechanism is called, and how to word it in a paper |
-| [Limits and comparisons](docs/how-it-works/limits.md) | what Recore does not claim, benchmark results, Panaroo refinding |
-
-Version history is in [CHANGELOG.md](CHANGELOG.md). Benchmark design and
-reproduction is in [benchmarks/README.md](benchmarks/README.md).
-
-If the documentation does not answer it, ask in
-[Discussions](https://github.com/PathoGenOmics-Lab/recore/discussions). Issues
-are for something that crashed, refused to run, or is plainly wrong.
-
-## For developers
+Twelve genomes with eleven false absences planted in them. About a minute.
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --locked --all-targets -- -D warnings
-RECORE_REQUIRE_MINIMAP2=1 cargo test --locked --all-targets
+curl -sO https://raw.githubusercontent.com/PathoGenOmics-Lab/recore/main/benchmarks/make_tutorial_dataset.py
+python3 make_tutorial_dataset.py --out tutorial_data
+recore -p tutorial_data/gene_presence_absence.csv \
+       -r tutorial_data/pan_genome_reference.fa \
+       -g tutorial_data/genomes -a tutorial_data/annotations --synteny \
+       --tree tutorial_data/species.tree --write-html-report -o tutorial_out
 ```
 
-The end-to-end test skips silently without minimap2 on `PATH`, which is why CI
-sets that variable. [Contributing](docs/about/contributing.md) covers the report
-assets, the two rules they have to keep, and how to regenerate the generated
-files.
+`tutorial_out/summary.txt` should read:
 
-## Citation
+```text
+Rescued:               11   every planted absence found
+Matrix-corrected:      8    the other 3 are pseudogenes: kept out, with the reason
+```
 
-If you use Recore, please cite:
+Then open `tutorial_out/recore_report.html`. The
+[tutorial](docs/getting-started/tutorial.md) tells the story behind each number.
 
-> Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue and quality control
-> of pangenome presence/absence matrices. *In preparation.*
+## 4 · What you get
 
-## Contact
+Four files answer most questions. [All of them](docs/guide/outputs.md).
 
-Paula Ruiz-Rodriguez - paula.ruiz.rodriguez@csic.es
+| File | What it is |
+|---|---|
+| `gene_presence_absence_recore.csv` | The corrected matrix, in the input's format (and as `.Rtab`). Feed it to your next tool. |
+| `gene_presence_absence_recore_states.csv` | The same matrix with a state in every cell: input, put back, kept out and why. For figures. |
+| `orthology_evidence.tsv` | One row per change: the evidence, the decision, and wording you can use in a paper. |
+| `recore_report.html` | The whole run in one page that works offline. Open it in any browser. |
 
-## License
+[Explore a real report](https://pathogenomics-lab.github.io/recore/#report),
+the one the example run writes.
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+## 5 · One setting that matters
+
+`--matrix-policy` picks which evidence reaches the corrected matrix. All of it
+stays in the audit files.
+
+| Policy | What reaches the corrected matrix |
+|---|---|
+| `strict` | Only genes tied to the same locus by the annotation or by their neighbours. Fewest changes. |
+| `balanced` (default) | Adds full-length genes found by sequence. Pseudogenes and partial copies stay out. **Use it for papers.** |
+| `sensitive` | Also puts back partial and disrupted copies that pass the quality guard. For exploring. |
+
+[Matrix policies](docs/guide/matrix-policies.md) has the rules and the quality
+guard.
+
+## If something looks off
+
+[The first questions people ask](https://pathogenomics-lab.github.io/recore/#faq)
+are answered on the website. Still stuck? Ask in
+[Discussions](https://github.com/PathoGenOmics-Lab/recore/discussions);
+[Issues](https://github.com/PathoGenOmics-Lab/recore/issues) are for crashes and
+plainly wrong results.
+
+## Learn more
+
+The website is plain HTML in [`docs/`](docs/), so it also opens from a clone,
+offline: open `docs/index.html`. Every page of its Docs tab is a markdown file
+here as well:
+
+- **Start:** [Tutorial](docs/getting-started/tutorial.md) · [Inputs](docs/getting-started/inputs.md)
+- **Guide:** [Parameters](docs/guide/parameters.md) · [Matrix policies](docs/guide/matrix-policies.md) · [Output files](docs/guide/outputs.md) · [Run report](docs/guide/report.md)
+- **How it works:** [Algorithm](docs/how-it-works/algorithm.md) · [Evidence states](docs/how-it-works/evidence-states.md) · [Rescue types](docs/how-it-works/rescue-types.md) · [Evolutionary events](docs/how-it-works/evolutionary-events.md) · [Limits and comparisons](docs/how-it-works/limits.md)
+- **Project:** [Changelog](CHANGELOG.md) · [Benchmarks](benchmarks/README.md) · [Contributing](.github/CONTRIBUTING.md), with the tests and the checks CI runs
+
+## Cite
+
+> Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality
+> control of pangenome presence/absence matrices. *In preparation.*
+
+<sub>GPL-3.0, see [LICENSE](LICENSE) · [PathoGenOmics Lab](https://github.com/PathoGenOmics-Lab) · Paula Ruiz-Rodriguez, paula.ruiz.rodriguez@csic.es</sub>
+
+---
+
+<h2 id="contributors" align="center">
+
+✨ [Contributors](https://github.com/PathoGenOmics-Lab/recore/graphs/contributors)
+</h2>
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<div align="center">
+Recore is developed with ❤️ by:
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/paururo">
+        <img src="https://avatars.githubusercontent.com/u/50167687?v=4&s=100" width="100px;" alt=""/>
+        <br />
+        <sub><b>Paula Ruiz-Rodriguez</b></sub>
+      </a>
+      <br />
+      <a href="" title="Code">💻</a>
+      <a href="" title="Research">🔬</a>
+      <a href="" title="Ideas">🤔</a>
+      <a href="" title="Data">🔣</a>
+      <a href="" title="Design">🎨</a>
+      <a href="" title="Tool">🔧</a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/mireiacoscolla">
+        <img src="https://avatars.githubusercontent.com/u/29301737?v=4&s=100" width="100px;" alt=""/>
+        <br />
+        <sub><b>Mireia Coscolla</b></sub>
+      </a>
+      <br />
+      <a href="https://www.uv.es/instituto-biologia-integrativa-sistemas-i2sysbio/es/investigacion/proyectos/proyectos-actuales/mol-tb-host-1286169137294/ProjecteInves.html?id=1286289780236" title="Funding/Grant Finders">🔍</a>
+      <a href="" title="Ideas">🤔</a>
+      <a href="" title="Mentoring">🧑‍🏫</a>
+      <a href="" title="Research">🔬</a>
+      <a href="" title="User Testing">📓</a>
+    </td>
+  </tr>
+</table>
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification ([emoji key](https://allcontributors.org/docs/en/emoji-key)).
+</div>
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->

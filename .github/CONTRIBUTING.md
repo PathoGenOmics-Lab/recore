@@ -245,8 +245,10 @@ writes. The documentation workflow runs `tools/check_site.py`, which fails on a
 documentation page that no longer matches its markdown, a dead link or anchor,
 an option `recore --help` does not have, an option missing from the reference,
 a default that differs from the binary's, a walkthrough that decides
-differently from the code, or an example run whose counts differ from the
-page's, instead of a stale page somebody finds six months later. The markdown
+differently from the code, a README link or command that no longer works, or an
+example run whose counts differ from the page's, instead of a stale page
+somebody finds six months later. The README is held to the website too: its
+Try-it block has to be the website's, so change them together. The markdown
 also reads on GitHub as it is.
 
 `docs/assets/example-report.html` is the tutorial run's own output, linked from

@@ -11,8 +11,8 @@ name: Documentation
 # on it: a documentation page that no longer matches its markdown, a dead link
 # or anchor, an option the pages show that `recore --help` does not have, an
 # option or a default the reference gets wrong, a walkthrough that decides
-# differently from src/pipeline.rs, and an example run whose counts are not the
-# ones the page promises. That last part runs the "Try it" commands for real,
+# differently from src/pipeline.rs, a README link or command that no longer
+# works, and an example run whose counts are not the ones the page promises. That last part runs the "Try it" commands for real,
 # which is why this needs minimap2 and a build.
 #
 # The workflow and job names are what the Dependabot auto-merge gate waits for
@@ -25,6 +25,8 @@ on:
       - main
     paths:
       - "docs/**"
+      - "README.md"
+      - "assets/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -35,6 +37,8 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "README.md"
+      - "assets/**"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"

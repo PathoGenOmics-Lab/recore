@@ -16,6 +16,10 @@ fails when it drifts. This does, in four parts:
   walk     the illustrated walkthrough (how-it-works.html) decides with the
            policy table, evidence states, rescue types, matrix actions and
            columns of src/pipeline.rs;
+  readme   README.md's links land, in the repository and on the website with
+           their anchors, its recore commands use options that exist, and its
+           Try-it block and counts are the website's, and every page of the
+           website cites Recore the way the README does;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -30,6 +34,7 @@ Exits 1 and lists every problem it found.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import shutil
@@ -49,6 +54,10 @@ HOW_JS = SITE / "assets" / "how.js"
 PIPELINE = Path("src/pipeline.rs")
 STATES_WRITER = Path("src/pipeline/output.rs")
 RESCUE_TYPES = Path("src/rescue/types.rs")
+README = Path("README.md")
+SITE_URL = "https://pathogenomics-lab.github.io/recore/"
+LONG_FLAG = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*)")
+SHORT_FLAG = re.compile(r"(?<![\w./-])(-[a-zA-Z])(?![\w-])")
 
 
 class Page(HTMLParser):
@@ -203,9 +212,9 @@ def check_flags(pages: dict[str, Page], recore: str) -> list[str]:
     mentioned_short: dict[str, str] = {}
 
     def note(text: str, where: str) -> None:
-        for flag in re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", text):
+        for flag in LONG_FLAG.findall(text):
             mentioned_long.setdefault(flag, where)
-        for flag in re.findall(r"(?<![\w./-])(-[a-zA-Z])(?![\w-])", text):
+        for flag in SHORT_FLAG.findall(text):
             mentioned_short.setdefault(flag, where)
 
     # Only what is recore's: a command line that starts with recore, or a
@@ -309,6 +318,79 @@ def check_walkthrough() -> list[str]:
     return problems
 
 
+def commands(script: str) -> list[str]:
+    """The command lines of a shell block, with continuations joined and the
+    prompts and spacing dropped."""
+    out = []
+    for line in script.replace("\\\n", " ").splitlines():
+        line = line.strip()
+        if line.startswith("$ "):
+            line = line[2:]
+        if line:
+            out.append(" ".join(line.split()))
+    return out
+
+
+def check_readme(pages: dict[str, Page], recore: str) -> list[str]:
+    """README.md is the front door on GitHub, so it is held to the site."""
+    text = README.read_text(encoding="utf-8")
+    fence = re.compile(r"^```[^\n]*\n(.*?)^```", flags=re.M | re.S)
+    blocks = fence.findall(text)
+    prose = fence.sub("", text)
+    problems = []
+
+    seen: dict[str, int] = {}
+    headings = {build_docs.slugify(build_docs.plain(h), seen) for h in re.findall(r"^#{1,6} (.+)$", prose, flags=re.M)}
+    for url in re.findall(r"\]\(([^)\s]+)\)", prose) + re.findall(r'(?:href|src|srcset)="([^"]+)"', prose):
+        if url.startswith(SITE_URL):
+            target, _, anchor = url[len(SITE_URL):].partition("#")
+            target = target or "index.html"
+            if target not in pages:
+                problems.append(f"README.md: {url} is not a page of the website")
+            elif anchor and anchor not in pages[target].ids:
+                problems.append(f"README.md: {url} points at #{anchor}, which {target} does not have")
+        elif url.startswith("#"):
+            if url[1:] not in headings:
+                problems.append(f"README.md: link to {url}, which no heading has")
+        elif not re.match(r"^(https?:|mailto:)", url) and not Path(url.partition("#")[0]).exists():
+            problems.append(f"README.md: links to {url}, which does not exist")
+
+    longs, shorts, _ = help_options(recore)
+    named: set[str] = set()
+    snippets = [c for b in blocks for c in commands(b) if c.split()[:1] == ["recore"]]
+    snippets += [c for c in re.findall(r"`([^`\n]+)`", prose) if c.startswith("recore ") or c.startswith("-")]
+    for snippet in snippets:
+        named.update(LONG_FLAG.findall(snippet), SHORT_FLAG.findall(snippet))
+    for flag in sorted(named - longs - shorts):
+        problems.append(f"README.md: mentions {flag}, which recore --help does not have")
+
+    # One citation: the README's, on every page of the website.
+    cite = re.search(r"^## Cite\n+((?:>.*\n?)+)", text, flags=re.M)
+    readme_cite = " ".join(re.sub(r"^>\s?", "", cite.group(1), flags=re.M).replace("*", "").split()) if cite else ""
+    if not readme_cite:
+        problems.append("README.md: no citation under ## Cite")
+    for path in sorted(SITE.rglob("*.html")):
+        for quote in re.findall(r"<blockquote>(.*?)</blockquote>", path.read_text(encoding="utf-8"), flags=re.S):
+            cited = " ".join(html.unescape(re.sub(r"<[^>]+>", "", quote)).split())
+            if cited.startswith("Ruiz-Rodriguez") and cited != readme_cite:
+                problems.append(f"{path.relative_to(SITE).as_posix()}: cites {cited!r}, the README {readme_cite!r}")
+
+    # The Try-it block runs in check_tutorial from the website; the README's
+    # has to be the same commands promising the same counts.
+    index = pages["index.html"]
+    if next((commands(b) for b in blocks if DATASET_SCRIPT.name in b), []) != commands(index.blocks.get("try", "")):
+        problems.append("README.md: the Try-it commands are not the website's (index.html, block try)")
+    for key in ("Rescued", "Matrix-corrected"):
+        want = re.search(rf"^{key}:\s+(\d+)", index.blocks.get("out", ""), flags=re.M)
+        got = re.search(rf"^{key}:\s+(\d+)", text, flags=re.M)
+        if not want or not got or want.group(1) != got.group(1):
+            problems.append(
+                f"README.md: promises {key}: {got.group(1) if got else 'nothing'}, "
+                f"the website {want.group(1) if want else 'nothing'}"
+            )
+    return problems
+
+
 def check_dashes(pages: dict[str, Page]) -> list[str]:
     problems = []
     for path in [SITE / p for p in pages] + SCRIPTS:
@@ -373,7 +455,7 @@ def main() -> int:
 
     pages = all_pages()
     front = {name: pages[name] for name in PAGES}
-    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_walkthrough() + check_dashes(pages)
+    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_walkthrough() + check_readme(pages, args.recore) + check_dashes(pages)
     if args.run_tutorial:
         if not shutil.which("minimap2"):
             problems.append("Try it: minimap2 is not on PATH")
@@ -384,7 +466,7 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    checked = "generated pages, links, options, defaults, walkthrough, dashes" + (", and the Try-it run" if args.run_tutorial else "")
+    checked = "generated pages, links, options, defaults, walkthrough, README, dashes" + (", and the Try-it run" if args.run_tutorial else "")
     print(f"docs/: {checked} all agree with the code")
     return 0
 
