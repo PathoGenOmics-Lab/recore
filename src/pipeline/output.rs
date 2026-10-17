@@ -2457,7 +2457,7 @@ fn explorer_workspace_html(
     html.push_str("<section class='pane tree-pane' id='treePane' aria-label='Phylogeny'>");
     write!(
         html,
-        "<header class='pane-head'><span class='pane-name'>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='1' max='40' value='8' aria-label='Row zoom' data-tip='Row height'></span><button id='treeMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Tree display: shape, root, labels and colour' aria-label='Tree display' aria-haspopup='dialog' aria-expanded='false' aria-controls='treeMenu'>{}</button></header>",
+        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='0.0000' max='3.6889' step='any' value='2.0794' aria-label='Row zoom' data-tip='Row height (Alt and the wheel)'></span><button id='treeMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Tree display: shape, root, labels and colour' aria-label='Tree display' aria-haspopup='dialog' aria-expanded='false' aria-controls='treeMenu'>{}</button></header>",
         icon("sliders")
     )
     .expect("write to String is infallible");
@@ -2485,7 +2485,7 @@ fn explorer_workspace_html(
     html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
     write!(
         html,
-        "<header class='pane-head'><span class='pane-name'>Corrected matrix</span><small id='topMatrixMeta'></small><span id='cellLegend' class='legend' aria-label='Cell legend'><span class='key'><i class='sw p'></i>input</span><span class='key'><i class='sw r'></i>corrected</span><span class='key'><i class='sw a'></i>absent</span></span><span class='head-zoom'><input id='cellSize' type='range' min='0.25' max='90' step='0.25' value='8' aria-label='Column zoom' data-tip='Column width'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
+        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Corrected matrix</span><small id='topMatrixMeta'></small><span id='cellLegend' class='legend' aria-label='Cell legend'><span class='key'><i class='sw p'></i>input</span><span class='key'><i class='sw r'></i>corrected</span><span class='key'><i class='sw a'></i>absent</span></span><span class='head-zoom'><input id='cellSize' type='range' min='-1.3863' max='4.4998' step='any' value='2.0794' aria-label='Column zoom' data-tip='Column width (Ctrl or Cmd and the wheel)'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
         icon("sliders")
     )
     .expect("write to String is infallible");
@@ -2498,7 +2498,7 @@ fn explorer_workspace_html(
     html.push_str("<div id='processLegend' class='process-legend'></div>");
     html.push_str("</div>");
     html.push_str("<div class='matrix-header'><canvas id='columnHeaderCanvas' class='column-head'></canvas><canvas id='headerOverlay' class='pane-overlay' aria-hidden='true'></canvas><div class='pane-scroll header-scroll' id='headerScroller'><div class='pane-spacer' id='headerSpacer'></div></div></div>");
-    html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas'></canvas><canvas id='matrixOverlay' class='pane-overlay' aria-hidden='true'></canvas><div class='pane-scroll' id='matrixPane'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
+    html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas' role='img' aria-label='Corrected presence-absence matrix'></canvas><canvas id='matrixOverlay' class='pane-overlay' aria-hidden='true'></canvas><div class='pane-scroll' id='matrixPane' tabindex='0' role='application' aria-roledescription='matrix' aria-label='Corrected matrix. Arrow keys move a cell cursor, Shift moves a page, Home and End go to the first and last row, Enter opens the cell.'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
     // Whole-matrix overview: at 30,000 columns the scrollbar tells you nothing
     // about where the interesting columns are. Prevalence per column does.
     html.push_str("<div class='overview' id='overviewStrip' data-tip='Column prevalence across the whole matrix. Click or drag to jump.'><canvas id='overviewCanvas'></canvas><div class='overview-window' id='overviewWindow'></div></div>");
@@ -2522,7 +2522,7 @@ fn explorer_workspace_html(
     html.push_str("<section class='synteny-pane' id='syntenyPanel' aria-label='Unique syntenies'>");
     write!(
         html,
-        "<header class='pane-head'><span class='pane-name'>Unique syntenies</span><small id='topSyntenyMeta'></small><small id='syntenySummary' class='synteny-summary'></small><span class='zoom-inline'><label for='syntenyZoom'>Scale</label><input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1' aria-label='Synteny zoom'></span><button id='closeSynteny' type='button' class='icon-btn ghost-icon' data-tip='Hide the synteny panel (S)' aria-label='Hide synteny'>{}</button></header>",
+        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Unique syntenies</span><small id='topSyntenyMeta'></small><small id='syntenySummary' class='synteny-summary'></small><span class='zoom-inline'><label for='syntenyZoom'>Scale</label><input id='syntenyZoom' type='range' min='0.45' max='2.4' step='0.05' value='1' aria-label='Synteny zoom'></span><button id='closeSynteny' type='button' class='icon-btn ghost-icon' data-tip='Hide the synteny panel (S)' aria-label='Hide synteny'>{}</button></header>",
         icon("close")
     )
     .expect("write to String is infallible");
@@ -2634,6 +2634,9 @@ pub(super) fn write_html_report(
     html.push_str("<style>");
     html.push_str(REPORT_CSS);
     html.push_str("</style></head><body class='app'>");
+    // A heading for assistive technology to start from, and one polite region
+    // for what the keyboard cursor lands on and what an action did.
+    html.push_str("<h1 class='sr-only'>Recore run report</h1><div id='liveRegion' class='sr-only' role='status' aria-live='polite'></div>");
 
     // Build the workspace first: without a tree the viewer is not embedded and no
     // script comes with it, so the chrome that drives the viewer must not be
@@ -2686,12 +2689,25 @@ pub(super) fn write_html_report(
     // A readout, not a row of pills: the number carries the weight and the unit
     // sits under it in small caps, so six figures read at a glance.
     html.push_str("<div class='run-readout'>");
+    // The matrix draws clusters after NSC merging; say how the two counts relate
+    // instead of showing 30,000 here and 29,320 over the matrix.
+    let merged_by_nsc = nsc_result.as_ref().map_or(0, |r| r.merge_map.len());
+    let clusters_tip = if merged_by_nsc > 0 {
+        format!(
+            "{} clusters after NSC merging: {} in the input, {} merged into near-identical clusters",
+            format_count(pa.n_clusters() - merged_by_nsc),
+            format_count(pa.n_clusters()),
+            format_count(merged_by_nsc)
+        )
+    } else {
+        "Gene clusters in the input matrix".to_string()
+    };
     for (value, label, kind, tip) in [
         (
-            format_count(pa.n_clusters()),
+            format_count(pa.n_clusters() - merged_by_nsc),
             "clusters",
             "",
-            "Gene clusters in the input matrix",
+            clusters_tip.as_str(),
         ),
         (
             format_count(pa.n_genomes()),
@@ -2858,8 +2874,9 @@ pub(super) fn write_html_report(
             ("C", "Phylogram or cladogram"),
             ("R", "Reroot at the midpoint"),
             ("Z", "Fit the matrix to the window"),
-            ("\u{21e7} wheel", "Zoom columns"),
-            ("\u{2318} wheel", "Zoom rows"),
+            ("\u{2318} wheel", "Zoom columns, under the pointer"),
+            ("\u{2325} wheel", "Zoom rows, under the pointer"),
+            ("\u{21e7} wheel", "Scroll sideways"),
             ("Alt-click a tip", "Root the tree on that genome"),
             ("Esc", "Close whatever is open"),
         ] {
@@ -2879,7 +2896,7 @@ pub(super) fn write_html_report(
     // ---- Run details drawer: everything that used to push the viewer off screen.
     write!(
         html,
-        "<aside id='runDetails' class='drawer' aria-hidden='true'><div class='drawer-head'><h2>Run details</h2><button id='closeDetails' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close run details'>{}</button></div><div class='drawer-body'>",
+        "<aside id='runDetails' class='drawer' aria-hidden='true' inert><div class='drawer-head'><h2>Run details</h2><button id='closeDetails' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close run details'>{}</button></div><div class='drawer-body'>",
         icon("close")
     )
     .expect("write to String is infallible");

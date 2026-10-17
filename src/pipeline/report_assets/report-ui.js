@@ -95,6 +95,8 @@
     const setOpen = isOpen => {
       drawer.classList.toggle("open", isOpen);
       drawer.setAttribute("aria-hidden", String(!isOpen));
+      // Closed, it is off screen: inert keeps its 17 controls out of the Tab order.
+      drawer.inert = !isOpen;
       open.setAttribute("aria-expanded", String(isOpen));
       if (scrim) scrim.hidden = !isOpen;
       if (isOpen) {
@@ -123,14 +125,24 @@
        made every candidate row a no-op. */
     const table = document.getElementById("candidatesTable");
     if (table) {
-      table.addEventListener("click", event => {
-        const row = event.target.closest("tr[data-cluster]");
-        if (!row) return;
+      const pick = row => {
         const request = new CustomEvent("recore:select-cluster", {
           detail: {cluster: row.dataset.cluster, handled: false},
         });
         window.dispatchEvent(request);
         if (request.detail.handled) setOpen(false);
+      };
+      // Rows are reachable from the keyboard too: Tab to one, Enter opens it.
+      table.querySelectorAll("tr[data-cluster]").forEach(row => { row.tabIndex = 0; });
+      table.addEventListener("click", event => {
+        const row = event.target.closest("tr[data-cluster]");
+        if (row) pick(row);
+      });
+      table.addEventListener("keydown", event => {
+        const row = event.target.closest("tr[data-cluster]");
+        if (!row || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        pick(row);
       });
     }
   }

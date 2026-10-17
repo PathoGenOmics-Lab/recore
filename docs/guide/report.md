@@ -114,9 +114,11 @@ removes that mechanism from the visible columns. The header button stays lit
 while any filter is on, so a filter left running two minutes ago does not
 silently explain a matrix that looks wrong.
 
-**Zoom.** The slider in each pane header drives its own axis. ++shift++ and the
-wheel zooms columns; ++cmd++ and the wheel zooms rows. Press ++z++ to fit the
-data back to the window.
+**Zoom.** The slider in each pane header drives its own axis, in equal ratios
+from end to end. A plain wheel always scrolls. ++cmd++ (or ++ctrl++) and the
+wheel zoom columns, which is also what a trackpad pinch does; ++alt++ and the
+wheel zoom rows. Each notch is a factor of 1.25 and the cell under the pointer
+stays under the pointer. Press ++z++ to fit the data back to the window.
 
 Above 40 columns a prevalence strip appears under the matrix: one bar per pixel
 showing how prevalent the clusters at that position are, with the current
@@ -181,8 +183,9 @@ Press ++question++ for this list in the report itself.
 | ++c++ | phylogram or cladogram |
 | ++r++ | reroot at the midpoint |
 | ++z++ | fit the matrix to the window |
-| ++shift++ + wheel | zoom columns |
-| ++cmd++ + wheel | zoom rows |
+| ++cmd++ / ++ctrl++ + wheel, or pinch | zoom columns under the pointer |
+| ++alt++ + wheel | zoom rows under the pointer |
+| ++shift++ + wheel | scroll sideways |
 | ++alt++ + click a tip | root the tree on that genome |
 | ++esc++ | close whatever is open |
 

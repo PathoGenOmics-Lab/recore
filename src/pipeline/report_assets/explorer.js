@@ -291,13 +291,15 @@ const FIT_TARGET_W = 720;
 // Column names are only worth drawing once a cell is wide enough to carry a
 // rotated label without the text of neighbouring columns touching.
 const LABEL_MIN_CELL_W = 9;
+// Tip names are 10px text: below 11px rows they overlap their neighbours.
+const TIP_LABEL_MIN_ROW = 11;
 const LABEL_BAND_H = 82;
 // Above this a name fits across the column, and turning your head to read a
 // dozen columns is a cost the layout no longer has to impose.
 const LABEL_HORIZONTAL_CELL_W = 54;
 const LABEL_BAND_H_FLAT = 26;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-const defaultStatus = "Hover a cell for genome, cluster and evidence state. Wheel over the column header zooms columns, over the tree zooms rows. Drag the seams between panes to resize.";
+const defaultStatus = "Hover a cell for its evidence, click it for the full row. Ctrl or Cmd and the wheel zoom columns, Alt and the wheel zoom rows, Z fits everything. Drag the seams between panes to resize.";
 let selected = 0;
 let selectedGenome = -1;
 // True while an exported figure is being drawn (see drawFigure).
@@ -1221,13 +1223,20 @@ function stepCluster(delta) {
   populateOptions();
   render(true);
 }
+/* The zoom sliders hold the logarithm of the zoom, so every step of the slider
+   or notch of the wheel is the same ratio: 0.25 to 0.31 feels like 40 to 50. */
+function readZoom(control, min, max) {
+  const value = Math.exp(Number(control.value));
+  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : 8;
+}
+function writeZoom(control, value, min, max) {
+  control.value = String(Math.log(Math.max(min, Math.min(max, value))));
+}
 function currentCellSize() {
-  const value = Number(sizeControl.value || 8);
-  return Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, value));
+  return readZoom(sizeControl, MIN_COL_ZOOM, MAX_COL_ZOOM);
 }
 function currentRowHeight() {
-  const value = Number(rowHeightControl.value || 8);
-  return Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, value));
+  return readZoom(rowHeightControl, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
 }
 function clusterLabel(cluster) {
   return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
@@ -1236,7 +1245,7 @@ function clusterLabel(cluster) {
 function treeUsableWidth() {
   // Reserve room exactly when names are drawn (see renderTree), whatever the
   // tip count, or a zoomed-in large tree truncates every name to "L4…".
-  const labelPad = labelToggle.checked && cellH >= 5 ? 150 : 24;
+  const labelPad = labelToggle.checked && cellH >= TIP_LABEL_MIN_ROW ? 150 : 24;
   return Math.max(80, treeWidth - 22 - labelPad);
 }
 function xForNode(node) {
@@ -2042,10 +2051,16 @@ function canvasScale(cssW, cssH) {
   return Math.max(1, Math.min(dpr, byDim, byArea));
 }
 function sizeCanvas(target, context, cssW, cssH, scale) {
-  target.width = Math.max(1, Math.round(cssW * scale));
-  target.height = Math.max(1, Math.round(cssH * scale));
-  target.style.width = `${cssW}px`;
-  target.style.height = `${cssH}px`;
+  const w = Math.max(1, Math.round(cssW * scale));
+  const h = Math.max(1, Math.round(cssH * scale));
+  // Reallocating a canvas on every frame cost a layout and a fresh bitmap;
+  // only do it when the size actually changed.
+  if (target.width !== w || target.height !== h) {
+    target.width = w;
+    target.height = h;
+    target.style.width = `${cssW}px`;
+    target.style.height = `${cssH}px`;
+  }
   context.setTransform(scale, 0, 0, scale, 0, 0);
 }
 
@@ -2069,13 +2084,17 @@ function updateCellGeometry() {
     matrixSpacer.style.width = `${virtualW}px`;
     matrixSpacer.style.height = `${virtualH}px`;
   }
+  // The followers get some slack: their viewports differ from the matrix's by
+  // a scrollbar or a strip, and without it the tree stopped a few pixels short
+  // of the matrix's last row. They draw from the matrix's scroll position, so
+  // the slack is never seen.
   if (headerSpacer) {
-    headerSpacer.style.width = `${virtualW}px`;
+    headerSpacer.style.width = `${virtualW + 64}px`;
     headerSpacer.style.height = "1px";
   }
   if (treeSpacer) {
     treeSpacer.style.width = "1px";
-    treeSpacer.style.height = `${virtualH}px`;
+    treeSpacer.style.height = `${virtualH + 64}px`;
   }
   return {rows, cols};
 }
@@ -2315,14 +2334,37 @@ function renderColumnHeader() {
   }
   headerCtx.restore();
 }
-function fitLabel(text, maxWidth) {
+/* Longest prefix that fits, found by halving rather than one character per
+   measureText call: 120-character names cost thousands of calls a header.
+   Results are cached per name and width; the font never changes. */
+const fitCache = new Map();
+function fitText(context, text, maxWidth) {
   const value = String(text || "");
-  if (headerCtx.measureText(value).width <= maxWidth) return value;
-  for (let len = value.length - 1; len > 1; len -= 1) {
-    const candidate = `${value.slice(0, len)}…`;
-    if (headerCtx.measureText(candidate).width <= maxWidth) return candidate;
+  const key = `${Math.round(maxWidth)}|${value}`;
+  const cached = fitCache.get(key);
+  if (cached !== undefined) return cached;
+  let out = value;
+  if (context.measureText(value).width > maxWidth) {
+    let lo = 1;
+    let hi = value.length - 1;
+    out = "…";
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const candidate = `${value.slice(0, mid)}…`;
+      if (context.measureText(candidate).width <= maxWidth) {
+        out = candidate;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
   }
-  return "…";
+  if (fitCache.size > 20000) fitCache.clear();
+  fitCache.set(key, out);
+  return out;
+}
+function fitLabel(text, maxWidth) {
+  return fitText(headerCtx, text, maxWidth);
 }
 
 /* The tree is a canvas rather than SVG: 10,000 tips is roughly 40,000 SVG nodes,
@@ -2454,7 +2496,7 @@ function renderTree() {
   const [firstRow, lastRow] = visibleRowRange(view.h);
   // Only tips in the visible band are drawn, so the tip count is no reason to
   // hide names once a row is tall enough to carry one.
-  const showLabels = labelToggle.checked && cellH >= 5;
+  const showLabels = labelToggle.checked && cellH >= TIP_LABEL_MIN_ROW;
 
   treeCtx.lineWidth = 1;
   treeCtx.strokeStyle = gridStroke;
@@ -2522,13 +2564,7 @@ function drawTreeNode(root, top, firstRow, lastRow, viewH, showLabels) {
 }
 function fitTipLabel(text) {
   const budget = Math.max(24, treeWidth - xForNode({depth: maxDepth, distance: maxDistance, children: []}) - 10);
-  const value = String(text);
-  if (treeCtx.measureText(value).width <= budget) return value;
-  for (let len = value.length - 1; len > 1; len -= 1) {
-    const candidate = `${value.slice(0, len)}…`;
-    if (treeCtx.measureText(candidate).width <= budget) return candidate;
-  }
-  return "…";
+  return fitText(treeCtx, text, budget);
 }
 /** Row span covered by a subtree, memoised: used to skip offscreen branches. */
 function nodeRowSpan(node) {
@@ -2799,11 +2835,10 @@ function fitZoomToData() {
   // Round down to the slider step (0.25), not to whole units: 1,118 columns in
   // 788px want 0.86, and flooring that to 0 sent the fit to the 0.25 minimum,
   // leaving half the pane empty after Z.
-  const colStep = Number(sizeControl.step) || 0.25;
+  const colStep = 0.25;
   const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW - 2) / cols / 0.82 / colStep) * colStep));
-  rowHeightControl.value = String(rowFit);
-  sizeControl.value = String(colFit);
-  labelToggle.checked = tips <= 500 && rowFit >= 4;
+  writeZoom(rowHeightControl, rowFit, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
+  writeZoom(sizeControl, colFit, MIN_COL_ZOOM, MAX_COL_ZOOM);
 }
 populateOptions();
 if (layoutState.syntenyHiddenStored === false) {
@@ -3045,33 +3080,68 @@ if (columnOrder) {
     render(false);
   });
 }
-function adjustRange(control, delta, min, max) {
-  const value = Number(control.value || min);
-  const next = Math.max(min, Math.min(max, value + delta));
-  if (next === value) return false;
-  control.value = String(next);
+/* A plain wheel scrolls, everywhere: it used to zoom rows over the tree, so the
+   tree could not be scrolled and one tick switched on the slow path. Ctrl or
+   Cmd and the wheel (a trackpad pinch arrives that way) zoom columns, Alt and
+   the wheel zoom rows, by 1.25 a notch, keeping the cell under the pointer
+   where it is. Motion is read from whichever axis carries it, since macOS sends
+   Shift-wheel as deltaX, and accumulated, so a trackpad swipe of 30 events is a
+   few steps and not thirty. */
+const ZOOM_STEP = 1.25;
+const WHEEL_NOTCH_PX = 40;
+let wheelAccum = 0;
+let wheelAccumAt = 0;
+function zoomAround(axis, factor, clientX, clientY) {
+  const rect = matrixPane.getBoundingClientRect();
+  if (axis === "column") {
+    const px = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const at = (matrixPane.scrollLeft + px) / cellW;
+    const before = currentCellSize();
+    writeZoom(sizeControl, before * factor, MIN_COL_ZOOM, MAX_COL_ZOOM);
+    if (currentCellSize() === before) return false;
+    updateCellGeometry();
+    matrixPane.scrollLeft = Math.max(0, at * cellW - px);
+  } else {
+    const py = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    const at = (matrixPane.scrollTop + py) / cellH;
+    const before = currentRowHeight();
+    writeZoom(rowHeightControl, before * factor, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
+    if (currentRowHeight() === before) return false;
+    updateCellGeometry();
+    matrixPane.scrollTop = Math.max(0, at * cellH - py);
+  }
   return true;
 }
-function wheelZoom(event, forcedAxis = "") {
-  const columnZoom = forcedAxis === "column" || event.shiftKey;
-  const rowZoom = forcedAxis === "row" || event.ctrlKey || event.metaKey || event.altKey;
-  if (!columnZoom && !rowZoom) return;
+function wheelZoom(event) {
+  const columnZoom = event.ctrlKey || event.metaKey;
+  const rowZoom = !columnZoom && event.altKey;
+  if (!columnZoom && !rowZoom) {
+    // Shift and a vertical wheel scroll sideways. macOS already turns it into
+    // deltaX; other systems and synthetic events do not, so do it here.
+    if (event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+      matrixPane.scrollLeft += event.deltaY * unit;
+    }
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
-  const delta = event.deltaY < 0 ? 1 : -1;
-  const changed = columnZoom
-    ? adjustRange(sizeControl, delta, MIN_COL_ZOOM, MAX_COL_ZOOM)
-    : adjustRange(rowHeightControl, delta, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
-  if (changed) {
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+  const motion = (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX) * unit;
+  const now = performance.now();
+  if (now - wheelAccumAt > 300 || Math.sign(motion) !== Math.sign(wheelAccum)) wheelAccum = 0;
+  wheelAccumAt = now;
+  wheelAccum += motion;
+  if (Math.abs(wheelAccum) < WHEEL_NOTCH_PX) return;
+  const factor = wheelAccum < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+  wheelAccum = 0;
+  if (zoomAround(columnZoom ? "column" : "row", factor, event.clientX, event.clientY)) {
     resetMatrixCache();
     render(false);
   }
 }
 viewerBody.addEventListener("wheel", wheelZoom, {passive:false});
-if (treePane) treePane.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-if (treeScroll) treeScroll.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-headerScroller.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
-matrixPane.addEventListener("wheel", wheelZoom, {passive:false});
 
 /* The panes share one scroll origin: the matrix scroller is the source of truth,
    the header follows it horizontally and the tree vertically. Before this the
@@ -3088,7 +3158,8 @@ function syncFromMatrix() {
 matrixPane.addEventListener("scroll", syncFromMatrix, {passive: true});
 if (headerScroller) {
   headerScroller.addEventListener("scroll", () => {
-    if (syncingScroll) return;
+    // The matrix moved the header; this is that move coming back, not a new one.
+    if (syncingScroll || Math.abs(headerScroller.scrollLeft - matrixPane.scrollLeft) < 1) return;
     syncingScroll = true;
     matrixPane.scrollLeft = headerScroller.scrollLeft;
     syncingScroll = false;
@@ -3097,7 +3168,7 @@ if (headerScroller) {
 }
 if (treeScroll) {
   treeScroll.addEventListener("scroll", () => {
-    if (syncingScroll) return;
+    if (syncingScroll || Math.abs(treeScroll.scrollTop - matrixPane.scrollTop) < 1) return;
     syncingScroll = true;
     matrixPane.scrollTop = treeScroll.scrollTop;
     syncingScroll = false;
@@ -3190,6 +3261,81 @@ matrixPane.addEventListener("mousemove", event => {
   const left = x + 14 + w > paneRect.width ? Math.max(4, x - 14 - w) : x + 14;
   const top = y + 14 + h > paneRect.height ? Math.max(4, y - 14 - h) : y + 14;
   tooltip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+});
+/* ---- Keyboard cell cursor -------------------------------------------------
+   The matrix is a canvas, so without this a keyboard could reach a row only by
+   typing its genome into find. The cursor reuses the hover marks and readout,
+   and says where it is through the live region. */
+const liveRegion = document.getElementById("liveRegion");
+function announce(text) {
+  if (!liveRegion) return;
+  liveRegion.textContent = "";
+  // A fresh node each time, so the same text twice is still read out.
+  requestAnimationFrame(() => { liveRegion.textContent = text; });
+}
+const cursor = {row: -1, col: -1};
+function cellReadout(row, col) {
+  const clusterIdx = originalClusterAtVisibleColumn(col);
+  const genomeIdx = leafOrder[row];
+  const cluster = data.clusters[clusterIdx];
+  if (!cluster || genomeIdx === undefined) return "";
+  const state = stateAt(clusterIdx, genomeIdx);
+  const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
+  return `${data.genomes[genomeIdx]}, ${cluster.name}: ${labels[state]}${evidence ? `, ${evidenceSummary(evidence)}` : ""}`;
+}
+function moveCursor(row, col) {
+  const rows = leafOrder.length;
+  const cols = visibleClusters.length;
+  if (!rows || !cols) return;
+  cursor.row = Math.max(0, Math.min(rows - 1, row));
+  cursor.col = Math.max(0, Math.min(cols - 1, col));
+  const view = viewportSize(matrixViewport);
+  const y = cursor.row * cellH;
+  const x = cursor.col * cellW;
+  if (y < matrixPane.scrollTop) matrixPane.scrollTop = y;
+  else if (y + cellH > matrixPane.scrollTop + view.h) matrixPane.scrollTop = y + cellH - view.h;
+  if (x < matrixPane.scrollLeft) matrixPane.scrollLeft = x;
+  else if (x + cellW > matrixPane.scrollLeft + view.w) matrixPane.scrollLeft = x + cellW - view.w;
+  const text = cellReadout(cursor.row, cursor.col);
+  setHover(cursor.row, cursor.col, text);
+  announce(text);
+}
+matrixPane.addEventListener("focus", () => {
+  if (cursor.row >= 0) return;
+  const row = selectedGenome >= 0 ? rowOfGenome[selectedGenome] : Math.floor(matrixPane.scrollTop / cellH);
+  moveCursor(Math.max(0, row), Math.max(0, selectedVisibleColumn()));
+});
+matrixPane.addEventListener("blur", () => setHover(-1, -1, defaultStatus));
+matrixPane.addEventListener("keydown", event => {
+  if (event.metaKey || event.altKey) return;
+  const view = viewportSize(matrixViewport);
+  const pageRows = Math.max(1, Math.floor(view.h / cellH) - 1);
+  const pageCols = Math.max(1, Math.floor(view.w / cellW) - 1);
+  const {row, col} = cursor.row >= 0 ? cursor : {row: 0, col: Math.max(0, selectedVisibleColumn())};
+  let next = null;
+  switch (event.key) {
+    case "ArrowDown": next = [row + (event.shiftKey ? pageRows : 1), col]; break;
+    case "ArrowUp": next = [row - (event.shiftKey ? pageRows : 1), col]; break;
+    case "ArrowRight": next = [row, col + (event.shiftKey ? pageCols : 1)]; break;
+    case "ArrowLeft": next = [row, col - (event.shiftKey ? pageCols : 1)]; break;
+    case "PageDown": next = [row + pageRows, col]; break;
+    case "PageUp": next = [row - pageRows, col]; break;
+    case "Home": next = event.ctrlKey ? [row, 0] : [0, col]; break;
+    case "End": next = event.ctrlKey ? [row, visibleClusters.length - 1] : [leafOrder.length - 1, col]; break;
+    case "Enter":
+    case " ":
+      event.preventDefault();
+      event.stopPropagation();
+      selectedGenome = leafOrder[row];
+      selectVisibleColumn(col);
+      announce(`Opened ${cellReadout(row, col)}`);
+      return;
+    default:
+      return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  moveCursor(next[0], next[1]);
 });
 matrixPane.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
@@ -3306,7 +3452,7 @@ function drawFigure() {
     f.clip();
     f.translate(margin, bodyTop);
     f.lineWidth = 1;
-    drawTreeNode(treeRoot, r0 * ch, r0, r1, matrixH, labelToggle.checked && ch >= 5);
+    drawTreeNode(treeRoot, r0 * ch, r0, r1, matrixH, labelToggle.checked && ch >= TIP_LABEL_MIN_ROW);
     f.restore();
   } finally {
     treeCtx = keepCtx;
@@ -3896,8 +4042,14 @@ document.addEventListener("keydown", event => {
     if (anyPaneMenuOpen()) { setPaneMenu(null, false); return; }
     return;
   }
-  if (paletteIsOpen() || typingInField(event.target)) return;
+  if (event.defaultPrevented || paletteIsOpen() || typingInField(event.target)) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
+  // Nothing acts behind an open dialog: the drawer handles its own keys, and
+  // the shortcut sheet only answers to the key that closes it.
+  if (document.getElementById("runDetails")?.classList.contains("open")) return;
+  if (shortcutSheet && !shortcutSheet.hidden && event.key !== "?") return;
+  // A focused seam uses the arrows to resize itself.
+  if (event.target.closest && event.target.closest("[role='separator']")) return;
 
   switch (event.key) {
     case "/":

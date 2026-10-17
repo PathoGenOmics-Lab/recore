@@ -2785,6 +2785,16 @@ input.switch:focus-visible {
   overscroll-behavior: contain;
 }
 
+#matrixPane:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+tr[data-cluster]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .pane-spacer {
   width: 1px;
   height: 1px;
