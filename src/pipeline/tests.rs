@@ -1666,6 +1666,7 @@ fn reference_hit_shadow_candidates_capture_partial_annotated_paralog() {
             target: "chr".into(),
             target_start: 0,
             target_end: 885,
+            target_length: 0,
             matches: 885,
             alignment_length: 885,
             mapq: 0,

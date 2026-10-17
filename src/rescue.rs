@@ -14,7 +14,7 @@ pub use self::conflicts::resolve_conflicts;
 pub use self::genes::build_gene_to_cluster_with_gff_aliases;
 pub(crate) use self::genes::panaroo_gene_id_suffix_variants;
 pub use self::gff::{GffGene, GffIndex};
-pub use self::orf::check_internal_stops_in_hit;
+pub use self::orf::{check_internal_stops_in_cds, check_internal_stops_in_hit};
 pub(crate) use self::synteny::{validate_synteny_with_cache, SyntenyReferenceCache};
 pub use self::types::{
     FragmentEvidence, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence,
@@ -49,6 +49,106 @@ struct FragmentChain {
     start: u64,
     end: u64,
     evidence: FragmentEvidence,
+    /// The other contig, for a gene split across an assembly break. The chain's
+    /// own contig and span are those of its larger piece.
+    across_contigs: Option<String>,
+}
+
+/// How close to a contig's end a piece of a gene has to reach to count as cut
+/// by the end of the contig rather than by the gene.
+const CONTIG_EDGE_BP: u64 = 50;
+
+/// A gene split across two contigs by an assembly break: one piece runs off
+/// the end of one contig and the other starts at an end of another, and
+/// together they cover the gene in order.
+///
+/// Fragments used to be chained only within one contig, so such a gene got no
+/// fragment chain at all: its larger piece alone was then called a partial
+/// deletion, a biological claim about what is only a break in the assembly,
+/// and rescue-types.md names contig boundaries as the commonest cause of
+/// FRAGMENTED. The pieces may sit on different strands, because the second
+/// contig can be assembled in either orientation; what matters is that each
+/// piece reaches its contig's edge on the side where the gene carries on.
+fn cross_contig_chain(hits: &[&Hit]) -> Option<FragmentChain> {
+    // The side of a piece where its query end, or its query start, falls.
+    let reaches_edge = |hit: &Hit, at_query_end: bool| -> bool {
+        if hit.target_length == 0 {
+            return false;
+        }
+        let low_side = (hit.strand == '-') == at_query_end;
+        if low_side {
+            hit.target_start <= CONTIG_EDGE_BP
+        } else {
+            hit.target_length.saturating_sub(hit.target_end) <= CONTIG_EDGE_BP
+        }
+    };
+
+    let mut best: Option<FragmentChain> = None;
+    for a in hits {
+        for b in hits {
+            if a.target == b.target
+                || a.query != b.query
+                || a.query_length != b.query_length
+                || a.query_length == 0
+                || a.query_start >= b.query_start
+            {
+                continue;
+            }
+            // In order on the gene, without a real gap or a real overlap.
+            if b.query_start > a.query_end + CONTIG_EDGE_BP
+                || a.query_end > b.query_start + CONTIG_EDGE_BP
+            {
+                continue;
+            }
+            if !reaches_edge(a, true) || !reaches_edge(b, false) {
+                continue;
+            }
+            let covered = b.query_end.max(a.query_end)
+                - a.query_start
+                - b.query_start.saturating_sub(a.query_end);
+            let coverage = covered as f64 / a.query_length as f64 * 100.0;
+            let total_aln = a.alignment_length + b.alignment_length;
+            let avg_identity = if total_aln > 0 {
+                (a.matches + b.matches) as f64 / total_aln as f64 * 100.0
+            } else {
+                0.0
+            };
+            let (main, other) = if a.target_end - a.target_start >= b.target_end - b.target_start {
+                (*a, *b)
+            } else {
+                (*b, *a)
+            };
+            let query_gap = b.query_start.saturating_sub(a.query_end);
+            let chain = FragmentChain {
+                hits: vec![(*a).clone(), (*b).clone()],
+                coverage,
+                avg_identity,
+                n_fragments: 2,
+                contig: main.target.clone(),
+                strand: main.strand,
+                start: main.target_start,
+                end: main.target_end,
+                evidence: FragmentEvidence {
+                    n_fragments: 2,
+                    total_query_gap_bp: query_gap,
+                    max_query_gap_bp: query_gap,
+                    total_target_gap_bp: 0,
+                    max_target_gap_bp: 0,
+                    colinear: Some(true),
+                    same_cds: Some(false),
+                    note: None,
+                },
+                across_contigs: Some(other.target.clone()),
+            };
+            if best
+                .as_ref()
+                .map_or(true, |current| chain.coverage > current.coverage)
+            {
+                best = Some(chain);
+            }
+        }
+    }
+    best
 }
 
 #[derive(Debug, Clone)]
@@ -223,10 +323,22 @@ fn build_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
             same_cds: None,
             note: None,
         },
+        across_contigs: None,
     })
 }
 
 fn best_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
+    let within = best_within_contig_chain(hits);
+    match (within, cross_contig_chain(hits)) {
+        // A split across contigs only when it explains more of the gene than
+        // any chain on a single contig does.
+        (Some(w), Some(c)) if c.coverage > w.coverage => Some(c),
+        (Some(w), _) => Some(w),
+        (None, c) => c,
+    }
+}
+
+fn best_within_contig_chain(hits: &[&Hit]) -> Option<FragmentChain> {
     let mut groups: HashMap<(String, u64, String, char), Vec<&Hit>> = HashMap::new();
     for hit in hits {
         groups
@@ -334,12 +446,32 @@ fn classify_matched_gene(
     (RescueType::Dropped, base_confidence)
 }
 
+/// How far the annotated stop may sit from where the representative's stop
+/// falls before the difference is no longer a start-site question: one codon,
+/// for annotations that leave the stop codon out of the CDS.
+const START_VARIANT_STOP_TOLERANCE_BP: i64 = 3;
+
+/// An annotated CDS that agrees with the cluster's representative at the stop
+/// and differs only at the start.
+///
+/// The length of the CDS used to be compared with the length of the aligned
+/// span, which says nothing about which end differs. Intact genes were called
+/// START_VARIANT whenever alignment trimmed a few bases, a representative that
+/// reads through its stop made the difference sit at the 3' end and still be
+/// called a start variant, and a frameshifted gene went into the matrix that
+/// way. Now the representative's own start and stop are projected onto the
+/// contig, from the bases the alignment left unaligned at each end of the
+/// query, and the stop has to coincide with the CDS's.
+#[allow(clippy::too_many_arguments)]
 fn detect_start_variant_from_span(
     identity: f64,
     coverage: f64,
     contig: &str,
     start: u64,
     end: u64,
+    strand: char,
+    query_5p_unaligned: u64,
+    query_3p_unaligned: u64,
     gff_index: Option<&GffIndex>,
 ) -> Option<(i64, String)> {
     let gff = gff_index?;
@@ -348,22 +480,46 @@ fn detect_start_variant_from_span(
         return None;
     }
 
-    let overlapping = gff.overlapping(contig, start, end);
+    // Where the representative's first and last bases fall on this contig.
+    let (proj_low, proj_high) = if strand == '-' {
+        (
+            start.saturating_sub(query_3p_unaligned),
+            end + query_5p_unaligned,
+        )
+    } else {
+        (
+            start.saturating_sub(query_5p_unaligned),
+            end + query_3p_unaligned,
+        )
+    };
     let hit_len = end.saturating_sub(start) as f64;
-    let target_aln_len = end.saturating_sub(start) as i64;
 
-    for gene in &overlapping {
-        let gene_len = (gene.end - gene.start) as i64;
-        let diff = gene_len - target_aln_len;
-
-        if diff.unsigned_abs() < 300 && diff != 0 {
-            let overlap_start = start.max(gene.start);
-            let overlap_end = end.min(gene.end);
-            let overlap = overlap_end.saturating_sub(overlap_start) as f64;
-
-            if hit_len > 0.0 && overlap / hit_len > 0.8 {
-                return Some((diff, gene.gene_id.clone()));
-            }
+    for gene in gff.overlapping(contig, start, end) {
+        if matches!(gene.strand, '+' | '-') && gene.strand != strand {
+            continue;
+        }
+        // (stop side, start side); positive start_diff means the annotated
+        // CDS begins further upstream than the representative does.
+        let (stop_diff, start_diff) = if strand == '-' {
+            (
+                gene.start as i64 - proj_low as i64,
+                gene.end as i64 - proj_high as i64,
+            )
+        } else {
+            (
+                proj_high as i64 - gene.end as i64,
+                proj_low as i64 - gene.start as i64,
+            )
+        };
+        if stop_diff.abs() > START_VARIANT_STOP_TOLERANCE_BP {
+            continue;
+        }
+        if start_diff == 0 || start_diff.unsigned_abs() >= 300 {
+            continue;
+        }
+        let overlap = end.min(gene.end).saturating_sub(start.max(gene.start)) as f64;
+        if hit_len > 0.0 && overlap / hit_len > 0.8 {
+            return Some((start_diff, gene.gene_id.clone()));
         }
     }
 
@@ -379,6 +535,9 @@ fn detect_start_variant(hit: &Hit, gff_index: Option<&GffIndex>) -> Option<(i64,
         &hit.target,
         hit.target_start,
         hit.target_end,
+        hit.strand,
+        hit.query_start,
+        hit.query_length.saturating_sub(hit.query_end),
         gff_index,
     )
 }
@@ -412,11 +571,35 @@ pub fn classify_hits(
     });
 
     // ── Path 1: Single full-coverage hit ──
-    if let Some(missing_cds_hit) = sorted_hits
+    //
+    // A full-coverage hit on unannotated sequence is tried first, so that a
+    // true ortholog the annotation missed is not displaced by an annotated
+    // paralog that belongs to another cluster; synteny then judges the locus.
+    // But not ahead of an annotated CDS that no cluster claims and that fits
+    // at least as well: that is the plainest false absence there is, a gene
+    // the pangenome tool dropped, and an identical unannotated copy elsewhere
+    // in the genome used to take its place, fail synteny, and leave the cell
+    // with nothing.
+    let missing_cds_candidate = sorted_hits
         .iter()
         .copied()
         .filter(|hit| hit.query_coverage() >= min_coverage)
-        .find(|hit| is_missing_cds_candidate(hit, gff_index))
+        .find(|hit| is_missing_cds_candidate(hit, gff_index));
+    let dropped_on_annotation = missing_cds_candidate.and_then(|missing| {
+        sorted_hits
+            .iter()
+            .copied()
+            .filter(|hit| hit.query_coverage() >= min_coverage)
+            .filter(|hit| !is_missing_cds_candidate(hit, gff_index))
+            .filter(|hit| hit.score() >= missing.score() - 0.01)
+            .find(|hit| {
+                matches!(
+                    classify_single_hit(hit, ci, pa, gff_index, gene_to_cluster).0,
+                    RescueType::Dropped
+                )
+            })
+    });
+    if let Some(missing_cds_hit) = missing_cds_candidate.filter(|_| dropped_on_annotation.is_none())
     {
         let confidence =
             missing_cds_hit.identity() / 100.0 * missing_cds_hit.query_coverage() / 100.0;
@@ -441,7 +624,7 @@ pub fn classify_hits(
         });
     }
 
-    let best = sorted_hits[0];
+    let best = dropped_on_annotation.unwrap_or(sorted_hits[0]);
 
     if best.query_coverage() >= min_coverage {
         let (rescue_type, annotation_match, confidence) =
@@ -489,6 +672,30 @@ pub fn classify_hits(
                 return None;
             }
 
+            if let Some(other) = chain.across_contigs.clone() {
+                chain.evidence.note = Some(format!("split_across_contigs:{}", other));
+                let confidence = (chain.avg_identity / 100.0) * (chain.coverage / 100.0) * 0.8;
+                return Some(RescueEvent {
+                    cluster_idx: ci,
+                    genome_idx: gi,
+                    rescue_type: RescueType::Fragmented {
+                        n_fragments: chain.n_fragments,
+                        total_coverage: chain.coverage,
+                    },
+                    identity: chain.avg_identity,
+                    coverage: chain.coverage,
+                    contig: chain.contig,
+                    start: chain.start,
+                    end: chain.end,
+                    strand: chain.strand,
+                    annotation_match: None,
+                    confidence,
+                    synteny_ok: None,
+                    synteny_evidence: SyntenyEvidence::default(),
+                    fragment_evidence: chain.evidence,
+                });
+            }
+
             if let Some(gene) = compatible_single_cds(&chain, gff_index) {
                 chain.evidence.same_cds = Some(true);
                 chain.evidence.note = Some("same_cds_alignment_split".to_string());
@@ -508,12 +715,18 @@ pub fn classify_hits(
                     rescue_type,
                     RescueType::Dropped
                 ) {
+                    let query_start = chain.hits.iter().map(|h| h.query_start).min().unwrap_or(0);
+                    let query_end = chain.hits.iter().map(|h| h.query_end).max().unwrap_or(0);
+                    let query_length = chain.hits.first().map(|h| h.query_length).unwrap_or(0);
                     if let Some((length_diff, matched_gene_id)) = detect_start_variant_from_span(
                         chain.avg_identity,
                         chain.coverage,
                         &chain.contig,
                         chain.start,
                         chain.end,
+                        chain.strand,
+                        query_start,
+                        query_length.saturating_sub(query_end),
                         gff_index,
                     ) {
                         (

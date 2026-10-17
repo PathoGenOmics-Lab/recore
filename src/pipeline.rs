@@ -15,9 +15,10 @@ use crate::parser::{
 };
 use crate::relationships::{write_cluster_components, write_cluster_relationships};
 use crate::rescue::{
-    build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_hit, classify_hits,
-    panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GffGene,
-    GffIndex, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
+    build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_cds,
+    check_internal_stops_in_hit, classify_hits, panaroo_gene_id_suffix_variants, resolve_conflicts,
+    validate_synteny_with_cache, GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
+    SyntenyEvidence, SyntenyReferenceCache,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -584,24 +585,48 @@ pub fn run(args: &Args) -> Result<()> {
 
                 for rescue_idx in rescue_indices {
                     let rescue = &mut rescues[rescue_idx];
-                    if let Some(n_stops) = check_internal_stops_in_hit(
-                        // Build a minimal hit from rescue coords for the check
-                        &crate::search::Hit {
-                            query: String::new(),
-                            cluster: String::new(),
-                            query_length: 0,
-                            query_start: 0,
-                            query_end: 0,
-                            strand: rescue.strand,
-                            target: rescue.contig.clone(),
-                            target_start: rescue.start,
-                            target_end: rescue.end,
-                            matches: 0,
-                            alignment_length: 0,
-                            mapq: 0,
-                        },
-                        Some(&contigs),
-                    ) {
+                    // A rescue on an annotated CDS is scanned in that CDS, in its
+                    // frame and to its stop; see check_internal_stops_in_cds.
+                    let annotated_cds = rescue
+                        .annotation_match
+                        .as_deref()
+                        .and_then(|id| gff_indices.get(&gi)?.get_by_id(id))
+                        .filter(|gene| {
+                            gene.contig == rescue.contig
+                                && gene.strand == rescue.strand
+                                && gene.start < rescue.end
+                                && rescue.start < gene.end
+                        });
+                    let stops = if let Some(gene) = annotated_cds {
+                        check_internal_stops_in_cds(
+                            &gene.contig,
+                            gene.start,
+                            gene.end,
+                            gene.strand,
+                            &contigs,
+                        )
+                    } else {
+                        check_internal_stops_in_hit(
+                            // Build a minimal hit from rescue coords for the check
+                            &crate::search::Hit {
+                                query: String::new(),
+                                cluster: String::new(),
+                                query_length: 0,
+                                query_start: 0,
+                                query_end: 0,
+                                strand: rescue.strand,
+                                target: rescue.contig.clone(),
+                                target_start: rescue.start,
+                                target_end: rescue.end,
+                                target_length: 0,
+                                matches: 0,
+                                alignment_length: 0,
+                                mapq: 0,
+                            },
+                            Some(&contigs),
+                        )
+                    };
+                    if let Some(n_stops) = stops {
                         rescue.rescue_type = RescueType::Pseudogene {
                             reason: PseudogeneReason::InternalStop { n_stops },
                         };

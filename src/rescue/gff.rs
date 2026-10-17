@@ -14,6 +14,15 @@ pub struct GffGene {
 pub struct GffIndex {
     pub genes: Vec<GffGene>,
     contig_ranges: HashMap<String, (usize, usize)>,
+    /// Largest gene end seen so far within each contig, aligned with `genes`.
+    /// Genes are sorted by start, and their ends are not monotone once one CDS
+    /// contains another, so a binary search on `end` itself is wrong: it
+    /// skipped a CDS that contained a nested one, and the annotated locus read
+    /// as having no CDS. The running maximum is monotone.
+    prefix_max_end: Vec<u64>,
+    /// Longest gene on each contig, which bounds how far back an upstream
+    /// search has to look.
+    max_gene_len: HashMap<String, u64>,
     gene_id_index: HashMap<String, usize>,
     gene_aliases: HashMap<String, Vec<String>>,
     gene_labels: HashMap<String, Vec<String>>,
@@ -59,6 +68,21 @@ impl GffIndex {
             contig_ranges.insert(current_contig.clone(), (range_start, genes.len()));
         }
 
+        let mut prefix_max_end: Vec<u64> = Vec::with_capacity(genes.len());
+        let mut max_gene_len: HashMap<String, u64> = HashMap::new();
+        for (i, g) in genes.iter().enumerate() {
+            let new_contig = i == 0 || genes[i - 1].contig != g.contig;
+            let running = if new_contig {
+                g.end
+            } else {
+                prefix_max_end[i - 1].max(g.end)
+            };
+            prefix_max_end.push(running);
+            let len = g.end.saturating_sub(g.start);
+            let longest = max_gene_len.entry(g.contig.clone()).or_insert(0);
+            *longest = (*longest).max(len);
+        }
+
         let mut gene_id_index = HashMap::new();
         let mut gene_aliases = HashMap::new();
         let mut gene_labels = HashMap::new();
@@ -86,6 +110,8 @@ impl GffIndex {
         GffIndex {
             genes,
             contig_ranges,
+            prefix_max_end,
+            max_gene_len,
             gene_id_index,
             gene_aliases,
             gene_labels,
@@ -129,14 +155,17 @@ impl GffIndex {
         };
 
         let slice = &self.genes[range_start..range_end];
-        let scan_start = slice.partition_point(|g| g.end <= query_start);
+        let running_end = &self.prefix_max_end[range_start..range_end];
+        let scan_start = running_end.partition_point(|&end| end <= query_start);
 
         let mut results = Vec::new();
         for g in &slice[scan_start..] {
             if g.start >= query_end {
                 break;
             }
-            results.push(g);
+            if g.end > query_start {
+                results.push(g);
+            }
         }
         results
     }
@@ -152,10 +181,29 @@ impl GffIndex {
         };
 
         let slice = &self.genes[range_start..range_end];
-        let pos = slice.partition_point(|g| g.end <= start);
 
-        let upstream = if pos > 0 { Some(&slice[pos - 1]) } else { None };
-        let downstream = slice[pos..].iter().find(|g| g.start >= end);
+        // The first gene starting at or after `end`: starts are sorted.
+        let down = slice.partition_point(|g| g.start < end);
+        let downstream = slice.get(down);
+
+        // The gene ending closest before `start`. Ends are not sorted when
+        // genes nest, so look back from the last gene starting before `start`,
+        // stopping once no earlier gene can end later than the best so far.
+        let longest = self.max_gene_len.get(contig).copied().unwrap_or(0);
+        let mut upstream: Option<&GffGene> = None;
+        for g in slice[..slice.partition_point(|g| g.start < start)]
+            .iter()
+            .rev()
+        {
+            if let Some(best) = upstream {
+                if g.start.saturating_add(longest) < best.end {
+                    break;
+                }
+            }
+            if g.end <= start && upstream.map_or(true, |best| g.end > best.end) {
+                upstream = Some(g);
+            }
+        }
 
         (upstream, downstream)
     }

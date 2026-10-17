@@ -222,6 +222,24 @@ and Recore uses semantic versioning.
   two halves meet exactly on the gene and were merged into one piece; and when
   minimap2 chained them across a short insertion it aligned only the first
   half. What a partial hit leaves uncovered is now realigned on its own.
+- A gene split across two contigs is FRAGMENTED, with a
+  `split_across_contigs` note, instead of a partial deletion claimed from its
+  larger piece.
+- Internal stops in a rescue that sits on an annotated CDS are counted in that
+  CDS, in its own frame and up to its own stop. The minimum over three frames
+  missed premature stops in GC-rich genes, and a representative that reads
+  through its stop made an intact gene look like a pseudogene.
+- `START_VARIANT` requires the annotated CDS to agree with the representative
+  at the stop and differ at the start. It was a length comparison, which called
+  intact genes start variants when an alignment was trimmed, and let a
+  frameshifted gene into the matrix as one. The docs had its sign backwards: a
+  positive value means this genome's CDS starts upstream.
+- A CDS that contains another, nested CDS is found by annotation lookups. The
+  binary search assumed gene ends were sorted, so the outer CDS was skipped and
+  its gene read as `MISSING_CDS`.
+- An annotated CDS that no cluster claims is preferred over an identical
+  unannotated copy elsewhere in the genome. The copy used to win as
+  `MISSING_CDS`, fail synteny, and leave the cell uncorrected.
 - Inputs are checked before any work starts. A misspelled `--annotations`
   directory, `--synteny` without `--annotations`, a genomes directory with no
   FASTA for the matrix, an unmatched or ambiguous `--reference-genome`, an
