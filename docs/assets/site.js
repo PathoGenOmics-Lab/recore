@@ -7,26 +7,56 @@
 
   /* ── Theme ── */
 
-  function systemDark() {
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  }
+  // Dark unless the reader chose light. The key is the report's own, so the
+  // example report below, which reads it when it starts, opens in the same
+  // theme as the page, and a toggle here is a toggle there.
+  var THEME_KEY = "recore.theme";
 
   function currentTheme() {
-    var set = document.documentElement.dataset.theme;
-    if (set === "light" || set === "dark") return set;
-    return systemDark() ? "dark" : "light";
+    return document.documentElement.dataset.theme === "light" ? "light" : "dark";
   }
+
+  function remember(theme) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch (e) {
+      /* private mode: the choice lasts for this page only */
+    }
+  }
+
+  // An embedded report already running is switched with its own button, so
+  // it redraws its canvases; one that cannot be reached is left alone.
+  function syncReports() {
+    var theme = currentTheme();
+    document.querySelectorAll("[data-report-stage] iframe").forEach(function (frame) {
+      try {
+        var doc = frame.contentDocument;
+        var root = doc && doc.documentElement;
+        if (!root || !root.getAttribute("data-theme")) return;
+        if (root.getAttribute("data-theme") !== theme) {
+          var button = doc.getElementById("themeToggle");
+          if (button) button.click();
+          else root.setAttribute("data-theme", theme);
+        }
+      } catch (e) {
+        /* another origin, or file:// in a strict browser */
+      }
+    });
+  }
+
+  remember(currentTheme());
 
   document.querySelectorAll("[data-theme-toggle]").forEach(function (button) {
     button.addEventListener("click", function () {
       var next = currentTheme() === "dark" ? "light" : "dark";
       document.documentElement.dataset.theme = next;
-      try {
-        localStorage.setItem("recore-theme", next);
-      } catch (e) {
-        /* private mode: the choice lasts for this page only */
-      }
+      remember(next);
+      syncReports();
     });
+  });
+
+  document.querySelectorAll("[data-report-stage] iframe").forEach(function (frame) {
+    frame.addEventListener("load", syncReports);
   });
 
   /* ── Tabs ── */
@@ -332,6 +362,7 @@
       absent: document.querySelector('[data-tally="absent"]')
     };
     var counts;
+    var resolved = {};
     var generation = 0;
     var visible = true;
 
@@ -343,6 +374,7 @@
 
     function reset() {
       counts = { rescued: 0, kept: 0, absent: 0 };
+      resolved = {};
       cells.forEach(function (c, idx) {
         c.className = OUTCOME[idx] ? "cell gap" : "cell";
       });
@@ -355,7 +387,10 @@
       cells.forEach(function (c, idx) {
         var kind = OUTCOME[idx];
         c.className = !kind ? "cell" : kind === "absent" ? "cell gap" : "cell " + kind;
-        if (kind) counts[kind] += 1;
+        if (kind) {
+          counts[kind] += 1;
+          resolved[idx] = true;
+        }
       });
       setTally();
       if (stepLabel) stepLabel.textContent = "After Recore";
@@ -401,6 +436,7 @@
                   cells[idx].classList.add(kind);
                 }
                 counts[kind] += 1;
+                resolved[idx] = true;
               });
               setTally();
             });
@@ -417,6 +453,53 @@
         });
     }
 
+    // What a cell is, for whoever points at it.
+    var tip = document.querySelector("[data-demo-tip]");
+    var demo = grid.closest(".demo");
+    function explain(idx) {
+      var kind = OUTCOME[idx];
+      var where = "Gene " + ((idx % COLS) + 1) + ", genome " + (Math.floor(idx / COLS) + 1);
+      if (!kind) return [where, "Present in the input matrix."];
+      if (!resolved[idx]) return [where, "Empty in the input matrix. Recore searches the assembly for it."];
+      if (kind === "rescued") return [where, "Put back: the matrix said absent, but the whole gene is in the assembly."];
+      if (kind === "kept") {
+        return [where, "Kept out: the gene is there but disrupted, a pseudogene. Written down with the reason, not counted as present."];
+      }
+      return [where, "Really absent: searched, and the gene is not in the assembly."];
+    }
+    function showTip(cell) {
+      var idx = cells.indexOf(cell);
+      if (idx < 0 || !tip || !demo) return;
+      var text = explain(idx);
+      tip.innerHTML = "<b></b><span></span>";
+      tip.firstChild.textContent = text[0];
+      tip.lastChild.textContent = text[1];
+      tip.hidden = false;
+      var box = demo.getBoundingClientRect();
+      var c = cell.getBoundingClientRect();
+      var left = c.left - box.left + c.width / 2 - tip.offsetWidth / 2;
+      left = Math.max(8, Math.min(left, box.width - tip.offsetWidth - 8));
+      var top = c.top - box.top - tip.offsetHeight - 8;
+      if (top < 4) top = c.bottom - box.top + 8;
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+    }
+    grid.addEventListener("pointerover", function (event) {
+      var cell = event.target.closest(".cell");
+      if (cell) showTip(cell);
+    });
+    grid.addEventListener("pointerleave", function () {
+      if (tip) tip.hidden = true;
+    });
+
+    var replay = document.querySelector("[data-demo-replay]");
+    if (replay) {
+      if (reduceMotion) replay.hidden = true;
+      replay.addEventListener("click", function () {
+        run();
+      });
+    }
+
     if (reduceMotion) {
       finalState();
     } else {
@@ -427,6 +510,58 @@
       }
       run();
     }
+  }
+
+  /* ── Matrix policies ── */
+
+  // Which of the ten found genes each policy puts back. Nothing a policy
+  // leaves out is lost: it stays in the audit files with the reason.
+  var PUTS_BACK = {
+    strict: ["locus"],
+    balanced: ["locus", "sequence"],
+    sensitive: ["locus", "sequence", "partial"]
+  };
+  var picker = document.querySelector("[data-evidence]");
+  if (picker) {
+    var rows = Array.prototype.slice.call(picker.querySelectorAll(".ev-row"));
+    var total = 0;
+    rows.forEach(function (row) {
+      var n = parseInt(row.getAttribute("data-ev-n"), 10) || 0;
+      total += n;
+      var holder = row.querySelector(".ev-cells");
+      for (var k = 0; k < n; k++) {
+        var cell = document.createElement("span");
+        cell.className = "ev-cell";
+        holder.appendChild(cell);
+      }
+    });
+    var summary = picker.querySelector("[data-ev-sum]");
+    var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-policy]"));
+    function choose(policy) {
+      var back = PUTS_BACK[policy] || [];
+      var putBack = 0;
+      rows.forEach(function (row) {
+        var on = back.indexOf(row.getAttribute("data-ev")) !== -1;
+        row.querySelectorAll(".ev-cell").forEach(function (cell) {
+          cell.className = "ev-cell " + (on ? "rescued" : "kept");
+          if (on) putBack += 1;
+        });
+      });
+      buttons.forEach(function (b) {
+        b.setAttribute("aria-pressed", b.getAttribute("data-policy") === policy ? "true" : "false");
+      });
+      if (summary) {
+        summary.innerHTML =
+          "With <code>" + policy + "</code>, <b>" + putBack + " of " + total + "</b> go into the corrected matrix. " +
+          "The other " + (total - putBack) + " stay in the states file and <code>orthology_evidence.tsv</code>, with the reason.";
+      }
+    }
+    buttons.forEach(function (b) {
+      b.addEventListener("click", function () {
+        choose(b.getAttribute("data-policy"));
+      });
+    });
+    choose("balanced");
   }
 
   /* ── Embedded report ── */
