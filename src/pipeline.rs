@@ -366,7 +366,19 @@ pub fn run(args: &Args) -> Result<()> {
         maps
     };
 
-    // ── 6. Batch search: ONE minimap2 invocation ──
+    // ── 6. Search each gap genome for its absent clusters ──
+    //
+    // Base-level alignment (`true`) so identity is exact. Without -c minimap2
+    // reports chain-based match counts, which read a 99.6% identical gene as
+    // 93.6%: --min-identity and every class threshold in rescue.rs were
+    // comparing against that, so raising --min-identity to 95 cut the tutorial
+    // from 11 rescues to 3.
+    //
+    // The secondary budget is per genome, so it only has to cover one
+    // assembly's own copies of a gene, and 500 is generous for that. A second
+    // exact pass used to rerun every genome with a larger budget to recover
+    // MISSING_CDS candidates hidden when a shared budget ran out across all
+    // genomes; searched one genome at a time it found nothing new, so it is gone.
     let hits_map = batch_search(
         &pan_ref,
         &genome_files,
@@ -376,8 +388,8 @@ pub fn run(args: &Args) -> Result<()> {
         args.threads,
         args.min_identity,
         &args.preset,
-        false,
-        50,
+        true,
+        500,
     )?;
 
     let reference_hit_candidates = if let Some(reference_genome) = args.reference_genome.as_deref()
@@ -469,83 +481,6 @@ pub fn run(args: &Args) -> Result<()> {
 
     let mut rescues = rescues;
     info!("Raw rescues before filtering: {}", rescues.len());
-
-    // ── 7a. Exact missing-CDS pass ──
-    //
-    // Repetitive families can hide true CDS omissions when the best annotated
-    // paralog consumes minimap2's global secondary-hit budget. Run an exact,
-    // high-secondary pass, but only import MISSING_CDS candidates; all other
-    // extra alignments remain ignored by the binary correction path.
-    if args.synteny && !gff_indices.is_empty() && !searchable_genomes.is_empty() {
-        let missing_cds_chunk_size = 64usize;
-        info!(
-            "Running exact missing-CDS pass (-c) in {}-genome chunks...",
-            missing_cds_chunk_size
-        );
-        let before = rescues.len();
-        let mut seen_missing: ahash::HashSet<(ClusterIdx, GenomeIdx, String, u64, u64)> = rescues
-            .iter()
-            .map(|r| {
-                (
-                    r.cluster_idx,
-                    r.genome_idx,
-                    r.contig.clone(),
-                    r.start,
-                    r.end,
-                )
-            })
-            .collect();
-
-        for chunk in searchable_genomes.chunks(missing_cds_chunk_size) {
-            let max_secondary_missing_cds = chunk.len().saturating_mul(24).clamp(50, 5000);
-            let missing_hits_map = batch_search(
-                &pan_ref,
-                &genome_files,
-                chunk,
-                pa.genome_names(),
-                pa.cluster_names(),
-                args.threads,
-                args.min_identity,
-                &args.preset,
-                true,
-                max_secondary_missing_cds,
-            )?;
-            let missing_inputs: Vec<(ClusterIdx, GenomeIdx, &[crate::search::Hit])> =
-                missing_hits_map
-                    .iter()
-                    .map(|((gi, ci), hits)| (*ci, *gi, hits.as_slice()))
-                    .collect();
-            let missing_rescues: Vec<RescueEvent> = pool.install(|| {
-                use rayon::prelude::*;
-                missing_inputs
-                    .par_iter()
-                    .filter_map(|&(ci, gi, hits)| {
-                        let gff_index = gff_indices.get(&gi);
-                        let g2c = gene_to_cluster_maps.get(&gi).unwrap_or(&empty_map);
-                        classify_hits(hits, ci, gi, &pa, gff_index, g2c, args.min_coverage)
-                    })
-                    .filter(|rescue| matches!(rescue.rescue_type, RescueType::MissingCds))
-                    .collect()
-            });
-
-            for rescue in missing_rescues {
-                let key = (
-                    rescue.cluster_idx,
-                    rescue.genome_idx,
-                    rescue.contig.clone(),
-                    rescue.start,
-                    rescue.end,
-                );
-                if seen_missing.insert(key) {
-                    rescues.push(rescue);
-                }
-            }
-        }
-        info!(
-            "Exact missing-CDS pass added {} candidates",
-            rescues.len() - before
-        );
-    }
 
     // ── 7b. Internal stop codon scanning for sequence-only rescues ──
     // Load genome sequences on-demand for rescued genomes only

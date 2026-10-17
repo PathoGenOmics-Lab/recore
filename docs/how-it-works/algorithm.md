@@ -104,44 +104,39 @@ The map indexes both the original ID and stripped versions to maximize GFF match
 
 ---
 
-## Phase 5: Batch Search (minimap2)
+## Phase 5: Search (minimap2)
 
-This is the computational core. Instead of running minimap2 once per genome (which would be O(n) process spawns), Recore uses batched minimap2 searches over concatenated targets.
+This is the computational core. Each genome that has gaps is searched for its own absent clusters, one minimap2 run per genome, in parallel across `--threads`.
 
-### 5a. Query preparation
+### 5a. One genome at a time
 
-All unique cluster sequences are written to one temporary FASTA. In multi-allele mode, alleles are named `clusterName~~~ALLELE~0`, `clusterName~~~ALLELE~1`, etc.
+A genome's queries are only the clusters absent from it, and its target is only its own assembly. Genomes that carry a cluster never compete with the genome where it is missing.
 
-### 5b. Target concatenation
+That isolation is the point. Concatenating every genome into one target looks cheaper, but minimap2's secondary budget (`-N`) and its secondary-to-primary ratio (`-p`) then apply across all genomes at once. Once more than about fifty genomes carry a gene, their full-length copies use up the budget and the gap genome's hit is dropped; a gap genome's weaker copy, or the two pieces of a gene split across contigs, fall under half the carriers' score and are cut. Searched alone, a genome's hits only compete with its own other copies, and each run indexes one assembly rather than the whole pangenome.
 
-All genome FASTAs are concatenated into one target file. Contig names are prefixed with `genomeName|||originalContig` to prevent collisions between genomes. The `|||` separator is chosen because it never appears in real contig names.
+### 5b. Query preparation
 
-### 5c. Indexing
+The cluster sequences a genome needs are written to a temporary FASTA. In multi-allele mode, alleles are named `clusterName~~~ALLELE~0`, `clusterName~~~ALLELE~1`, etc.
 
-minimap2 builds an index (`.mmi`) of the concatenated target. This amortizes the O(n) indexing cost across all queries.
+### 5c. Target preparation
+
+The genome's FASTA is read by Recore's own reader (plain or gzipped) and written to a temporary file in normalised form: each header is cut to its contig name, line endings are normalised. minimap2 is given that copy rather than the user's file, so the aligner and the rest of the pipeline agree on what the assembly contains. Inputs that would otherwise give confident wrong answers fail here, naming the file and line: sequence before the first `>` header, an empty or non-UTF-8 contig name, and a contig name used twice in one assembly.
 
 ### 5d. Alignment
 
-The primary minimap2 pass runs with:
-- `--secondary=yes -N 50 -p 0.5`: report secondary alignments (needed for split/paralog detection)
-- Preset `asm5` (default) or `asm20`: controls alignment sensitivity
-- Streamed PAF output (stdout piped, no intermediate file)
-- Stderr captured in a background thread to prevent deadlock
+Every pass runs with base-level alignment, so identity and coverage are exact:
+
+- `-c`: base-level alignment. Without it minimap2 reports chain-based match counts, which read a 99.6% identical gene as about 93%, and every identity threshold would be comparing against that.
+- `-s 40`: the asm presets ask for a peak alignment score of 200, which with `-c` drops every gene shorter than about 200 bp.
+- `--end-bonus 40`: beats the asm5 mismatch penalty, so one SNP near either end of a gene does not clip the alignment short of the gene's end.
+- `--secondary=yes -N 500 -p 0.5`: report secondary alignments, needed for split and paralog detection. The budget is per genome.
+- Preset `asm5` (default) or `asm20`: controls alignment sensitivity.
 
 ### 5e. Hit filtering
 
-PAF lines are parsed in streaming fashion (no full output in RAM). Each hit is:
-1. Demuxed back to its genome by parsing the `|||` prefix
-2. Checked against the gap set; hits for non-gap (cluster, genome) pairs are discarded
-3. Filtered by minimum identity (`--min-identity`, default 90%)
+Each hit is assigned to its cluster through the query name and filtered by minimum identity (`--min-identity`, default 90%). Identity is exact, so the threshold means what it says.
 
-Result: a HashMap from `(genome_idx, cluster_name)` → `Vec<Hit>`.
-
-### 5f. Exact missing-CDS pass
-
-When `--synteny` and `--annotations` are enabled, Recore runs an additional exact-base alignment pass with minimap2 `-c` in small genome chunks. This pass addresses a specific failure mode in repetitive gene families: a true unannotated CDS-locus hit can be hidden when annotated paralogs consume minimap2's secondary-hit budget in a large concatenated target.
-
-Only candidates classified as `MISSING_CDS` are imported from this second pass. All other extra hits are ignored, and a `MISSING_CDS` candidate is corrected in the binary matrix only if later synteny validation confirms the locus.
+Result: a map from `(genome, cluster)` to its hits.
 
 ---
 

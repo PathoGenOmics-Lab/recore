@@ -54,6 +54,12 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     // ── Pan genome reference ──
     // gB sequence: 100bp gene
     let gene_b = "ATGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGAAAGCGTTTGCGATCGTAA";
+    // What s2 and s3 actually carry of gB: its first 78 of 94 bp, 83%, between
+    // --min-coverage (80) and the adaptive floor for a short cluster (85). Both
+    // used to carry all of gB and the test still expected it held back at
+    // "80.9% coverage", which was chain-approximate alignment misreading a
+    // repetitive sequence; aligned exactly, an intact gB is 100%.
+    let gene_b_partial = &gene_b[..78];
     // gC sequence: 80bp gene
     let gene_c =
         "ATGCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTGA";
@@ -79,14 +85,14 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     write_file(&genomes_dir, "s2.fasta", &format!(
         ">chr1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{}TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT{}CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC{}GGGGGGGGGGGGGGGGGGGGGGGGGGGG\n",
         "ATGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGTAA",
-        gene_b,  // gB present in assembly but marked absent in CSV
+        gene_b_partial,  // part of gB present in assembly, marked absent in CSV
         gene_c));
 
     // s3: has gA, and also has gB and gC hidden
     write_file(&genomes_dir, "s3.fasta", &format!(
         ">scaffold_1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{}TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT{}CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC{}GGGGGGGGGGGGGGGGGGGGGGGGGGGG\n",
         "ATGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGTAA",
-        gene_b,  // gB present
+        gene_b_partial,  // part of gB present
         gene_c)); // gC present
 
     let output_dir = base.join("output");
@@ -128,8 +134,9 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(output_dir.join("run_manifest.json").exists());
     assert!(output_dir.join("recore_report.html").exists());
     // gC in s3 is the only evidence accepted into the binary matrix, so it is the
-    // only genome that gets a corrected GFF. gB clears --min-coverage at 80.9% but
-    // not the adaptive floor for a short, rare cluster, so it stays audit-only.
+    // only genome that gets a corrected GFF. The partial gB clears --min-coverage
+    // at 83% but not the adaptive floor for a short, rare cluster, so it stays
+    // audit-only.
     assert!(output_dir
         .join("corrected_gff")
         .join("s3.recore.gff3")
@@ -296,5 +303,184 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
                 b_cluster
             );
         }
+    }
+}
+
+/// Tiny deterministic generator, so the scale test needs no extra dependency.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+    fn base(&mut self) -> u8 {
+        b"ACGT"[(self.next() % 4) as usize]
+    }
+    fn seq(&mut self, n: usize) -> String {
+        (0..n).map(|_| self.base() as char).collect()
+    }
+    /// An open reading frame with no internal stop codon.
+    fn orf(&mut self, codons: usize) -> String {
+        let mut s = String::from("ATG");
+        while s.len() < 3 * (codons + 1) {
+            let c = self.seq(3);
+            if !matches!(c.as_str(), "TAA" | "TAG" | "TGA") {
+                s.push_str(&c);
+            }
+        }
+        s + "TAA"
+    }
+    /// Change one base in each of `n` codons, never creating a stop codon.
+    fn mutate(&mut self, s: &str, n: usize) -> String {
+        let mut b = s.as_bytes().to_vec();
+        let codons = b.len() / 3;
+        let mut done = 0;
+        while done < n {
+            let c = 1 + (self.next() as usize % (codons - 2));
+            let i = 3 * c + 2;
+            let old = b[i];
+            let new = self.base();
+            if new == old {
+                continue;
+            }
+            b[i] = new;
+            if matches!(&b[3 * c..3 * c + 3], b"TAA" | b"TAG" | b"TGA") {
+                b[i] = old;
+                continue;
+            }
+            done += 1;
+        }
+        String::from_utf8(b).unwrap()
+    }
+}
+
+/// The search used to put every genome into one minimap2 target, under one
+/// `-N 50` secondary budget, and without base-level alignment. Once more than
+/// about fifty genomes carried a gene, their copies used up the budget and the
+/// gap genomes' hits were dropped: on 120 genomes almost none of the planted
+/// false absences came back, with exit 0. And identity was chain-approximate,
+/// reading these 99.5% copies in the low 90s.
+#[test]
+fn test_search_rescues_past_fifty_carriers_with_exact_identity() {
+    if !minimap2_available() {
+        assert!(
+            std::env::var_os("RECORE_REQUIRE_MINIMAP2").is_none(),
+            "RECORE_REQUIRE_MINIMAP2 is set but minimap2 is not in PATH"
+        );
+        eprintln!("SKIPPED: minimap2 not in PATH");
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let base = tmp.path();
+    let mut rng = Lcg(7);
+
+    let n = 120;
+    let genomes: Vec<String> = (0..n).map(|i| format!("S{i:03}")).collect();
+    let blank: Vec<usize> = (0..10).map(|k| k * n / 10 + 1).collect();
+    // accA in even genomes and accB in odd ones, so every genome has a true gap
+    // and lands in the search, which is what made the shared target crowded.
+    let clusters = ["core1", "tgt", "accA", "accB"];
+    let refs: Vec<String> = clusters.iter().map(|_| rng.orf(200)).collect();
+    let carries = |c: &str, i: usize| match c {
+        "accA" => i % 2 == 0,
+        "accB" => i % 2 == 1,
+        _ => true,
+    };
+
+    let mut fasta = String::new();
+    for (name, seq) in clusters.iter().zip(&refs) {
+        fasta.push_str(&format!(">{name}\n{seq}\n"));
+    }
+    write_file(base, "pan_ref.fa", &fasta);
+
+    let mut csv = String::from(
+        "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,\
+         Avg sequences per isolate,Genome Fragment,Order within Fragment,\
+         Accessory Order,QC,Min group size nuc,Max group size nuc,Avg group size nuc",
+    );
+    for g in &genomes {
+        csv.push(',');
+        csv.push_str(g);
+    }
+    csv.push('\n');
+    for (ci, name) in clusters.iter().enumerate() {
+        let cells: Vec<String> = (0..n)
+            .map(|i| {
+                let present = carries(name, i) && !(*name == "tgt" && blank.contains(&i));
+                if present {
+                    format!("{}_{ci}", genomes[i])
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        let count = cells.iter().filter(|c| !c.is_empty()).count();
+        csv.push_str(&format!(
+            "{name},,{name} protein,{count},{count},1,0,0,0,,603,603,603,{}\n",
+            cells.join(",")
+        ));
+    }
+    write_file(base, "pa.csv", &csv);
+
+    for (i, g) in genomes.iter().enumerate() {
+        let mut contig = rng.seq(300);
+        for (name, seq) in clusters.iter().zip(&refs) {
+            if carries(name, i) {
+                // 3 changes in 603 bp: a 99.5% copy, in every genome that
+                // carries the gene, blanked in the matrix or not.
+                contig.push_str(&rng.mutate(seq, 3));
+                contig.push_str(&rng.seq(200));
+            }
+        }
+        write_file(
+            &base.join("genomes"),
+            &format!("{g}.fasta"),
+            &format!(">{g}_c1\n{contig}\n"),
+        );
+    }
+
+    let output_dir = base.join("output");
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_recore"))
+        .args([
+            "-p",
+            base.join("pa.csv").to_str().unwrap(),
+            "-r",
+            base.join("pan_ref.fa").to_str().unwrap(),
+            "-g",
+            base.join("genomes").to_str().unwrap(),
+            "-o",
+            output_dir.to_str().unwrap(),
+            "-t",
+            "4",
+        ])
+        .status()
+        .expect("Failed to run recore binary");
+    assert!(status.success(), "recore exited with non-zero status");
+
+    let report = fs::read_to_string(output_dir.join("rescue_report.tsv")).unwrap();
+    let header: Vec<&str> = report.lines().next().unwrap().split('\t').collect();
+    let col = |name: &str| header.iter().position(|h| *h == name).unwrap();
+    let tgt: Vec<Vec<&str>> = report
+        .lines()
+        .skip(1)
+        .map(|l| l.split('\t').collect::<Vec<_>>())
+        .filter(|f| f[col("gene_cluster")] == "tgt")
+        .collect();
+    assert_eq!(
+        tgt.len(),
+        10,
+        "every planted false absence should be rescued, got {}",
+        tgt.len()
+    );
+    for row in &tgt {
+        let identity: f64 = row[col("identity")].parse().unwrap();
+        assert!(
+            identity >= 99.0,
+            "a 99.5% copy must read as such, not chain-approximate: {identity}"
+        );
     }
 }

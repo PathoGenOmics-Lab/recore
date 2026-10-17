@@ -208,9 +208,15 @@ def build(out: Path, seed: int) -> None:
             # The paralog trap lives in the one genome that does not carry the
             # real gene: a diverged copy is only a trap when there is a gap for
             # Recore to be tempted to fill with it.
+            #
+            # 85%, well under the default --min-identity of 90. It was 96%, and
+            # it only stayed out of the matrix because identity used to be
+            # chain-approximate and read it in the 80s. With exact identity a
+            # 96% full-length annotated copy at the orthologous locus is,
+            # by Recore's own rules, a DROPPED rescue, which is not a trap.
             if note == "paralog_trap" and genome not in carriers:
                 contig.append(spacer(rng, 900))
-                place(diverge(rng, reference[name], 0.96), f"{name}_paralog",
+                place(diverge(rng, reference[name], 0.85), f"{name}_paralog",
                       f"{product} (paralogous copy)")
                 continue
             if genome not in carriers:
