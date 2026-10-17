@@ -1,6 +1,22 @@
 (() => {
 const data = window.recoreExplorerData;
-if (!data || !data.clusters.length) return;
+// No data: the boot script has already said why.
+if (!data) return;
+if (!data.clusters.length) {
+  window.recoreExplorerFailed(new Error("the matrix has no clusters to draw"));
+  return;
+}
+{
+  const notices = document.getElementById("workspaceNotices");
+  if (notices && data.notices && data.notices.length) {
+    for (const text of data.notices) {
+      const line = document.createElement("p");
+      line.textContent = text;
+      notices.appendChild(line);
+    }
+    notices.hidden = false;
+  }
+}
 function readVar(name, fallback) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
@@ -3805,5 +3821,6 @@ afterRender = () => {
 renderGenomeDetails();
 populateOptions();
 render(false);
+window.recoreExplorerRunning = true;
 
 })();

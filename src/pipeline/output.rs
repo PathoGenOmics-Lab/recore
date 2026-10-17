@@ -1520,12 +1520,44 @@ const REPORT_LOGO: &str = include_str!("../../assets/recore_logo.svg");
 const REPORT_CSS: &str = include_str!("report_assets/report.css");
 const REPORT_UI_JS: &str = include_str!("report_assets/report-ui.js");
 const EXPLORER_JS: &str = include_str!("report_assets/explorer.js");
+/// Reads the embedded data before the viewer starts. A failure to parse it, or
+/// to start the viewer, used to leave a blank workspace with no message; now it
+/// says what happened and where the results are. The parsed text is removed
+/// from the page, which frees a copy of the whole payload.
+const EXPLORER_BOOT_JS: &str = r#"(function () {
+  window.recoreExplorerFailed = function (error) {
+    var main = document.getElementById("explorer");
+    if (!main) return;
+    var box = document.createElement("section");
+    box.className = "panel full explorer explorer-fallback explorer-failed";
+    box.setAttribute("role", "alert");
+    var title = document.createElement("h2");
+    title.textContent = "The interactive workspace could not start";
+    var text = document.createElement("p");
+    text.textContent = "Reason: " + (error && error.message ? error.message : String(error)) +
+      ". Every number is still in Run details (press D) and in the TSV files of the output directory.";
+    box.appendChild(title);
+    box.appendChild(text);
+    main.replaceWith(box);
+    if (window.console) console.error(error);
+  };
+  var element = document.getElementById("explorerData");
+  try {
+    window.recoreExplorerData = JSON.parse(element.textContent);
+    element.remove();
+  } catch (error) {
+    window.recoreExplorerFailed(error);
+  }
+})();"#;
 // The viewer draws only its visible window and ships the matrix in compact
 // per-cluster sets, so the ceiling is now the payload the browser has to parse
 // rather than anything about the rendering.
 const EXPLORER_MAX_TIPS: usize = 20_000;
 const EXPLORER_MAX_CELLS: usize = 1_200_000_000;
 const EXPLORER_MAX_SYNTENY_BLOCKS_PER_CLUSTER: usize = 10;
+/// Above this the browser may fail to hold the embedded JSON at all, which left
+/// a blank page; synteny detail, the largest part, is dropped first.
+const EXPLORER_MAX_JSON_BYTES: usize = 256 * 1024 * 1024;
 
 /// Runs in <head> so `data-theme` is set before the browser paints anything.
 const THEME_BOOTSTRAP_JS: &str = "<script>(()=>{try{\
@@ -1661,11 +1693,35 @@ where
     out
 }
 
-fn matched_phylo_tips(node: &PhyloNode) -> usize {
-    if node.children.is_empty() {
-        usize::from(node.genome_idx.is_some())
-    } else {
-        node.children.iter().map(matched_phylo_tips).sum()
+fn matched_phylo_tips(root: &PhyloNode) -> usize {
+    let mut tips = 0;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.children.is_empty() {
+            tips += usize::from(node.genome_idx.is_some());
+        }
+        stack.extend(node.children.iter());
+    }
+    tips
+}
+
+/// Without --tree the rows still need an order: every genome hangs off one
+/// root, in matrix order, so the workspace opens and the tree pane lists them.
+fn star_tree(pa: &crate::parser::PresenceAbsence) -> PhyloTree {
+    PhyloTree {
+        root: PhyloNode {
+            label: None,
+            genome_idx: None,
+            branch_length: None,
+            children: (0..pa.n_genomes())
+                .map(|gi| PhyloNode {
+                    label: Some(pa.genome_name(GenomeIdx(gi)).to_string()),
+                    genome_idx: Some(GenomeIdx(gi)),
+                    branch_length: None,
+                    children: Vec::new(),
+                })
+                .collect(),
+        },
     }
 }
 
@@ -2011,6 +2067,7 @@ fn build_explorer_data_json(
     evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
     evidence: &[OrthologyEvidenceRow],
+    notices: &[String],
 ) -> Option<String> {
     use std::fmt::Write as _;
 
@@ -2192,6 +2249,8 @@ fn build_explorer_data_json(
         &rendered_index,
         states.len(),
     ));
+    out.push_str(",\"notices\":");
+    out.push_str(&json_string_array(notices));
     out.push_str(",\"tree\":");
     out.push_str(&tree_json);
     out.push_str(",\"synteny\":{");
@@ -2313,17 +2372,21 @@ fn explorer_workspace_html(
         embedded: false,
     };
 
-    let Some(tree) = phylo_tree else {
-        return unavailable(
-            "Add --tree to open the phylogeny, matrix and synteny workspace. Without a tree the run details drawer still carries every number and table.",
-        );
+    let mut notices: Vec<String> = Vec::new();
+    let star;
+    let tree = match phylo_tree {
+        Some(tree) if matched_phylo_tips(&tree.root) > 0 => tree,
+        supplied => {
+            star = star_tree(pa);
+            notices.push(if supplied.is_some() {
+                "The supplied tree has no tips matching matrix genomes, so rows follow the matrix order and the tree pane only lists the genomes.".to_string()
+            } else {
+                "No --tree was given, so rows follow the matrix order and the tree pane only lists the genomes. Ancestral readings need a tree.".to_string()
+            });
+            &star
+        }
     };
     let matched_tips = matched_phylo_tips(&tree.root);
-    if matched_tips == 0 {
-        return unavailable(
-            "The supplied tree has no tips matching matrix genomes, so the workspace was not embedded.",
-        );
-    }
     if matched_tips > EXPLORER_MAX_TIPS {
         return unavailable(&format!(
             "The tree has {} matched tips. The workspace is embedded up to {} tips to keep the report responsive.",
@@ -2347,23 +2410,50 @@ fn explorer_workspace_html(
         ));
     }
 
-    let Some(data_json) = build_explorer_data_json(
-        pa,
-        rescue_map,
-        nsc_result,
-        tree,
-        reference_gi,
-        evolution_rows,
-        synteny_blocks,
-        evidence,
-    ) else {
+    let build = |synteny: &HashMap<String, Vec<ExplorerSyntenyBlock>>, notices: &[String]| {
+        build_explorer_data_json(
+            pa,
+            rescue_map,
+            nsc_result,
+            tree,
+            reference_gi,
+            evolution_rows,
+            synteny,
+            evidence,
+            notices,
+        )
+    };
+    let Some(mut data_json) = build(synteny_blocks, &notices) else {
         return unavailable(
             "The tree could not be converted into a matched-tip browser workspace.",
         );
     };
+    if data_json.len() > EXPLORER_MAX_JSON_BYTES && !synteny_blocks.is_empty() {
+        notices.push(format!(
+            "Synteny detail was left out of this report: with it the embedded data would be {} MB, more than a browser reliably holds. cluster_synteny_blocks.tsv has every block.",
+            format_count(data_json.len() / (1024 * 1024))
+        ));
+        match build(&HashMap::new(), &notices) {
+            Some(json) => data_json = json,
+            None => {
+                return unavailable(
+                    "The tree could not be converted into a matched-tip browser workspace.",
+                )
+            }
+        }
+    }
+    if data_json.len() > EXPLORER_MAX_JSON_BYTES {
+        return unavailable(&format!(
+            "The workspace data would be {} MB, more than a browser reliably holds. The run details drawer and the TSV files have every result.",
+            format_count(data_json.len() / (1024 * 1024))
+        ));
+    }
 
     let mut html = String::new();
 
+    html.push_str(
+        "<div id='workspaceNotices' class='workspace-notices' role='status' hidden></div>",
+    );
     html.push_str("<div id='lineageLegend' class='lineage-legend'></div>");
 
     // ---- Workspace grid.
@@ -2453,11 +2543,11 @@ fn explorer_workspace_html(
 
     html.push_str("<script id='explorerData' type='application/json'>");
     html.push_str(&script_safe_json(&data_json));
-    html.push_str(
-        "</script><script>window.recoreExplorerData=JSON.parse(document.getElementById('explorerData').textContent);</script><script>",
-    );
+    html.push_str("</script><script>");
+    html.push_str(EXPLORER_BOOT_JS);
+    html.push_str("</script><script>try{");
     html.push_str(EXPLORER_JS);
-    html.push_str("</script>");
+    html.push_str("}catch(error){window.recoreExplorerFailed(error);}</script>");
     ExplorerWorkspace {
         html,
         embedded: true,

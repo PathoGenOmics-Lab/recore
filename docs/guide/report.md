@@ -16,9 +16,13 @@ twelve genomes, twenty-four clusters, eleven planted false absences. It is the
 whole file, opened straight from this page, which is the point of it being
 self-contained.
 
-Without `--tree` the report is still written, but it is the run-details document
-only. The phylogeny, matrix and synteny workspace needs a tree, because the tree
-is what orders the rows.
+Without `--tree` the workspace still opens: the rows follow the matrix order, the
+tree pane only lists the genomes, and a notice above the workspace says so.
+Ancestral readings, tree colouring by subtree and rerooting need a real tree.
+
+If the workspace cannot start (a browser that cannot hold the embedded data, for
+instance), the report says why in place of the workspace, and ++d++ still opens
+the run details.
 
 ## The workspace
 

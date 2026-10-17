@@ -280,27 +280,22 @@ fn html_report_summarizes_run_outputs() {
     assert!(text.contains("<title>Recore run report</title>"));
     assert!(text.contains("group_1"));
     assert!(text.contains("Orthology actions"));
-    assert!(text.contains("Add --tree"));
     assert!(text.contains("gene_presence_absence_recore.csv"));
-    // Without a tree the viewer is not embedded and explorer.js is not inlined,
-    // so none of the chrome it drives may be drawn. It used to be, which left a
-    // topbar of controls that looked live and did nothing.
+    // Without a tree the workspace still opens on a star tree in matrix order,
+    // and says so, instead of leaving a page with one sentence on it.
+    assert!(text.contains("No --tree was given"));
+    assert!(text.contains("id='workspaceNotices'"));
     for control in [
         "id='clusterOmnibox'",
         "id='prevCluster'",
         "id='nextCluster'",
         "id='toggleSynteny'",
-        "id='shortcutsButton'",
         "id='exportView'",
-        "id='explorerFullscreen'",
         "id='palette'",
-        "id='shortcutSheet'",
     ] {
-        assert!(
-            !text.contains(control),
-            "tree-less report draws {control}, whose handler ships with the viewer"
-        );
+        assert!(text.contains(control), "tree-less report lacks {control}");
     }
+    assert!(text.contains("window.recoreExplorerFailed"));
     // What does work without a tree stays.
     assert!(text.contains("id='themeToggle'"));
     assert!(text.contains("id='openDetails'"));
@@ -2613,4 +2608,75 @@ fn tree_json_handles_a_fifty_thousand_level_ladder() {
         })
         .unwrap();
     assert_eq!(handle.join().unwrap(), 50_000);
+}
+
+/// A name holding "<!--" and then "<script" put the HTML parser into the
+/// script's escaped state, so the viewer and the drawer ended up inside the JSON
+/// and the page was blank with no error. The data block must hold neither, and
+/// the boot and viewer scripts must still follow it.
+#[test]
+fn hostile_names_cannot_break_out_of_the_data_block() {
+    let out = tempfile::tempdir().unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["<!--<script>".into(), "a</script><b>&".into()],
+        vec!["g1".into(), "<!--g2".into()],
+        vec![
+            vec!["gene1".into(), "".into()],
+            vec!["".into(), "gene2".into()],
+        ],
+    );
+    let mut args = default_args_for_validation();
+    args.output = out.path().to_path_buf();
+    args.write_html_report = true;
+    let stats = SummaryStats {
+        core_before: 0,
+        total_gaps: 2,
+        filtered_gaps: 2,
+        skipped_by_prevalence: 0,
+        searchable_gaps: 2,
+        missing_fasta_gaps: 0,
+        dropped: 0,
+        missing_cds: 0,
+        split: 0,
+        fragmented: 0,
+        alignment_split: 0,
+        start_variant: 0,
+        paralog: 0,
+        pseudogene: 0,
+        synteny_rejected: 0,
+        paralog_rejected: 0,
+        matrix_policy: MatrixPolicy::Balanced,
+        matrix_corrected: 0,
+        nsc_matrix_corrected: 0,
+        synteny_enabled: false,
+        nsc_clusters: 0,
+        nsc_merged_genes: 0,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
+    };
+    write_html_report(
+        &args,
+        &pa,
+        &stats,
+        &HashMap::new(),
+        &None,
+        None,
+        &[],
+        out.path(),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
+    let start = text
+        .find("<script id='explorerData' type='application/json'>")
+        .unwrap();
+    let body_start = start + "<script id='explorerData' type='application/json'>".len();
+    let end = body_start + text[body_start..].find("</script>").unwrap();
+    let block = &text[body_start..end];
+    assert!(
+        !block.contains('<') && !block.contains('>'),
+        "raw angle bracket in the data block"
+    );
+    let after = &text[end..];
+    assert!(after.contains("window.recoreExplorerFailed = function"));
+    assert!(after.contains("const data = window.recoreExplorerData;"));
 }

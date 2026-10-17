@@ -109,6 +109,11 @@
     if (scrim) scrim.addEventListener("click", () => setOpen(false));
     document.addEventListener("keydown", event => {
       if (event.key === "Escape" && drawer.classList.contains("open")) setOpen(false);
+      // The viewer owns the shortcuts when it runs; when it could not start,
+      // D still has to open the run details the failure notice points to.
+      if (window.recoreExplorerRunning || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target.closest && event.target.closest("input, textarea, select, [contenteditable]")) return;
+      if (event.key.toLowerCase() === "d") setOpen(!drawer.classList.contains("open"));
     });
 
     /* Picking a candidate should take you to it in the matrix, not just close.

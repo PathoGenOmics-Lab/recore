@@ -1322,7 +1322,7 @@ body.app {
      min-content, so a chrome row that wants 1656px silently widens the page and
      takes the workspace with it. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
@@ -1330,10 +1330,38 @@ body.app {
    coloured by lineage, and with implicit placement its absence slid the
    workspace into the auto row and handed the free space to the status bar. */
 body.app > .topbar { grid-row: 1; }
-body.app > .lineage-legend { grid-row: 2; }
+body.app > .workspace-notices { grid-row: 2; }
+body.app > .lineage-legend { grid-row: 3; }
 body.app > .workspace,
-body.app > .explorer-fallback { grid-row: 3; }
-body.app > .statusbar { grid-row: 4; }
+body.app > .explorer-fallback { grid-row: 4; }
+body.app > .statusbar { grid-row: 5; }
+
+/* What the report had to leave out or assume, said once above the workspace
+   instead of being discovered from an empty panel. */
+.workspace-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px var(--space-4);
+  background: var(--warning-soft);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.workspace-notices[hidden] {
+  display: none;
+}
+
+.workspace-notices p {
+  margin: 0;
+}
+
+.explorer-failed {
+  margin: var(--space-6);
+  border: 1px solid var(--danger);
+  background: var(--danger-soft);
+}
 
 .topbar {
   display: flex;
