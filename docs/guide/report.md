@@ -144,9 +144,21 @@ This needs `cluster_synteny_blocks.tsv`, which means GFFs were loaded.
 
 ## Getting figures out
 
-The download button writes `recore_matrix.png` (the tree, lineage strip, column
-header and matrix composited at 2x) and `recore_synteny.svg` (vector, so the gene
-arrows stay crisp at print resolution).
+The download button writes `recore_matrix.png` and, when the synteny band is
+open, `recore_synteny.svg`.
+
+The PNG is drawn for the page, not copied from the screen: the tree, the lineage
+strip, the column names and the matrix share one geometry, so every tip sits on
+its row, at three times the on-screen size, always in the light palette and
+without the hover crosshair or the selection marks. Below the matrix come a key
+for the cell states, the tree's scale bar and a caption with what is shown, the
+root, the matrix policy and the Recore version. When the whole matrix fits in
+4,000 by 4,000 screen pixels it is drawn in full; otherwise the window on screen
+is drawn and the caption names its rows and columns.
+
+The SVG carries every colour and font as a plain attribute, with no stylesheet
+or CSS variables, so illustration software and PDF tools draw it as the page
+does.
 
 ++cmd+p++ prints the whole thing: the workspace as page one, then the run details
 as a document. The canvases are redrawn for the print layout rather than being

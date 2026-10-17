@@ -17,11 +17,33 @@ if (!data.clusters.length) {
     notices.hidden = false;
   }
 }
-function readVar(name, fallback) {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+/* `source` is an optional declaration block to read instead of the live root:
+   figures always take the light palette, whatever the screen is in. */
+function readThemeVar(name, fallback, source) {
+  const value = (source || getComputedStyle(document.documentElement)).getPropertyValue(name).trim();
   return value || fallback;
 }
-function refreshThemeColors() {
+/** The light theme's tokens, read from the stylesheet rather than by flipping
+    data-theme, which would restyle and transition the whole page. */
+function lightThemeDeclaration() {
+  for (const sheet of document.styleSheets) {
+    let rules = null;
+    try {
+      rules = sheet.cssRules;
+    } catch (_e) {
+      continue;
+    }
+    for (const rule of rules || []) {
+      if (rule.selectorText && rule.selectorText.includes(':root[data-theme="light"]')) return rule.style;
+    }
+  }
+  return null;
+}
+function readVar(name, fallback) {
+  return readThemeVar(name, fallback);
+}
+function refreshThemeColors(source) {
+  const readVar = (name, fallback) => readThemeVar(name, fallback, source);
   colors.P = readVar("--present", "#b3bbc7");
   colors.R = readVar("--rescue", "#0f6fd6");
   colors.N = readVar("--nsc", "#e07b00");
@@ -215,7 +237,8 @@ const matrixViewport = canvas ? canvas.parentElement : null;
 const matrixSpacer = document.getElementById("matrixSpacer");
 const headerSpacer = document.getElementById("headerSpacer");
 const treeCanvas = document.getElementById("treeCanvas");
-const treeCtx = treeCanvas ? treeCanvas.getContext("2d") : null;
+// Swapped for a figure's context while a figure is drawn.
+let treeCtx = treeCanvas ? treeCanvas.getContext("2d") : null;
 const treeViewport = treeCanvas ? treeCanvas.parentElement : null;
 const treeSpacer = document.getElementById("treeSpacer");
 const treeHeadSpacer = document.getElementById("treeHeadSpacer");
@@ -277,6 +300,8 @@ const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', R
 const defaultStatus = "Hover a cell for genome, cluster and evidence state. Wheel over the column header zooms columns, over the tree zooms rows. Drag the seams between panes to resize.";
 let selected = 0;
 let selectedGenome = -1;
+// True while an exported figure is being drawn (see drawFigure).
+let drawingFigure = false;
 let hoverRow = -1;
 let hoverCol = -1;
 let leafOrder = [];
@@ -876,6 +901,11 @@ function renderProcessLegend() {
 }
 function tipStyle(genomeIdx) {
   const mode = colorMode.value;
+  // A figure has no selected cluster, so tips coloured by one would mean
+  // something the figure cannot show.
+  if (drawingFigure && (mode === "cluster" || mode === "process")) {
+    return {fill: labelInk, stroke: labelInk, title: ""};
+  }
   if (mode === "cluster") {
     const state = stateAt(selected, genomeIdx);
     return {fill: colors[state], stroke: strokes[state], title: labels[state]};
@@ -2074,43 +2104,22 @@ function viewportSize(element) {
   return {w: Math.max(1, element.clientWidth), h: Math.max(1, element.clientHeight)};
 }
 
-function renderMatrix(scrollToSelected) {
-  const {rows, cols} = updateCellGeometry();
-  if (scrollToSelected) {
-    const selectedCol = selectedVisibleColumn();
-    if (selectedCol >= 0 && matrixPane) {
-      const view = viewportSize(matrixViewport);
-      const x = selectedCol * cellW;
-      if (x < matrixPane.scrollLeft || x > matrixPane.scrollLeft + view.w - cellW) {
-        matrixPane.scrollLeft = Math.max(0, x - view.w / 2);
-      }
-    }
-  }
-  const view = viewportSize(matrixViewport);
-  const scale = canvasScale(view.w, view.h);
-  sizeCanvas(canvas, ctx, view.w, view.h, scale);
-  ctx.fillStyle = panelBg;
-  ctx.fillRect(0, 0, view.w, view.h);
-
-  const left = matrixScrollLeft();
-  const top = matrixScrollTop();
+/* Paints the cells of columns [firstCol, lastCol) and rows [firstRow, lastRow),
+   with the matrix origin at (left, top) and cw x ch cells. The screen and the
+   exported figure both draw through here, so they cannot disagree. */
+function paintCells(context, opts) {
+  const {firstCol, lastCol, firstRow, lastRow, left, top, cw, ch, dataW, dataH} = opts;
   // Absent cells have their own fill, so the matrix has an edge and an empty
   // run does not look like an empty pane.
-  const dataW = Math.min(view.w, virtualW - left);
-  const dataH = Math.min(view.h, virtualH - top);
-  if (rows && cols && dataW > 0 && dataH > 0) {
-    ctx.fillStyle = colors.A;
-    ctx.fillRect(0, 0, dataW, dataH);
-  }
-  const [firstCol, lastCol] = visibleColumnRange(view.w);
-  const [firstRow, lastRow] = visibleRowRange(view.h);
+  context.fillStyle = colors.A;
+  context.fillRect(0, 0, dataW, dataH);
   // Cells never shrink below a hairline, so a dense matrix stays legible instead
   // of fading out when several clusters share a pixel column.
-  const drawW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
-  const drawH = Math.max(1, cellH > 2 ? cellH - 1 : cellH);
-  // A gutter exists only when drawH < cellH. At exactly 2px rows there is none,
+  const drawW = Math.max(1, cw > 2 ? cw - 1 : cw);
+  const drawH = Math.max(1, ch > 2 ? ch - 1 : ch);
+  // A gutter exists only when drawH < ch. At exactly 2px rows there is none,
   // and drawing row by row there was pure cost.
-  const gutterRows = drawH < cellH;
+  const gutterRows = drawH < ch;
   const byProcess = matrixColorMode.value === "process";
 
   // Runs of adjacent rows are one rect each; row gutters, when rows are tall
@@ -2118,7 +2127,7 @@ function renderMatrix(scrollToSelected) {
   // row. Drawing every cell as its own rect cost 340,000 fillRect calls for a
   // dense window at 3px rows; this is a few thousand.
   const fillRows = (x, a, b) => {
-    ctx.fillRect(x, a * cellH - top, drawW, (b - a) * cellH);
+    context.fillRect(x, a * ch - top, drawW, (b - a) * ch);
   };
   const paintSet = (set, rows, x) => {
     if (set.kind === "list") {
@@ -2158,7 +2167,7 @@ function renderMatrix(scrollToSelected) {
       // Below a pixel per column, snap to whole pixels: a fractional x is
       // antialiased into a blend of neighbours, and a green cell blended into
       // blue reads as neither.
-      const x = cellW < 1 ? Math.floor(c * cellW - left) : c * cellW - left;
+      const x = cw < 1 ? Math.floor(c * cw - left) : c * cw - left;
       const processFill = byProcess
         ? processColor(processKind(data.clusters[clusterIdx]))
         : null;
@@ -2168,24 +2177,52 @@ function renderMatrix(scrollToSelected) {
         // In mechanism mode the input cells take the mechanism's colour, and
         // the cells Recore changed keep theirs, so they still read as findings.
         const own = colors[STATE_CODES[state]] || colors.A;
-        ctx.fillStyle = processFill && (state === 0 || state === 2) ? processFill : own;
+        context.fillStyle = processFill && (state === 0 || state === 2) ? processFill : own;
         paintSet(set, rowsets[state], x);
       }
     }
   }
 
   if (gutterRows) {
-    ctx.fillStyle = panelBg;
+    context.fillStyle = panelBg;
     for (let r = firstRow; r < lastRow; r += 1) {
-      ctx.fillRect(0, r * cellH - top + drawH, dataW, cellH - drawH);
+      context.fillRect(0, r * ch - top + drawH, dataW, ch - drawH);
     }
   }
-  if (drawW < cellW) {
+  if (drawW < cw) {
     // Column gutters too, or absent cells would run together into a band.
-    ctx.fillStyle = panelBg;
+    context.fillStyle = panelBg;
     for (let c = firstCol; c < lastCol; c += 1) {
-      ctx.fillRect(c * cellW - left + drawW, 0, cellW - drawW, dataH);
+      context.fillRect(c * cw - left + drawW, 0, cw - drawW, dataH);
     }
+  }
+}
+function renderMatrix(scrollToSelected) {
+  const {rows, cols} = updateCellGeometry();
+  if (scrollToSelected) {
+    const selectedCol = selectedVisibleColumn();
+    if (selectedCol >= 0 && matrixPane) {
+      const view = viewportSize(matrixViewport);
+      const x = selectedCol * cellW;
+      if (x < matrixPane.scrollLeft || x > matrixPane.scrollLeft + view.w - cellW) {
+        matrixPane.scrollLeft = Math.max(0, x - view.w / 2);
+      }
+    }
+  }
+  const view = viewportSize(matrixViewport);
+  const scale = canvasScale(view.w, view.h);
+  sizeCanvas(canvas, ctx, view.w, view.h, scale);
+  ctx.fillStyle = panelBg;
+  ctx.fillRect(0, 0, view.w, view.h);
+
+  const left = matrixScrollLeft();
+  const top = matrixScrollTop();
+  const dataW = Math.min(view.w, virtualW - left);
+  const dataH = Math.min(view.h, virtualH - top);
+  const [firstCol, lastCol] = visibleColumnRange(view.w);
+  const [firstRow, lastRow] = visibleRowRange(view.h);
+  if (rows && cols && dataW > 0 && dataH > 0) {
+    paintCells(ctx, {firstCol, lastCol, firstRow, lastRow, left, top, cw: cellW, ch: cellH, dataW, dataH});
   }
   if (rows === 0 || cols === 0) {
     ctx.fillStyle = labelInk;
@@ -3196,68 +3233,268 @@ function downloadBlob(blob, filename) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-/* Compose the panes as drawn into one bitmap at 2x. The report's job is to end
-   up in a manuscript, and screenshotting a browser window is not a figure
-   pipeline. */
-function exportViewPng() {
-  const scale = 2;
+/* ---- Figure export ---------------------------------------------------------
+   One bitmap with the tree, the lineage strip, the column names and the matrix
+   drawn on one geometry, so tip N sits on row N. It used to paste the screen's
+   canvases, stretching the tree to the matrix height (rows drifted up to 38 px
+   off their tips), baking in the hover band, the selection tint and the dark
+   theme, and upscaling a 1x bitmap. The whole matrix goes in when it fits;
+   otherwise the window on screen, and the caption names the ranges. */
+const FIGURE_SCALE = 3;
+const FIGURE_MAX_DIM = 16000;
+const FIGURE_MAX_PIXELS = 90e6;
+const FIGURE_WHOLE_MAX = 4000;
+function figureRange() {
+  const rows = leafOrder.length;
+  const cols = visibleClusters.length;
+  if (cols * cellW <= FIGURE_WHOLE_MAX && rows * cellH <= FIGURE_WHOLE_MAX) {
+    return {c0: 0, c1: cols, r0: 0, r1: rows, whole: true};
+  }
+  const view = viewportSize(matrixViewport);
+  const left = matrixScrollLeft();
+  const top = matrixScrollTop();
+  return {
+    c0: Math.max(0, Math.floor(left / cellW)),
+    c1: Math.min(cols, Math.ceil((left + view.w) / cellW)),
+    r0: Math.max(0, Math.floor(top / cellH)),
+    r1: Math.min(rows, Math.ceil((top + view.h) / cellH)),
+    whole: false,
+  };
+}
+function drawFigure() {
+  const {c0, c1, r0, r1, whole} = figureRange();
+  const cw = cellW;
+  const ch = cellH;
+  const margin = 16;
   const gap = 8;
-  const treeBodyW = treeCanvas ? treeCanvas.clientWidth : 0;
-  const treeW = treeBodyW + LINEAGE_STRIP_W;
-  const headTop = headerCanvas ? headerCanvas.clientHeight : 0;
-  const matrixW = canvas ? canvas.clientWidth : 0;
-  const bodyH = canvas ? canvas.clientHeight : 0;
-  const width = treeW + gap + matrixW;
-  const height = headTop + bodyH;
-  if (width < 2 || height < 2) return;
+  const treeW = treeWidth;
+  const stripW = colorMode.value === "lineage" ? LINEAGE_STRIP_W : 0;
+  const band = columnLabelBand();
+  const headH = band ? band + 10 : 10;
+  const matrixW = Math.max(1, (c1 - c0) * cw);
+  const matrixH = Math.max(1, (r1 - r0) * ch);
+  const keyH = 22;
+  const captionH = 34;
+  const width = margin * 2 + treeW + stripW + gap + matrixW;
+  const height = margin * 2 + headH + matrixH + keyH + captionH;
+  const scale = Math.max(1, Math.min(
+    FIGURE_SCALE,
+    FIGURE_MAX_DIM / Math.max(width, height),
+    Math.sqrt(FIGURE_MAX_PIXELS / (width * height)),
+  ));
   const out = document.createElement("canvas");
   out.width = Math.round(width * scale);
   out.height = Math.round(height * scale);
-  const octx = out.getContext("2d");
-  octx.setTransform(scale, 0, 0, scale, 0, 0);
-  octx.fillStyle = panelBg;
-  octx.fillRect(0, 0, width, height);
-  // A canvas with a zero dimension throws from drawImage, and any pane can be
-  // collapsed by the user or by a narrow window.
-  const paste = (source, x, y, w, h) => {
-    if (!source || !source.width || !source.height || w < 1 || h < 1) return;
-    octx.drawImage(source, x, y, w, h);
-  };
-  paste(headerCanvas, treeW + gap, 0, matrixW, headTop);
-  paste(treeCanvas, 0, headTop, treeBodyW, bodyH);
-  paste(lineageStripCanvas, treeBodyW, headTop, LINEAGE_STRIP_W, bodyH);
-  // Hover and selection marks are on overlay canvases that are not pasted, so
-  // the figure never carries the crosshair of the moment E was pressed.
-  paste(canvas, treeW + gap, headTop, matrixW, bodyH);
-  out.toBlob(blob => {
-    if (blob) downloadBlob(blob, "recore_matrix.png");
-  }, "image/png");
+  const f = out.getContext("2d");
+  f.setTransform(scale, 0, 0, scale, 0, 0);
+  f.fillStyle = panelBg;
+  f.fillRect(0, 0, width, height);
+  const bodyTop = margin + headH;
+  const matrixLeft = margin + treeW + stripW + gap;
+
+  // Tree: the screen's drawing code on the figure's context and rows.
+  const keepCtx = treeCtx;
+  const keepHighlights = highlightedRows;
+  const keepCarriers = selectedSyntenyCarriers;
+  highlightedRows = new Set();
+  selectedSyntenyCarriers = new Set();
+  try {
+    treeCtx = f;
+    f.save();
+    f.beginPath();
+    f.rect(margin, bodyTop, treeW, matrixH);
+    f.clip();
+    f.translate(margin, bodyTop);
+    f.lineWidth = 1;
+    drawTreeNode(treeRoot, r0 * ch, r0, r1, matrixH, labelToggle.checked && ch >= 5);
+    f.restore();
+  } finally {
+    treeCtx = keepCtx;
+    highlightedRows = keepHighlights;
+    selectedSyntenyCarriers = keepCarriers;
+  }
+  if (stripW) {
+    for (let r = r0; r < r1; r += 1) {
+      f.fillStyle = lineageColor(lineageOfGenomeName(data.genomes[leafOrder[r]] || ""));
+      f.fillRect(margin + treeW, bodyTop + (r - r0) * ch, stripW, Math.max(1, ch));
+    }
+  }
+
+  // Matrix and column names.
+  f.save();
+  f.translate(matrixLeft, bodyTop);
+  paintCells(f, {firstCol: c0, lastCol: c1, firstRow: r0, lastRow: r1, left: c0 * cw, top: r0 * ch, cw, ch, dataW: matrixW, dataH: matrixH});
+  f.restore();
+  if (band) {
+    f.save();
+    f.font = LABEL_FONT;
+    f.fillStyle = labelInk;
+    f.textBaseline = "middle";
+    const flat = columnLabelsFlat();
+    f.textAlign = flat ? "center" : "left";
+    for (let c = c0; c < c1; c += 1) {
+      const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
+      if (!cluster) continue;
+      const x = matrixLeft + (c - c0) * cw + cw / 2;
+      if (flat) {
+        f.fillText(fitLabel(cluster.name, cw - 8), x, margin + band / 2);
+      } else {
+        f.save();
+        f.translate(x, margin + band - 4);
+        f.rotate(-Math.PI / 2);
+        f.fillText(fitLabel(cluster.name, band - 12), 0, 0);
+        f.restore();
+      }
+    }
+    f.restore();
+  }
+
+  // Key: the states drawn, then the tree's scale.
+  let x = margin;
+  const keyY = bodyTop + matrixH + 8;
+  f.font = LABEL_FONT;
+  f.textBaseline = "middle";
+  f.textAlign = "left";
+  for (const state of shownStates()) {
+    f.fillStyle = colors[state];
+    f.fillRect(x, keyY, 10, 10);
+    if (state === "A") {
+      f.strokeStyle = strokes.A;
+      f.strokeRect(x + 0.5, keyY + 0.5, 9, 9);
+    }
+    f.fillStyle = labelInk;
+    f.fillText(labels[state], x + 14, keyY + 5);
+    x += 14 + f.measureText(labels[state]).width + 14;
+  }
+  if (treeMode === "phylogram" && maxDistance > 0) {
+    const step = niceStep(maxDistance * 0.32);
+    const barW = step * (treeUsableWidth() / maxDistance);
+    if (barW >= 14 && Number.isFinite(barW)) {
+      x += 10;
+      f.fillStyle = labelInk;
+      f.fillRect(x, keyY + 5, barW, 1.2);
+      f.fillText(`${formatDistance(step)} substitutions/site`, x + barW + 6, keyY + 5);
+    }
+  }
+
+  // Caption: what is shown, out of what, under which settings.
+  const policy = (document.querySelector(".readout b.tag") || {}).textContent || "";
+  const version = (document.querySelector(".version-chip") || {}).textContent || "";
+  const shown = whole
+    ? `${plural(r1 - r0, "genome")} x ${plural(c1 - c0, "cluster")}`
+    : `rows ${formatInt(r0 + 1)}-${formatInt(r1)} of ${formatInt(leafOrder.length)} genomes, columns ${formatInt(c0 + 1)}-${formatInt(c1)} of ${formatInt(visibleClusters.length)} clusters`;
+  const caption = [
+    `Recore corrected matrix: ${shown}`,
+    `${treeCaption()}`,
+    policy ? `${policy} policy` : "",
+    version ? `recore ${version}` : "",
+  ].filter(Boolean).join(" · ");
+  f.fillStyle = labelInk;
+  f.fillText(caption, margin, keyY + 26);
+  return out;
+}
+function exportViewPng() {
+  // Light palette for the figure, restored however the drawing ends.
+  const light = lightThemeDeclaration();
+  let out;
+  try {
+    drawingFigure = true;
+    if (light) refreshThemeColors(light);
+    out = drawFigure();
+  } finally {
+    drawingFigure = false;
+    if (light) refreshThemeColors();
+  }
+  return new Promise(resolve => {
+    out.toBlob(blob => {
+      if (blob) downloadBlob(blob, "recore_matrix.png");
+      resolve(Boolean(blob));
+    }, "image/png");
+  });
 }
 /* Synteny is already vector, so export it as vector: gene arrows have to stay
    crisp at print resolution. */
+/* Every drawn property is copied from the live element as a plain attribute:
+   PDF tools and illustration software do not resolve var(), and an embedded
+   <style> with the page's tokens drew black bars in MuPDF. rgba() becomes a hex
+   colour plus an opacity, which every renderer understands. */
+const SVG_STYLE_PROPS = ["fill", "fill-opacity", "stroke", "stroke-opacity", "stroke-width", "stroke-dasharray", "opacity", "font-family", "font-size", "font-weight", "font-style", "text-anchor", "dominant-baseline"];
+function plainColor(value) {
+  const match = /^rgba?\(([^)]+)\)$/.exec(String(value).trim());
+  if (!match) return [value, null];
+  const parts = match[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+  const hex = "#" + parts.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, "0")).join("");
+  return [hex, parts.length > 3 ? parts[3] : null];
+}
 function exportSyntenySvg() {
   if (!syntenySvg || syntenyHidden) return false;
   const clone = syntenySvg.cloneNode(true);
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  // Inline the rules the drawing relies on, or it opens unstyled outside the page.
-  const rules = [];
-  for (const sheet of document.styleSheets) {
-    let cssRules = null;
-    try {
-      cssRules = sheet.cssRules;
-    } catch (_e) {
-      continue;
+  const live = [syntenySvg, ...syntenySvg.querySelectorAll("*")];
+  const copies = [clone, ...clone.querySelectorAll("*")];
+  const light = lightThemeDeclaration();
+  // Read the styles under the light theme. The switch and the switch back
+  // happen inside this one task, so nothing is painted in between, and
+  // transitions are held off so none starts from the brief change.
+  const root = document.documentElement;
+  const theme = root.getAttribute("data-theme");
+  root.classList.add("theme-frozen");
+  if (theme !== "light") root.setAttribute("data-theme", "light");
+  try {
+  live.forEach((element, i) => {
+    const target = copies[i];
+    const computed = getComputedStyle(element);
+    for (const prop of SVG_STYLE_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (!value || value === "none" && prop !== "fill" && prop !== "stroke") continue;
+      target.setAttribute(prop, value);
     }
-    for (const rule of cssRules || []) {
-      const selector = rule.selectorText || "";
-      if (selector.includes("synteny") || selector.startsWith(":root")) {
-        rules.push(rule.cssText);
+    // A colour's own alpha folds into its opacity attribute; a transparent
+    // label box written as plain #000000 drew black.
+    for (const prop of ["fill", "stroke"]) {
+      const [hex, alpha] = plainColor(computed.getPropertyValue(prop));
+      if (!target.hasAttribute(prop) || hex === computed.getPropertyValue(prop)) continue;
+      target.setAttribute(prop, alpha === 0 ? "none" : hex);
+      if (alpha !== null && alpha > 0 && alpha < 1) {
+        const own = Number(computed.getPropertyValue(`${prop}-opacity`)) || 1;
+        target.setAttribute(`${prop}-opacity`, String(Math.round(own * alpha * 1000) / 1000));
       }
     }
+    target.removeAttribute("class");
+    target.removeAttribute("style");
+  });
+  } finally {
+    if (theme === null) root.removeAttribute("data-theme");
+    else if (theme !== "light") root.setAttribute("data-theme", theme);
+    getComputedStyle(root).color;
+    root.classList.remove("theme-frozen");
   }
-  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-  style.textContent = rules.join("\n");
-  clone.insertBefore(style, clone.firstChild);
+  clone.querySelectorAll("style").forEach(node => node.remove());
+  // A figure is read on paper: a white ground and a title naming the cluster.
+  const width = Number(syntenySvg.getAttribute("width")) || syntenySvg.clientWidth;
+  const height = Number(syntenySvg.getAttribute("height")) || syntenySvg.clientHeight;
+  const ns = "http://www.w3.org/2000/svg";
+  const group = document.createElementNS(ns, "g");
+  group.setAttribute("transform", "translate(0 28)");
+  while (clone.firstChild) group.appendChild(clone.firstChild);
+  const ground = document.createElementNS(ns, "rect");
+  ground.setAttribute("width", String(width));
+  ground.setAttribute("height", String(height + 28));
+  ground.setAttribute("fill", readThemeVar("--panel", "#ffffff", light));
+  const title = document.createElementNS(ns, "text");
+  title.setAttribute("x", "14");
+  title.setAttribute("y", "19");
+  title.setAttribute("font-family", "Inter, Helvetica, Arial, sans-serif");
+  title.setAttribute("font-size", "13");
+  title.setAttribute("font-weight", "600");
+  title.setAttribute("fill", readThemeVar("--ink", "#18181b", light));
+  title.textContent = `${(data.clusters[selected] || {}).name || ""}: unique synteny blocks (Recore ${(document.querySelector(".version-chip") || {}).textContent || ""})`;
+  clone.appendChild(ground);
+  clone.appendChild(title);
+  clone.appendChild(group);
+  clone.setAttribute("width", String(width));
+  clone.setAttribute("height", String(height + 28));
+  clone.setAttribute("viewBox", `0 0 ${width} ${height + 28}`);
   const blob = new Blob([new XMLSerializer().serializeToString(clone)], {
     type: "image/svg+xml",
   });
@@ -3265,12 +3502,16 @@ function exportSyntenySvg() {
   return true;
 }
 if (exportButton) {
-  exportButton.addEventListener("click", () => {
-    exportViewPng();
-    const svg = exportSyntenySvg();
-    status.textContent = svg
-      ? "Exported recore_matrix.png and recore_synteny.svg."
-      : "Exported recore_matrix.png.";
+  exportButton.addEventListener("click", async () => {
+    const files = [];
+    if (await exportViewPng()) files.push("recore_matrix.png");
+    // Safari starts only one download per user gesture tick; the second has to
+    // come a moment later, or it is dropped while the status claims it was saved.
+    if (!syntenyHidden && syntenySvg) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      if (exportSyntenySvg()) files.push("recore_synteny.svg");
+    }
+    status.textContent = files.length ? `Exported ${files.join(" and ")}.` : "Nothing was exported.";
   });
 }
 

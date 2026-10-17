@@ -2772,6 +2772,12 @@ input.switch:focus-visible {
   pointer-events: none;
 }
 
+/* Held for the instant an export reads light-theme styles off the page. */
+.theme-frozen,
+.theme-frozen * {
+  transition: none !important;
+}
+
 .pane-scroll {
   position: absolute;
   inset: 0;
