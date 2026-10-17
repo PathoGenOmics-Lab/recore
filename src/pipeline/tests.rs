@@ -2169,3 +2169,67 @@ fn gff_stream_copy_preserves_existing_header_after_blank_prefix() {
     assert!(text.starts_with('\n'));
     assert!(text.contains("ID=gene1"));
 }
+
+/// A single-copy gene beside a pseudogene, a missing CDS or a true loss gets a
+/// different context signature in those genomes, but the same neighbourhood.
+/// Signature differences alone used to label it a duplication or paralog
+/// expansion; only a neighbourhood with nothing in common is another locus.
+#[test]
+fn locus_context_is_judged_by_shared_neighbours() {
+    let ctx = |up: &str, down: &str| (up.to_string(), down.to_string());
+    let usual = ctx("Rv0006|Rv0005", "Rv0008c|Rv0009");
+    assert!(evolution::shares_neighbour(
+        &usual,
+        &ctx("Rv0005|Rv0004", "Rv0008c")
+    ));
+    assert!(evolution::shares_neighbour(&usual, &ctx("NA", "NA")));
+    assert!(!evolution::shares_neighbour(
+        &usual,
+        &ctx("Rv3001|Rv3002", "Rv3004|Rv3005")
+    ));
+
+    // Interpretation thresholds now read the compatible fraction.
+    assert_eq!(
+        evolution::context_interpretation(12, 4, 1.0),
+        "stable_single_locus_minor_noise"
+    );
+    assert_eq!(
+        evolution::context_interpretation(12, 2, 0.5),
+        "possible_multilocus_or_paralog"
+    );
+}
+
+/// Parsimony at a node with more than two children must not depend on the
+/// order the children are written in. Pairwise Fitch did: one ordering gave
+/// dispersed gain and loss, the other an ancestral loss.
+#[test]
+fn parsimony_is_independent_of_sibling_order() {
+    let genomes: Vec<String> = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["gene".into()],
+        genomes,
+        vec![vec![
+            "".into(),
+            "".into(),
+            "x".into(),
+            "x".into(),
+            "x".into(),
+        ]],
+    );
+    let present: Vec<bool> = (0..5).map(|i| i >= 2).collect();
+    let mut outcomes = Vec::new();
+    for newick in ["(e,(a,b,c,d));", "(e,(c,a,d,b));", "(e,(d,c,b,a));"] {
+        let mut root = evolution::NewickParser::new(newick).parse().unwrap();
+        evolution::resolve_phylo_tips(&mut root, &pa);
+        let summary = evolution::fitch_postorder(&root, &present);
+        let (mut gains, mut losses) = (0, 0);
+        evolution::assign_fitch_states(&summary, None, &mut gains, &mut losses);
+        assert_eq!(summary.changes, gains + losses, "{newick}");
+        outcomes.push((summary.changes, gains, losses));
+    }
+    assert!(outcomes.windows(2).all(|w| w[0] == w[1]), "{outcomes:?}");
+    assert_eq!(outcomes[0].0, 2, "two losses, a and b");
+}

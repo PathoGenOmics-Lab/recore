@@ -938,9 +938,29 @@ pub fn run(args: &Args) -> Result<()> {
             write_reference_cluster_events(&reference_cluster_events, &pa, &args.output)?;
         }
     }
+    // Contexts and synteny blocks are read off the corrected matrix: a CDS this
+    // run rescued belongs to its cluster like any other neighbour. Read off the
+    // input matrix, the falsely absent gene was a CDS with no cluster, it was
+    // skipped, and the window slid along by one. Every single-copy neighbour of
+    // a false absence then had two contexts and was reported as a duplication
+    // or paralog expansion: 12 of the tutorial's 24 clusters, DnaA included.
+    let mut corrected_gene_to_cluster_maps = gene_to_cluster_maps.clone();
+    for rescue in matrix_rescue_map.values() {
+        if let Some(gene_id) = rescue.annotation_match.as_deref() {
+            corrected_gene_to_cluster_maps
+                .entry(rescue.genome_idx)
+                .or_default()
+                .entry(gene_id.to_string())
+                .or_insert(rescue.cluster_idx);
+        }
+    }
     let context_summaries = if !gff_indices.is_empty() {
-        let (context_rows, summaries) =
-            write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
+        let (context_rows, summaries) = write_cluster_locus_contexts(
+            &pa,
+            &gff_indices,
+            &corrected_gene_to_cluster_maps,
+            &args.output,
+        )?;
         let synteny_reference_gi = args
             .reference_genome
             .as_deref()
@@ -948,7 +968,7 @@ pub fn run(args: &Args) -> Result<()> {
         let block_rows = write_cluster_synteny_blocks(
             &pa,
             &gff_indices,
-            &gene_to_cluster_maps,
+            &corrected_gene_to_cluster_maps,
             synteny_reference_gi,
             &args.output,
         )?;
