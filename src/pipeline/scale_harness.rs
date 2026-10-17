@@ -944,6 +944,8 @@ fn scale_report() {
         multi_allele: false,
         synteny: synteny_mode != "none",
         write_corrected_gff: false,
+        write_rescued_fasta: false,
+        search_cache: None,
         write_html_report: true,
         matrix_policy: MatrixPolicy::Balanced,
         reference_genome: reference_name.clone(),

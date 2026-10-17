@@ -26,8 +26,14 @@ Recore searches every absent cell against the genome assemblies with minimap2,
 classifies the evidence, validates orthology against annotation and synteny when
 they are available, and writes both:
 
-- a **Panaroo-compatible corrected binary matrix** for downstream analyses
+- a **Panaroo-compatible corrected binary matrix** for downstream analyses,
+  as CSV and as the 1/0 `.Rtab` that pyseer and most R code read
 - a **multistate evidence matrix** for audit, plotting, and manuscript review
+
+It reads the output of Panaroo, Roary, PPanGGOLiN, PanTA and PIRATE, can write
+the rescued genes as nucleotide and protein FASTA for functional annotation,
+and with `--search-cache` reruns with another policy or threshold without
+aligning again.
 
 The central design choice is conservative. Recore separates *sequence evidence*
 from *clean binary presence*: full-length evidence can be corrected in the binary
@@ -72,6 +78,7 @@ Four outputs answer most questions:
 | File | For |
 |---|---|
 | `gene_presence_absence_recore.csv` | the corrected binary matrix, for downstream tools |
+| `gene_presence_absence_recore.Rtab` | the same matrix as 1/0, for pyseer and Rtab readers |
 | `gene_presence_absence_recore_states.csv` | audit and figures, one biological state per cell |
 | `orthology_evidence.tsv` | publication wording and manual review |
 | `recore_report.html` | the whole run in one self-contained page |

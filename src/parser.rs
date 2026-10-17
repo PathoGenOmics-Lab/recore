@@ -135,7 +135,7 @@ impl PresenceAbsence {
             .count()
     }
 
-    /// Constructor for tests only — minimal PA with all genes absent.
+    /// Constructor for tests only: a minimal matrix with all genes absent.
     #[cfg(test)]
     pub fn new_for_test(
         clusters: Vec<String>,
@@ -227,7 +227,13 @@ const METADATA_COLS: &[&str] = &[
     "Avg group size nuc",
 ];
 
+/// The first header field of PIRATE's own gene family table.
+const PIRATE_FIRST_COLUMNS: &str = "allele_name\tgene_family\t";
+
 pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
+    if first_line_starts_with(path, PIRATE_FIRST_COLUMNS)? {
+        return parse_pirate_gene_families(path);
+    }
     let mut reader =
         csv::Reader::from_path(path).with_context(|| format!("Cannot open {}", path.display()))?;
 
@@ -314,6 +320,119 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
     })
 }
 
+fn first_line_starts_with(path: &Path, prefix: &str) -> Result<bool> {
+    use std::io::{BufRead, BufReader};
+    let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
+    let mut first = Vec::new();
+    BufReader::new(file)
+        .read_until(b'\n', &mut first)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    Ok(first.starts_with(prefix.as_bytes()))
+}
+
+/// PIRATE's gene family table, `PIRATE.gene_families.tsv`.
+///
+/// Tab-separated, one row per gene family: its metadata, then one column per
+/// genome after `average_length(bp)`. A cell holds the family's loci in that
+/// genome, `;` between copies and `(a:b)` around the pieces of a fission. The
+/// table is read into Panaroo's layout, each family under its `gene_family`
+/// name, so a PIRATE run writes the same files a Panaroo run does. Converting
+/// it with PIRATE_to_roary.pl instead names every row `allele__family`, which
+/// matches no sequence in PIRATE's representative FASTA.
+fn parse_pirate_gene_families(path: &Path) -> Result<PresenceAbsence> {
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .quoting(false)
+        .flexible(true)
+        .from_path(path)
+        .with_context(|| format!("Cannot open {}", path.display()))?;
+    let headers: Vec<String> = reader.headers()?.iter().map(str::to_string).collect();
+    let column = |name: &str| headers.iter().position(|h| h == name);
+    let family_col = column("gene_family").with_context(|| {
+        format!(
+            "{}: PIRATE table without a gene_family column",
+            path.display()
+        )
+    })?;
+    let last_metadata = column("average_length(bp)").with_context(|| {
+        format!(
+            "{}: PIRATE table without an average_length(bp) column, so where the genome columns start is unknown",
+            path.display()
+        )
+    })?;
+    let gene_name_col = column("consensus_gene_name");
+    let product_col = column("consensus_product");
+    let loci_col = column("no_loci");
+    let dose_col = column("average_dose");
+    let genome_cols: Vec<usize> = (last_metadata + 1..headers.len()).collect();
+    let genomes: Vec<String> = genome_cols.iter().map(|&i| headers[i].clone()).collect();
+    if genomes.is_empty() {
+        anyhow::bail!("{}: PIRATE table has no genome columns", path.display());
+    }
+    const LAYOUT: [&str; 6] = [
+        "Gene",
+        "Non-unique Gene name",
+        "Annotation",
+        "No. isolates",
+        "No. sequences",
+        "Avg sequences per isolate",
+    ];
+    let header: Vec<String> = LAYOUT
+        .iter()
+        .map(|name| name.to_string())
+        .chain(genomes.iter().cloned())
+        .collect();
+    let genome_col_indices: Vec<usize> = (LAYOUT.len()..header.len()).collect();
+
+    let mut clusters = Vec::new();
+    let mut present_genomes = Vec::new();
+    let mut present_bits = Vec::new();
+    let mut cell_values = Vec::new();
+    let mut metadata = Vec::new();
+    for result in reader.records() {
+        let record = result.with_context(|| format!("Cannot read {}", path.display()))?;
+        let field = |col: Option<usize>| col.and_then(|i| record.get(i)).unwrap_or("").to_string();
+        let mut present_row = Vec::new();
+        let mut bit_row = vec![false; genomes.len()];
+        let mut row_values = Vec::with_capacity(genomes.len());
+        for (gi, &col) in genome_cols.iter().enumerate() {
+            let value = record.get(col).unwrap_or("").trim().to_string();
+            if !value.is_empty() {
+                present_row.push(GenomeIdx(gi));
+                bit_row[gi] = true;
+            }
+            row_values.push(value);
+        }
+        metadata.push(vec![
+            field(Some(family_col)),
+            field(gene_name_col),
+            field(product_col),
+            present_row.len().to_string(),
+            field(loci_col),
+            field(dose_col),
+        ]);
+        clusters.push(field(Some(family_col)));
+        present_genomes.push(present_row);
+        present_bits.push(bit_row);
+        cell_values.push(row_values);
+    }
+    info!(
+        "Parsed PIRATE gene families: {} families × {} genomes, read into Panaroo's layout",
+        clusters.len(),
+        genomes.len()
+    );
+    Ok(PresenceAbsence {
+        clusters,
+        genomes,
+        present_genomes,
+        present_bits,
+        cell_values,
+        header,
+        metadata,
+        genome_col_indices,
+    })
+}
+
 // ── FASTA / GFF parsing ──
 
 /// Parse a reference FASTA keyed by the first token of each header.
@@ -331,13 +450,15 @@ pub fn parse_pan_reference(
 /// Parse the pan-genome reference, naming each record after the matrix cluster
 /// it belongs to.
 ///
-/// Three header layouts are in use, and each record is resolved against the
+/// Four header layouts are in use, and each record is resolved against the
 /// matrix's own cluster names in this order:
 ///
 /// 1. `>cluster ...`, Panaroo's layout: the first token is the cluster.
 /// 2. `>seqid cluster`, Roary's layout: the second token is the cluster. This
 ///    used to match nothing, and a Roary run exited 0 with no rescues at all.
-/// 3. `>cluster~~~ALLELE~n`: allele naming, where the cluster is the part before
+/// 3. `>family;key=value;...`, PIRATE's representative sequences: the family is
+///    the part of the first token before `;`.
+/// 4. `>cluster~~~ALLELE~n`: allele naming, where the cluster is the part before
 ///    `~~~`. Only as a fallback: Panaroo writes `~~~` inside real cluster names
 ///    when it merges genes (`pstB~~~phoT`), and cutting every name at `~~~`
 ///    either lost those clusters or, worse, filed them under another cluster
@@ -365,6 +486,12 @@ fn resolve_reference_name(header: &str, clusters: Option<&HashSet<&str>>) -> Str
     if let Some(second) = tokens.next() {
         if clusters.contains(second) {
             return second.to_string();
+        }
+    }
+    // PIRATE: `>family;representative_genome=...;locus_tag=...`.
+    if let Some((family, _)) = first.split_once(';') {
+        if clusters.contains(family) {
+            return family.to_string();
         }
     }
     if let Some(pos) = first.find("~~~") {
@@ -1684,5 +1811,93 @@ mod tests {
         assert_eq!(contigs.len(), 2);
         assert_eq!(contigs["ctg1"], b"ATCGATCG");
         assert_eq!(contigs["ctg2"], b"TTTTCCCC");
+    }
+
+    /// PIRATE's own gene family table, a verbatim excerpt of PIRATE 1.0.5 output
+    /// on the tutorial data, with one cell rewritten in its fission notation
+    /// `(a:b)` (link_clusters.pl) and one emptied. It is read into Panaroo's
+    /// layout, each row under its gene_family name.
+    #[test]
+    fn pirate_gene_family_table_is_read_into_panaroo_layout() {
+        let table = [
+            "allele_name	gene_family	consensus_gene_name	consensus_product	threshold	alleles_at_maximum_threshold	number_genomes	average_dose	min_dose	max_dose	genomes_containing_fissions	genomes_containing_duplications	number_fission_loci	number_duplicated_loci	no_loci	products	gene_names	min_length(bp)	max_length(bp)	average_length(bp)	L1_AS00101	L1_AS00102	L2_AS00201	L2_AS00202	L2_AS00203	L3_AS00301	L4_AS00401	L4_AS00402	L4_AS00403	L4_AS00404	L5_AS00501	L8_AS00801",
+            "g000000011_000000005	g000000011	Rv0005	DNA gyrase subunit B	95	3	12	1	1	1	0	0	0	0	12	DNA gyrase subunit B(12)	Rv0005(12)	603	603	603.00	L1_AS00101_00005	L1_AS00102_00005	L2_AS00201_00005	L2_AS00202_00005	L2_AS00203_00005	L3_AS00301_00005	L4_AS00401_00005	L4_AS00402_00005	L4_AS00403_00005	L4_AS00404_00005	L5_AS00501_00005	L8_AS00801_00005",
+            "g000000003_000000006	g000000003	Rv0013	transcription elongation factor GreA	98	1	12	1	1	1	0	0	0	0	12	transcription elongation factor GreA(12)	Rv0013(12)	1164	1164	1164.00	L1_AS00101_00012	L1_AS00102_00013	L2_AS00201_00013	L2_AS00202_00013	L2_AS00203_00013	L3_AS00301_00012	L4_AS00401_00013	L4_AS00402_00013	L4_AS00403_00013	L4_AS00404_00013		(L8_AS00801_00013a:L8_AS00801_00013b)",
+        ]
+        .join("\n");
+        let f = write_temp(&format!("{table}\n"));
+        let pa = parse_presence_absence(f.path()).unwrap();
+        assert_eq!(
+            pa.cluster_names(),
+            &["g000000011".to_string(), "g000000003".to_string()]
+        );
+        assert_eq!(pa.n_genomes(), 12);
+        assert_eq!(pa.genome_name(GenomeIdx(0)), "L1_AS00101");
+        assert_eq!(pa.genome_name(GenomeIdx(11)), "L8_AS00801");
+        assert_eq!(
+            &pa.header()[..7],
+            &[
+                "Gene",
+                "Non-unique Gene name",
+                "Annotation",
+                "No. isolates",
+                "No. sequences",
+                "Avg sequences per isolate",
+                "L1_AS00101"
+            ]
+        );
+        assert_eq!(
+            pa.metadata(ClusterIdx(0))[..4],
+            ["g000000011", "Rv0005", "DNA gyrase subunit B", "12"]
+        );
+        // Cells keep PIRATE's loci, the fission included; the emptied one is absent.
+        assert_eq!(
+            pa.cell(ClusterIdx(1), GenomeIdx(11)),
+            "(L8_AS00801_00013a:L8_AS00801_00013b)"
+        );
+        assert!(!pa.is_present(ClusterIdx(1), GenomeIdx(10)));
+        assert_eq!(pa.present_count(ClusterIdx(1)), 11);
+    }
+
+    /// PIRATE's representative_sequences.ffn headers, verbatim: the family is the
+    /// first token up to its first `;`.
+    #[test]
+    fn pirate_representative_headers_name_their_family() {
+        let f = write_temp(
+            ">g000000001;representative_genome=L1_AS00101;locus_tag=L1_AS00101_00001;gene_name=Rv0001;gene_product=chromosomal replication initiator DnaA;number_genomes=12\nATGAAACCC\n\
+             >g000000002;representative_genome=L1_AS00101;locus_tag=L1_AS00101_00004;gene_name=Rv0004;gene_product=hypothetical protein;number_genomes=12\nATGGGG\n",
+        );
+        let clusters: HashSet<&str> = ["g000000001", "g000000002"].into_iter().collect();
+        let refs = parse_pan_reference_for(f.path(), false, &clusters).unwrap();
+        assert_eq!(refs["g000000001"], vec![b"ATGAAACCC".to_vec()]);
+        assert_eq!(refs["g000000002"], vec![b"ATGGGG".to_vec()]);
+    }
+
+    /// PanTA's gene_presence_absence.csv (PanTA 1.0.1) and PPanGGOLiN's
+    /// matrix.csv (2.3.2), verbatim: eight and fourteen metadata columns, every
+    /// field quoted. Both already read as Panaroo-style matrices.
+    #[test]
+    fn panta_and_ppanggolin_matrices_read_as_panaroo_style() {
+        for (lines, first_genome, cluster, cell) in [
+            (
+                ["\"Gene\",\"Annotation\",\"No. isolates\",\"No. sequences\",\"Avg sequences per isolate\",\"Min group size nuc\",\"Max group size nuc\",\"Avg group size nuc\",\"L1_AS00101\",\"L1_AS00102\",\"L2_AS00201\",\"L2_AS00202\",\"L2_AS00203\",\"L3_AS00301\",\"L4_AS00401\",\"L4_AS00402\",\"L4_AS00403\",\"L4_AS00404\",\"L5_AS00501\",\"L8_AS00801\"", "\"Rv0019c\",\"FHA-domain protein\",\"12\",\"12\",\"1.0\",\"1281\",\"1281\",\"1281.0\",\"L1_AS00101-L1_AS00101_contig1-L1_AS00101_00019\",\"L1_AS00102-L1_AS00102_contig1-L1_AS00102_00019\",\"L2_AS00201-L2_AS00201_contig1-L2_AS00201_00019\",\"L2_AS00202-L2_AS00202_contig1-L2_AS00202_00019\",\"L2_AS00203-L2_AS00203_contig1-L2_AS00203_00019\",\"L3_AS00301-L3_AS00301_contig1-L3_AS00301_00019\",\"L4_AS00401-L4_AS00401_contig1-L4_AS00401_00019\",\"L4_AS00402-L4_AS00402_contig1-L4_AS00402_00019\",\"L4_AS00403-L4_AS00403_contig1-L4_AS00403_00019\",\"L4_AS00404-L4_AS00404_contig1-L4_AS00404_00019\",\"L5_AS00501-L5_AS00501_contig1-L5_AS00501_00018\",\"L8_AS00801-L8_AS00801_contig1-L8_AS00801_00019\""],
+                "L1_AS00101",
+                "Rv0019c",
+                "L1_AS00101-L1_AS00101_contig1-L1_AS00101_00019",
+            ),
+            (
+                ["\"Gene\",\"Non-unique Gene name\",\"Annotation\",\"No. isolates\",\"No. sequences\",\"Avg sequences per isolate\",\"Accessory Fragment\",\"Genome Fragment\",\"Order within Fragment\",\"Accessory Order with Fragment\",\"QC\",\"Min group size nuc\",\"Max group size nuc\",\"Avg group size nuc\",\"L1_AS00101\",\"L1_AS00102\",\"L2_AS00201\",\"L2_AS00202\",\"L2_AS00203\",\"L3_AS00301\",\"L4_AS00401\",\"L4_AS00402\",\"L4_AS00403\",\"L4_AS00404\",\"L5_AS00501\",\"L8_AS00801\"", "\"L1_AS00102_00001\",\"persistent\",\"chromosomal replication initiator DnaA\",\"12\",\"12\",\"1.0\",\"NA\",\"NA\",\"\",\"\",\"\",\"1238\",\"1238\",\"1238.0\",\"L1_AS00101_00001\",\"L1_AS00102_00001\",\"L2_AS00201_00001\",\"L2_AS00202_00001\",\"L2_AS00203_00001\",\"L3_AS00301_00001\",\"L4_AS00401_00001\",\"L4_AS00402_00001\",\"L4_AS00403_00001\",\"L4_AS00404_00001\",\"L5_AS00501_00001\",\"L8_AS00801_00001\""],
+                "L1_AS00101",
+                "L1_AS00102_00001",
+                "L1_AS00101_00001",
+            ),
+        ] {
+            let f = write_temp(&format!("{}\n{}\n", lines[0], lines[1]));
+            let pa = parse_presence_absence(f.path()).unwrap();
+            assert_eq!(pa.n_genomes(), 12, "{cluster}");
+            assert_eq!(pa.genome_name(GenomeIdx(0)), first_genome);
+            assert_eq!(pa.cluster_name(ClusterIdx(0)), cluster);
+            assert_eq!(pa.cell(ClusterIdx(0), GenomeIdx(0)), cell);
+        }
     }
 }

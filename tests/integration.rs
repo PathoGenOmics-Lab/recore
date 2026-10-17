@@ -673,3 +673,158 @@ fn test_unsearched_gaps_say_why_instead_of_absent() {
     assert!(!gc[column("mechanism_detail")].contains("absences_not_searched"));
     assert!(!gc[column("recommended_wording")].contains("never searched"));
 }
+
+/// Every output file except the two that carry a timestamp.
+fn same_outputs(a: &Path, b: &Path) {
+    let mut names: Vec<String> = fs::read_dir(a)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|n| n != "run_manifest.json" && n != "recore_report.html")
+        .collect();
+    names.sort();
+    assert!(!names.is_empty());
+    for name in names {
+        let (pa, pb) = (a.join(&name), b.join(&name));
+        if pa.is_dir() {
+            continue;
+        }
+        assert_eq!(
+            fs::read(&pa).unwrap(),
+            fs::read(&pb).unwrap(),
+            "{name} differs between {} and {}",
+            a.display(),
+            b.display()
+        );
+    }
+}
+
+/// --search-cache keeps minimap2's results: a second run aligns nothing, a run
+/// with another matrix policy reuses the same search, and every one of them
+/// writes exactly what the same run without a cache writes.
+#[test]
+fn test_search_cache_reuses_results_without_changing_them() {
+    if !minimap2_available() {
+        assert!(
+            std::env::var_os("RECORE_REQUIRE_MINIMAP2").is_none(),
+            "RECORE_REQUIRE_MINIMAP2 is set but minimap2 is not in PATH"
+        );
+        eprintln!("SKIPPED: minimap2 not in PATH");
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let base = tmp.path();
+    let mut rng = Lcg(23);
+    // gB is in the matrix for s1 and s2 only, but s3 carries it; gC is missing
+    // from s4 for real. Three gaps to search: gB in s3 and s4, gC in s4.
+    let genomes = ["s1", "s2", "s3", "s4"];
+    let clusters = ["gA", "gB", "gC"];
+    let in_matrix = |c: &str, g: &str| match c {
+        "gB" => g == "s1" || g == "s2",
+        "gC" => g != "s4",
+        _ => true,
+    };
+    let carried = |c: &str, g: &str| in_matrix(c, g) || (c == "gB" && g == "s3");
+    let seqs: Vec<String> = clusters.iter().map(|_| rng.orf(150)).collect();
+    let fasta: String = clusters
+        .iter()
+        .zip(&seqs)
+        .map(|(name, seq)| format!(">{name}\n{seq}\n"))
+        .collect();
+    write_file(base, "pan_ref.fa", &fasta);
+    let mut csv = String::from(
+        "Gene,Non-unique Gene name,Annotation,No. isolates,No. sequences,\
+         Avg sequences per isolate,Genome Fragment,Order within Fragment,\
+         Accessory Order,QC,Min group size nuc,Max group size nuc,Avg group size nuc,s1,s2,s3,s4\n",
+    );
+    for name in clusters {
+        let cells: Vec<String> = genomes
+            .iter()
+            .map(|g| {
+                if in_matrix(name, g) {
+                    format!("{name}_{g}")
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        csv.push_str(&format!(
+            "{name},{name},product,0,0,0,0,0,0,,450,450,450,{}\n",
+            cells.join(",")
+        ));
+    }
+    write_file(base, "pa.csv", &csv);
+    let genomes_dir = base.join("genomes");
+    for g in genomes {
+        let mut contig = rng.seq(300);
+        for (name, seq) in clusters.iter().zip(&seqs) {
+            if carried(name, g) {
+                contig.push_str(seq);
+                contig.push_str(&rng.seq(300));
+            }
+        }
+        write_file(
+            &genomes_dir,
+            &format!("{g}.fasta"),
+            &format!(">{g}_1\n{contig}\n"),
+        );
+    }
+    let cache = base.join("cache");
+    let run = |out: &str, extra: &[&str]| -> String {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_recore"))
+            .args([
+                "-p",
+                base.join("pa.csv").to_str().unwrap(),
+                "-r",
+                base.join("pan_ref.fa").to_str().unwrap(),
+                "-g",
+                genomes_dir.to_str().unwrap(),
+                "-o",
+                base.join(out).to_str().unwrap(),
+                "-t",
+                "2",
+            ])
+            .args(extra)
+            .output()
+            .expect("Failed to run recore binary");
+        let log = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(output.status.success(), "{log}");
+        log
+    };
+    let cache_arg = cache.to_str().unwrap();
+    run("plain", &[]);
+    let cold = run("cold", &["--search-cache", cache_arg]);
+    let warm = run("warm", &["--search-cache", cache_arg]);
+    assert!(
+        cold.contains("0 of 3 query sequences reused, 3 searched"),
+        "{cold}"
+    );
+    assert!(
+        warm.contains("3 of 3 query sequences reused, 0 searched"),
+        "{warm}"
+    );
+    // The gaps sit in s3 and s4, and neither needed minimap2 the second time.
+    assert!(
+        warm.contains("2 of 2 genomes needed no minimap2 run"),
+        "{warm}"
+    );
+    same_outputs(&base.join("plain"), &base.join("cold"));
+    same_outputs(&base.join("plain"), &base.join("warm"));
+    // gB in s3 is the rescue the cache has to hand back intact.
+    let corrected =
+        fs::read_to_string(base.join("warm").join("gene_presence_absence_recore.csv")).unwrap();
+    assert!(corrected
+        .lines()
+        .any(|l| l.starts_with("gB,") && l.contains("RESCUED:")));
+
+    let strict_plain = run("strict_plain", &["--matrix-policy", "strict"]);
+    let strict_warm = run(
+        "strict_warm",
+        &["--matrix-policy", "strict", "--search-cache", cache_arg],
+    );
+    assert!(!strict_plain.contains("Search cache"));
+    assert!(
+        strict_warm.contains("3 of 3 query sequences reused, 0 searched"),
+        "{strict_warm}"
+    );
+    same_outputs(&base.join("strict_plain"), &base.join("strict_warm"));
+}

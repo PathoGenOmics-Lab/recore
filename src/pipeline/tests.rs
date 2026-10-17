@@ -16,6 +16,8 @@ fn default_args_for_validation() -> Args {
         multi_allele: false,
         synteny: false,
         write_corrected_gff: false,
+        write_rescued_fasta: false,
+        search_cache: None,
         write_html_report: false,
         matrix_policy: MatrixPolicy::Balanced,
         reference_genome: None,
@@ -2160,6 +2162,94 @@ fn corrected_matrix_counts_only_what_is_written() {
     );
     assert_eq!(counts.absent_cells, empty);
     assert_eq!(counts.absent_cells, 2);
+
+    // The Rtab is the same matrix as 1/0: same rows, same cells, the merged
+    // member left out, the rescue and the NSC cell both 1.
+    let rtab =
+        std::fs::read_to_string(dir.path().join("gene_presence_absence_recore.Rtab")).unwrap();
+    assert_eq!(rtab, "Gene\tg1\tg2\tg3\nrep\t1\t1\t0\nother\t1\t1\t0\n");
+    for (csv_line, rtab_line) in written.lines().skip(1).zip(rtab.lines().skip(1)) {
+        let from_csv: Vec<&str> = csv_line
+            .split(',')
+            .skip(13)
+            .map(|cell| if cell.is_empty() { "0" } else { "1" })
+            .collect();
+        let from_rtab: Vec<&str> = rtab_line.split('\t').skip(1).collect();
+        assert_eq!(from_csv, from_rtab, "{csv_line}");
+    }
+}
+
+/// Rescued genes come out in the gene's own direction, from the phase the
+/// alignment fixes, with the IDs of the corrected GFF; a rescue without a
+/// single frame gets a nucleotide record and no protein.
+#[test]
+fn rescued_fasta_reads_each_gene_in_its_direction_and_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    // GTG AAA CCC GGG TAA on the plus strand; ATG TTT TGG TAG on the minus.
+    let plus = "GTGAAACCCGGGTAA";
+    let minus_rc = "CTACCAAAACAT";
+    let contig = format!("AAAAA{plus}CCCCC{minus_rc}GGGGG");
+    let fasta = dir.path().join("g1.fasta");
+    std::fs::write(&fasta, format!(">chr description\n{contig}\n")).unwrap();
+    let mut genome_files = HashMap::default();
+    genome_files.insert("g1".to_string(), fasta);
+    let pa = PresenceAbsence::new_for_test(
+        vec!["c1".into(), "c2".into(), "c3".into(), "c4".into()],
+        vec!["g1".into()],
+        vec![vec!["".into()]; 4],
+    );
+    let rescue =
+        |ci: usize, start: u64, end: u64, strand: char, query_start: Option<u64>| RescueEvent {
+            cluster_idx: ClusterIdx(ci),
+            start,
+            end,
+            strand,
+            query_start,
+            ..rescue_with_type(RescueType::MissingCds, None)
+        };
+    let on_plus = rescue(0, 5, 20, '+', Some(0));
+    let on_minus = rescue(1, 25, 37, '-', Some(0));
+    let mid_codon = rescue(2, 6, 20, '+', Some(1));
+    let no_frame = rescue(3, 5, 20, '+', None);
+
+    let (n_nucleotide, n_protein) = write_rescued_fasta(
+        &[&on_plus, &on_minus, &mid_codon, &no_frame],
+        &pa,
+        &genome_files,
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!((n_nucleotide, n_protein), (4, 3));
+
+    let fna = std::fs::read_to_string(dir.path().join("rescued_genes.fna")).unwrap();
+    let faa = std::fs::read_to_string(dir.path().join("rescued_genes.faa")).unwrap();
+    assert!(fna.contains(
+        ">recore_c1_chr_6_20 genome=g1 gene_cluster=c1 locus=chr:6-20(+) rescue_type=MISSING_CDS phase=0\nGTGAAACCCGGGTAA\n"
+    ));
+    // The minus-strand gene is read as the gene, not as the contig.
+    assert!(fna.contains("locus=chr:26-37(-) rescue_type=MISSING_CDS phase=0\nATGTTTTGGTAG\n"));
+    assert!(fna.contains("locus=chr:6-20(+) rescue_type=MISSING_CDS phase=unknown\n"));
+    // GTG opens the gene, so it reads M; the final stop is left off.
+    assert!(
+        faa.contains("gene_cluster=c1 locus=chr:6-20(+) rescue_type=MISSING_CDS phase=0\nMKPG\n")
+    );
+    assert!(
+        faa.contains("gene_cluster=c2 locus=chr:26-37(-) rescue_type=MISSING_CDS phase=0\nMFW\n")
+    );
+    // Starting one base into a codon, the frame is two bases further in.
+    assert!(
+        faa.contains("gene_cluster=c3 locus=chr:7-20(+) rescue_type=MISSING_CDS phase=2\nKPG\n")
+    );
+    assert!(!faa.contains("gene_cluster=c4"));
+}
+
+#[test]
+fn bacterial_translation_reads_starts_stops_and_ambiguous_codons() {
+    use crate::rescue::translate_bacterial;
+    assert_eq!(translate_bacterial(b"TTGAAATGAGGG", true), "MK*G");
+    assert_eq!(translate_bacterial(b"TTGAAATAA", false), "LK");
+    assert_eq!(translate_bacterial(b"atgNAAgggTAG", true), "MXG");
+    assert_eq!(translate_bacterial(b"ATGAA", true), "M");
 }
 
 #[test]

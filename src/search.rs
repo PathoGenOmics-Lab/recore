@@ -82,7 +82,9 @@ const END_BONUS: &str = "40";
 /// fails here with its path instead of producing hits on the wrong contig.
 ///
 /// `max_secondary` bounds the secondary alignments per query within one
-/// genome. Returns hits keyed by (genome, cluster), only for the requested gaps.
+/// genome. With `cache_dir`, results are kept and reused between runs (see
+/// [`SearchCache`]). Returns hits keyed by (genome, cluster), only for the
+/// requested gaps.
 pub fn batch_search(
     queries: &HashMap<String, Vec<Vec<u8>>>,
     genome_files: &HashMap<String, std::path::PathBuf>,
@@ -94,6 +96,7 @@ pub fn batch_search(
     preset: &str,
     exact_base_alignment: bool,
     max_secondary: usize,
+    cache_dir: Option<&std::path::Path>,
 ) -> Result<HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>>> {
     // One job per genome. A genome listed twice has its gap lists merged, and
     // the BTreeMap keeps the job order, and so the log, deterministic.
@@ -130,12 +133,20 @@ pub fn batch_search(
         jobs.len()
     );
 
-    let max_secondary = max_secondary.max(1).to_string();
+    let settings = SearchSettings {
+        min_identity,
+        preset,
+        exact_base_alignment,
+        max_secondary: max_secondary.max(1).to_string(),
+    };
+    let cache = cache_dir
+        .map(|dir| SearchCache::open(dir, &settings))
+        .transpose()?;
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads.max(1))
         .build()
         .context("Failed to build the search thread pool")?;
-    let results: Vec<Result<Vec<(ClusterIdx, Hit)>>> = pool.install(|| {
+    let results: Vec<Result<GenomeSearch>> = pool.install(|| {
         use rayon::prelude::*;
         jobs.par_iter()
             .map(|(_, path, clusters)| {
@@ -144,10 +155,8 @@ pub fn batch_search(
                     path,
                     clusters,
                     cluster_names,
-                    min_identity,
-                    preset,
-                    exact_base_alignment,
-                    &max_secondary,
+                    &settings,
+                    cache.as_ref(),
                 )
             })
             .collect()
@@ -155,18 +164,36 @@ pub fn batch_search(
 
     let mut hits: HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>> = HashMap::default();
     let mut kept = 0usize;
+    let mut cache_use = CacheUse::default();
+    let mut genomes_without_minimap2 = 0usize;
     for ((gi, path, _), result) in jobs.iter().zip(results) {
-        let found = result.with_context(|| {
+        let (found, used) = result.with_context(|| {
             format!(
                 "Search failed for genome {} ({})",
                 genome_names[gi.val()],
                 path.display()
             )
         })?;
+        if used.searched == 0 && used.reused > 0 {
+            genomes_without_minimap2 += 1;
+        }
+        cache_use.reused += used.reused;
+        cache_use.searched += used.searched;
         kept += found.len();
         for (ci, hit) in found {
             hits.entry((*gi, ci)).or_default().push(hit);
         }
+    }
+    if let Some(cache) = cache.as_ref() {
+        info!(
+            "Search cache {}: {} of {} query sequences reused, {} searched; {} of {} genomes needed no minimap2 run",
+            cache.dir.display(),
+            cache_use.reused,
+            cache_use.reused + cache_use.searched,
+            cache_use.searched,
+            genomes_without_minimap2,
+            jobs.len()
+        );
     }
     debug!(
         "minimap2: {} hits kept across {} (genome, cluster) pairs",
@@ -176,45 +203,181 @@ pub fn batch_search(
     Ok(hits)
 }
 
+/// The settings that reach minimap2 or filter what it returns.
+struct SearchSettings<'a> {
+    min_identity: f64,
+    preset: &'a str,
+    exact_base_alignment: bool,
+    max_secondary: String,
+}
+
+impl SearchSettings<'_> {
+    fn minimap2_args(&self) -> Vec<&str> {
+        let mut args: Vec<&str> = vec!["-x", self.preset, "-t", "1"];
+        if self.exact_base_alignment {
+            args.extend(["-c", "-s", MIN_PEAK_SCORE, "--end-bonus", END_BONUS]);
+        }
+        args.extend(["--secondary=yes", "-N", &self.max_secondary, "-p", "0.5"]);
+        args
+    }
+}
+
+/// One sequence to align against a genome: a cluster's representative, or one
+/// of its alleles.
+struct QueryItem<'a> {
+    name: String,
+    ci: ClusterIdx,
+    seq: &'a [u8],
+}
+
+/// A query's hits from its alignment, and from realigning what that alignment
+/// left uncovered, each in the order minimap2 reported them.
+#[derive(Debug, Clone, Default)]
+struct ItemHits {
+    first: Vec<Hit>,
+    remainder: Vec<Hit>,
+}
+
+impl ItemHits {
+    /// The same hits under another query's name, for a sequence shared by two
+    /// queries or read back from the cache.
+    fn named(mut self, query: &str, cluster: &str) -> Self {
+        for hit in self.first.iter_mut().chain(self.remainder.iter_mut()) {
+            hit.query = query.to_string();
+            hit.cluster = cluster.to_string();
+        }
+        self
+    }
+}
+
+/// One genome's hits, by cluster, and how much of its search the cache spared.
+type GenomeSearch = (Vec<(ClusterIdx, Hit)>, CacheUse);
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CacheUse {
+    reused: usize,
+    searched: usize,
+}
+
 /// Align one genome's absent clusters against that genome alone.
-#[allow(clippy::too_many_arguments)]
 fn search_one_genome(
     queries: &HashMap<String, Vec<Vec<u8>>>,
     fasta_path: &std::path::Path,
     clusters: &[ClusterIdx],
     cluster_names: &[String],
-    min_identity: f64,
-    preset: &str,
-    exact_base_alignment: bool,
-    max_secondary: &str,
-) -> Result<Vec<(ClusterIdx, Hit)>> {
+    settings: &SearchSettings<'_>,
+    cache: Option<&SearchCache>,
+) -> Result<GenomeSearch> {
+    let mut items: Vec<QueryItem> = Vec::new();
+    for &ci in clusters {
+        let cluster_name = &cluster_names[ci.val()];
+        let Some(alleles) = queries.get(cluster_name) else {
+            continue;
+        };
+        for (ai, seq) in alleles.iter().enumerate() {
+            let name = if alleles.len() == 1 {
+                cluster_name.clone()
+            } else {
+                format!("{}~~~ALLELE~{}", cluster_name, ai)
+            };
+            items.push(QueryItem {
+                name,
+                ci,
+                seq: seq.as_slice(),
+            });
+        }
+    }
+    if items.is_empty() {
+        return Ok((Vec::new(), CacheUse::default()));
+    }
+
+    let Some(cache) = cache else {
+        let all: Vec<&QueryItem> = items.iter().collect();
+        let per_item = search_items(&all, fasta_path, cluster_names, settings)?;
+        return Ok((in_search_order(&items, &per_item), CacheUse::default()));
+    };
+
+    let path = cache.file_for(fasta_path)?;
+    let mut stored = cache.load(&path);
+    let hashes: Vec<u128> = items.iter().map(|item| stable_hash(&[item.seq])).collect();
+    // Each sequence not in the cache is searched once, however many queries
+    // share it: identical sequences align identically.
+    let mut pending: Vec<usize> = Vec::new();
+    let mut pending_hashes: ahash::HashSet<u128> = ahash::HashSet::default();
+    for (k, hash) in hashes.iter().enumerate() {
+        if !stored.contains_key(hash) && pending_hashes.insert(*hash) {
+            pending.push(k);
+        }
+    }
+    if !pending.is_empty() {
+        let to_search: Vec<&QueryItem> = pending.iter().map(|&k| &items[k]).collect();
+        let found = search_items(&to_search, fasta_path, cluster_names, settings)?;
+        for (&k, hits) in pending.iter().zip(found) {
+            stored.insert(hashes[k], hits);
+        }
+        cache.store(&path, &stored)?;
+    }
+    let per_item: Vec<ItemHits> = items
+        .iter()
+        .zip(&hashes)
+        .map(|(item, hash)| {
+            stored
+                .get(hash)
+                .cloned()
+                .unwrap_or_default()
+                .named(&item.name, &cluster_names[item.ci.val()])
+        })
+        .collect();
+    let used = CacheUse {
+        reused: items.len() - pending.len(),
+        searched: pending.len(),
+    };
+    Ok((in_search_order(&items, &per_item), used))
+}
+
+/// Hits in the order a search of every query at once reports them: first
+/// alignments in query order, then the realigned remainders by query name. A
+/// cached run hands its hits on in this order too, so it decides exactly what
+/// an uncached run decides.
+fn in_search_order(items: &[QueryItem], per_item: &[ItemHits]) -> Vec<(ClusterIdx, Hit)> {
+    let mut out = Vec::new();
+    for (item, hits) in items.iter().zip(per_item) {
+        out.extend(hits.first.iter().cloned().map(|hit| (item.ci, hit)));
+    }
+    let mut by_name: Vec<usize> = (0..items.len()).collect();
+    by_name.sort_by(|&a, &b| items[a].name.cmp(&items[b].name));
+    for k in by_name {
+        out.extend(
+            per_item[k]
+                .remainder
+                .iter()
+                .cloned()
+                .map(|hit| (items[k].ci, hit)),
+        );
+    }
+    out
+}
+
+/// Run minimap2 for these queries against one genome. Returns each query's
+/// hits, aligned with `items`.
+fn search_items(
+    items: &[&QueryItem],
+    fasta_path: &std::path::Path,
+    cluster_names: &[String],
+    settings: &SearchSettings<'_>,
+) -> Result<Vec<ItemHits>> {
+    let mut per_item = vec![ItemHits::default(); items.len()];
     let mut query_file = NamedTempFile::new().context("Cannot create temp query file")?;
-    let mut query_to_cluster_idx: HashMap<String, ClusterIdx> = HashMap::default();
-    let mut query_seqs: HashMap<String, &[u8]> = HashMap::default();
+    let mut index_of: HashMap<&str, usize> = HashMap::default();
     {
         let mut writer = BufWriter::new(&mut query_file);
-        for &ci in clusters {
-            let cluster_name = &cluster_names[ci.val()];
-            let Some(alleles) = queries.get(cluster_name) else {
-                continue;
-            };
-            for (ai, seq) in alleles.iter().enumerate() {
-                let query_name = if alleles.len() == 1 {
-                    cluster_name.clone()
-                } else {
-                    format!("{}~~~ALLELE~{}", cluster_name, ai)
-                };
-                writeln!(writer, ">{}", query_name)?;
-                writer.write_all(seq)?;
-                writeln!(writer)?;
-                query_seqs.insert(query_name.clone(), seq.as_slice());
-                query_to_cluster_idx.insert(query_name, ci);
-            }
+        for (k, item) in items.iter().enumerate() {
+            writeln!(writer, ">{}", item.name)?;
+            writer.write_all(item.seq)?;
+            writeln!(writer)?;
+            index_of.insert(item.name.as_str(), k);
         }
         writer.flush()?;
-    }
-    if query_to_cluster_idx.is_empty() {
-        return Ok(Vec::new());
     }
 
     let mut target_file = NamedTempFile::new().context("Cannot create temp target file")?;
@@ -228,29 +391,23 @@ fn search_one_genome(
             .context("Cannot write the temporary search target")?;
     }
 
-    let mut base_args: Vec<&str> = vec!["-x", preset, "-t", "1"];
-    if exact_base_alignment {
-        base_args.extend(["-c", "-s", MIN_PEAK_SCORE, "--end-bonus", END_BONUS]);
-    }
-    base_args.extend(["--secondary=yes", "-N", max_secondary, "-p", "0.5"]);
+    let base_args = settings.minimap2_args();
     let target_path = target_file.path().to_string_lossy().to_string();
 
     let paf = run_minimap2(&base_args, &target_path, query_file.path(), fasta_path)?;
-    let mut hits = Vec::new();
     for line in paf.lines() {
         let Some(fields) = paf_required_fields(line) else {
             continue;
         };
-        let Some(&ci) = query_to_cluster_idx.get(fields[0]) else {
+        let Some(&k) = index_of.get(fields[0]) else {
             continue;
         };
-        let Some(hit) =
-            hit_from_paf_fields(&fields, fields[0], &cluster_names[ci.val()], fields[5])
-        else {
+        let cluster = &cluster_names[items[k].ci.val()];
+        let Some(hit) = hit_from_paf_fields(&fields, fields[0], cluster, fields[5]) else {
             continue;
         };
-        if hit.identity() >= min_identity {
-            hits.push((ci, hit));
+        if hit.identity() >= settings.min_identity {
+            per_item[k].first.push(hit);
         }
     }
 
@@ -259,36 +416,36 @@ fn search_one_genome(
     // alignment then stops at the insertion and drops the rest of the chain,
     // so only one half was reported and the gene could not be seen as
     // FRAGMENTED. Aligned on its own, the missing stretch finds its half.
-    if exact_base_alignment {
+    if settings.exact_base_alignment {
         let mut remainder_file =
             NamedTempFile::new().context("Cannot create temp remainder query file")?;
-        let mut remainders: HashMap<String, (String, ClusterIdx, u64, u64)> = HashMap::default();
+        let mut remainders: HashMap<String, (usize, u64, u64)> = HashMap::default();
         {
             let mut writer = BufWriter::new(&mut remainder_file);
             // Sorted, so the remainder queries and minimap2's output come in
             // the same order on every run.
-            let mut ordered: Vec<(&String, &&[u8])> = query_seqs.iter().collect();
-            ordered.sort_unstable_by(|a, b| a.0.cmp(b.0));
-            for (query_name, seq) in ordered {
-                let intervals: Vec<(u64, u64)> = hits
+            let mut ordered: Vec<usize> = (0..items.len()).collect();
+            ordered.sort_unstable_by(|&a, &b| items[a].name.cmp(&items[b].name));
+            for k in ordered {
+                let intervals: Vec<(u64, u64)> = per_item[k]
+                    .first
                     .iter()
-                    .filter(|(_, h)| h.query == *query_name)
-                    .map(|(_, h)| (h.query_start, h.query_end))
+                    .map(|h| (h.query_start, h.query_end))
                     .collect();
                 if intervals.is_empty() {
                     continue;
                 }
+                let seq = items[k].seq;
                 let full_len = seq.len() as u64;
                 for (from, to) in uncovered_stretches(intervals, full_len) {
                     if to - from < REMAINDER_MIN_BP {
                         continue;
                     }
-                    let name = format!("{}~~~REM~{}", query_name, from);
+                    let name = format!("{}~~~REM~{}", items[k].name, from);
                     writeln!(writer, ">{}", name)?;
                     writer.write_all(&seq[from as usize..to as usize])?;
                     writeln!(writer)?;
-                    let ci = query_to_cluster_idx[query_name];
-                    remainders.insert(name, (query_name.clone(), ci, from, full_len));
+                    remainders.insert(name, (k, from, full_len));
                 }
             }
             writer.flush()?;
@@ -299,24 +456,255 @@ fn search_one_genome(
                 let Some(fields) = paf_required_fields(line) else {
                     continue;
                 };
-                let Some((original, ci, offset, full_len)) = remainders.get(fields[0]) else {
+                let Some(&(k, offset, full_len)) = remainders.get(fields[0]) else {
                     continue;
                 };
+                let cluster = &cluster_names[items[k].ci.val()];
                 let Some(mut hit) =
-                    hit_from_paf_fields(&fields, original, &cluster_names[ci.val()], fields[5])
+                    hit_from_paf_fields(&fields, &items[k].name, cluster, fields[5])
                 else {
                     continue;
                 };
                 hit.query_start += offset;
                 hit.query_end += offset;
-                hit.query_length = *full_len;
-                if hit.identity() >= min_identity {
-                    hits.push((*ci, hit));
+                hit.query_length = full_len;
+                if hit.identity() >= settings.min_identity {
+                    per_item[k].remainder.push(hit);
                 }
             }
         }
     }
-    Ok(hits)
+    Ok(per_item)
+}
+
+/// minimap2 results kept between runs: one file per genome and search setting,
+/// holding the final hits of every query sequence searched in that genome.
+///
+/// A search is a function of the genome, the query sequence, the settings that
+/// reach minimap2 or filter its output (preset, base-level alignment, the
+/// secondary budget, and --min-identity, which also decides what the second
+/// pass realigns), and of minimap2 and recore themselves. A file is named after
+/// all of those but the query; inside, each query is keyed by its sequence's
+/// own hash, and a sequence that found nothing is recorded as searched. A rerun
+/// that changes only what happens after the search (the matrix policy, the
+/// coverage threshold, synteny) or which gaps are searched (the prevalence
+/// floor) aligns only the sequences it has not seen; anything that could change
+/// a hit names another file.
+pub struct SearchCache {
+    dir: std::path::PathBuf,
+    settings: String,
+}
+
+const SEARCH_CACHE_FORMAT: &str = "recore-search-cache-v1";
+const CACHE_FILE_END: &str = "# end";
+
+impl SearchCache {
+    fn open(dir: &std::path::Path, settings: &SearchSettings<'_>) -> Result<Self> {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("Cannot create search cache directory {}", dir.display()))?;
+        let settings = format!(
+            "{} recore={} minimap2={} preset={} exact={} secondary={} min_identity_bits={:016x} peak={} end_bonus={} remainder_min={}",
+            SEARCH_CACHE_FORMAT,
+            env!("CARGO_PKG_VERSION"),
+            minimap2_version()?,
+            settings.preset,
+            settings.exact_base_alignment,
+            settings.max_secondary,
+            settings.min_identity.to_bits(),
+            MIN_PEAK_SCORE,
+            END_BONUS,
+            REMAINDER_MIN_BP
+        );
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            settings,
+        })
+    }
+
+    /// The cache file for a genome, named after its bytes and the settings.
+    fn file_for(&self, fasta_path: &std::path::Path) -> Result<std::path::PathBuf> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(fasta_path)
+            .with_context(|| format!("Cannot open genome {}", fasta_path.display()))?;
+        let mut hasher = Fnv128::new();
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            let n = file
+                .read(&mut buf)
+                .with_context(|| format!("Cannot read genome {}", fasta_path.display()))?;
+            if n == 0 {
+                break;
+            }
+            hasher.write(&buf[..n]);
+        }
+        let genome = hasher.finish();
+        let name = stable_hash(&[&genome.to_le_bytes(), self.settings.as_bytes()]);
+        Ok(self.dir.join(format!("{name:032x}.tsv")))
+    }
+
+    /// The stored hits by sequence hash. A file that cannot be read back is
+    /// treated as empty, so its genome is searched again and the file rewritten.
+    fn load(&self, path: &std::path::Path) -> HashMap<u128, ItemHits> {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return HashMap::default();
+        };
+        match parse_cache_file(&text, &self.settings) {
+            Some(stored) => stored,
+            None => {
+                log::warn!(
+                    "Search cache file {} is unreadable or from other settings; searching that genome again",
+                    path.display()
+                );
+                HashMap::default()
+            }
+        }
+    }
+
+    /// Replace the file in one step, so a run that stops halfway, or another
+    /// run on the same cache, never sees half a file.
+    fn store(&self, path: &std::path::Path, stored: &HashMap<u128, ItemHits>) -> Result<()> {
+        let mut file = NamedTempFile::new_in(&self.dir)
+            .with_context(|| format!("Cannot write to search cache {}", self.dir.display()))?;
+        {
+            let mut w = BufWriter::new(&mut file);
+            writeln!(w, "# {}", self.settings)?;
+            let mut hashes: Vec<&u128> = stored.keys().collect();
+            hashes.sort_unstable();
+            for hash in hashes {
+                writeln!(w, "S\t{hash:032x}")?;
+                let hits = &stored[hash];
+                for (pass, list) in [("1", &hits.first), ("2", &hits.remainder)] {
+                    for h in list {
+                        writeln!(
+                            w,
+                            "{pass}\t{hash:032x}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                            h.query_length,
+                            h.query_start,
+                            h.query_end,
+                            h.strand,
+                            h.target,
+                            h.target_start,
+                            h.target_end,
+                            h.target_length,
+                            h.matches,
+                            h.alignment_length,
+                            h.mapq
+                        )?;
+                    }
+                }
+            }
+            // A file without this last line was cut short.
+            writeln!(w, "{CACHE_FILE_END}")?;
+            w.flush()?;
+        }
+        file.persist(path)
+            .with_context(|| format!("Cannot write search cache file {}", path.display()))?;
+        Ok(())
+    }
+}
+
+/// A cache file's hits by sequence hash, or None when any line is malformed,
+/// the file was cut short, or it was written under other settings. Cut short
+/// mid-line, a number could otherwise read back as a smaller one.
+fn parse_cache_file(text: &str, settings: &str) -> Option<HashMap<u128, ItemHits>> {
+    let body = text.strip_suffix('\n')?.strip_suffix(CACHE_FILE_END)?;
+    let mut lines = body.lines();
+    if lines.next()?.strip_prefix("# ")? != settings {
+        return None;
+    }
+    let mut stored: HashMap<u128, ItemHits> = HashMap::default();
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let hash = u128::from_str_radix(fields.get(1)?, 16).ok()?;
+        match fields[0] {
+            "S" if fields.len() == 2 => {
+                stored.entry(hash).or_default();
+            }
+            pass @ ("1" | "2") if fields.len() == 13 => {
+                let mut chars = fields[5].chars();
+                let strand = chars.next()?;
+                if chars.next().is_some() {
+                    return None;
+                }
+                let hit = Hit {
+                    query: String::new(),
+                    cluster: String::new(),
+                    query_length: fields[2].parse().ok()?,
+                    query_start: fields[3].parse().ok()?,
+                    query_end: fields[4].parse().ok()?,
+                    strand,
+                    target: fields[6].to_string(),
+                    target_start: fields[7].parse().ok()?,
+                    target_end: fields[8].parse().ok()?,
+                    target_length: fields[9].parse().ok()?,
+                    matches: fields[10].parse().ok()?,
+                    alignment_length: fields[11].parse().ok()?,
+                    mapq: fields[12].parse().ok()?,
+                };
+                let entry = stored.get_mut(&hash)?;
+                if pass == "1" {
+                    entry.first.push(hit);
+                } else {
+                    entry.remainder.push(hit);
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(stored)
+}
+
+/// minimap2's version, asked once per run: its hits can change between versions.
+fn minimap2_version() -> Result<String> {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(version) = VERSION.get() {
+        return Ok(version.clone());
+    }
+    let output = Command::new("minimap2")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .context("Failed to run minimap2: is it installed and on PATH?")?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() || version.is_empty() {
+        anyhow::bail!("minimap2 --version did not report a version");
+    }
+    Ok(VERSION.get_or_init(|| version).clone())
+}
+
+/// 128-bit FNV-1a: stable across platforms and Rust versions, which the
+/// standard library's hasher does not promise, and that is what a file name
+/// read back by a later run needs.
+struct Fnv128(u128);
+
+impl Fnv128 {
+    fn new() -> Self {
+        Self(0x6c62_272e_07bb_0142_62b8_2175_6295_c58d)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 ^= u128::from(byte);
+            self.0 = self
+                .0
+                .wrapping_mul(0x0000_0000_0100_0000_0000_0000_0000_013b);
+        }
+    }
+
+    fn finish(&self) -> u128 {
+        self.0
+    }
+}
+
+/// Hash of the parts in order, each followed by its length so that a boundary
+/// cannot move between parts.
+fn stable_hash(parts: &[&[u8]]) -> u128 {
+    let mut hasher = Fnv128::new();
+    for part in parts {
+        hasher.write(part);
+        hasher.write(&(part.len() as u64).to_le_bytes());
+    }
+    hasher.finish()
 }
 
 /// A stretch of a query this short is not worth a second alignment: it is an
@@ -530,6 +918,138 @@ fn parse_paf_line(line: &str, name_to_cluster: &HashMap<String, String>) -> Opti
 mod tests {
     use super::*;
     use ahash::HashMapExt;
+
+    fn cached_hit(query_start: u64, target: &str) -> Hit {
+        Hit {
+            query: String::new(),
+            cluster: String::new(),
+            query_length: 900,
+            query_start,
+            query_end: 900,
+            strand: '-',
+            target: target.into(),
+            target_start: 10,
+            target_end: 910,
+            target_length: 5000,
+            matches: 899,
+            alignment_length: 900,
+            mapq: 60,
+        }
+    }
+
+    /// FNV-1a 128 against its published test vectors: a cache file name has to
+    /// be the same on every platform and in every later build.
+    #[test]
+    fn fnv128_matches_the_reference_vectors() {
+        let fnv = |bytes: &[u8]| {
+            let mut h = Fnv128::new();
+            h.write(bytes);
+            h.finish()
+        };
+        assert_eq!(fnv(b""), 0x6c62272e07bb014262b821756295c58d);
+        assert_eq!(fnv(b"a"), 0xd228cb696f1a8caf78912b704e4a8964);
+        // A boundary between parts cannot move without changing the hash.
+        assert_ne!(stable_hash(&[b"ab", b"c"]), stable_hash(&[b"a", b"bc"]));
+    }
+
+    /// A cache file reads back exactly what was stored, sequences with no hit
+    /// included, and anything cut short or from other settings reads as nothing.
+    #[test]
+    fn cache_file_round_trips_and_refuses_damage() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SearchCache {
+            dir: dir.path().to_path_buf(),
+            settings: "recore-search-cache-v1 test".to_string(),
+        };
+        let mut stored: HashMap<u128, ItemHits> = HashMap::new();
+        stored.insert(
+            7,
+            ItemHits {
+                first: vec![cached_hit(0, "ctg1")],
+                remainder: vec![cached_hit(450, "ctg2")],
+            },
+        );
+        stored.insert(9, ItemHits::default());
+        let path = dir.path().join("genome.tsv");
+        cache.store(&path, &stored).unwrap();
+
+        let back = cache.load(&path);
+        assert_eq!(back.len(), 2);
+        assert!(back[&9].first.is_empty() && back[&9].remainder.is_empty());
+        let hits = &back[&7];
+        assert_eq!(hits.first.len(), 1);
+        assert_eq!(hits.remainder.len(), 1);
+        let (a, b) = (&hits.first[0], &stored[&7].first[0]);
+        assert_eq!(
+            (
+                a.query_start,
+                a.strand,
+                a.target.as_str(),
+                a.target_length,
+                a.matches,
+                a.mapq
+            ),
+            (
+                b.query_start,
+                b.strand,
+                b.target.as_str(),
+                b.target_length,
+                b.matches,
+                b.mapq
+            )
+        );
+        assert_eq!(hits.remainder[0].query_start, 450);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        // Cut short anywhere, even on a line boundary, it is refused.
+        assert!(parse_cache_file(&text[..text.len() / 2], &cache.settings).is_none());
+        let without_end = text.trim_end_matches("# end\n");
+        assert!(parse_cache_file(without_end, &cache.settings).is_none());
+        // Written under other settings, it is not this cache's.
+        assert!(parse_cache_file(&text, "recore-search-cache-v1 other").is_none());
+        // A hit for a sequence never marked as searched is damage too.
+        let orphan = text.replace("S\t00000000000000000000000000000007\n", "");
+        assert_ne!(orphan, text);
+        assert!(parse_cache_file(&orphan, &cache.settings).is_none());
+    }
+
+    /// Cached or not, hits come out in the order one search of every query
+    /// reports them: first alignments in query order, remainders by name.
+    #[test]
+    fn hits_come_out_in_search_order() {
+        let seq = b"ACGT".to_vec();
+        let items = vec![
+            QueryItem {
+                name: "b".into(),
+                ci: ClusterIdx(0),
+                seq: &seq,
+            },
+            QueryItem {
+                name: "a".into(),
+                ci: ClusterIdx(1),
+                seq: &seq,
+            },
+        ];
+        let named = |start| Hit {
+            query: String::new(),
+            ..cached_hit(start, "t")
+        };
+        let per_item = vec![
+            ItemHits {
+                first: vec![named(1)],
+                remainder: vec![named(2)],
+            },
+            ItemHits {
+                first: vec![named(3)],
+                remainder: vec![named(4)],
+            },
+        ];
+        let order: Vec<(usize, u64)> = in_search_order(&items, &per_item)
+            .into_iter()
+            .map(|(ci, hit)| (ci.val(), hit.query_start))
+            .collect();
+        assert_eq!(order, vec![(0, 1), (1, 3), (1, 4), (0, 2)]);
+    }
 
     // ── Hit method tests ──
 

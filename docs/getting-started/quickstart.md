@@ -56,6 +56,7 @@ change what a run means, rather than how fast it is:
 | Read this | For |
 |-----------|-----|
 | `gene_presence_absence_recore.csv` | the corrected binary matrix, for downstream tools |
+| `gene_presence_absence_recore.Rtab` | the same matrix as 1/0, for pyseer and Rtab readers |
 | `gene_presence_absence_recore_states.csv` | audit and figures, one biological state per cell |
 | `orthology_evidence.tsv` | publication wording and manual review |
 | `recore_report.html` | the whole run in one page, offline |

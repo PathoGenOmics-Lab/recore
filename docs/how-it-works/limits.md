@@ -102,6 +102,38 @@ The synthetic benchmark validates policy behavior on matrix ground truth; the
 biological benchmark validates the locus-context guardrails. Neither is a
 species-specific biological truth benchmark.
 
+## Run time and memory
+
+Measured with [`benchmarks/search_scaling.py`](https://github.com/PathoGenOmics-Lab/recore/blob/main/benchmarks/search_scaling.py)
+on an Apple M4 Pro (14 cores, 24 GB) with 8 threads and minimap2 2.31:
+synthetic MTBC-sized genomes (one 4.9 Mb contig and 4,000 genes each), 80
+matrix gaps per genome of which 40 are false absences, GFFs and `--synteny`.
+
+| Genomes | Gaps searched | Run time | Warm `--search-cache` | Peak memory |
+|---------|---------------|----------|-----------------------|-------------|
+| 100 | 8,000 | 3.4 s | 2.4 s | 0.5 GB |
+| 200 | 16,000 | 7.1 s | 6.1 s | 0.8 GB |
+| 400 | 32,000 | 18.0 s | 13.0 s | 1.5 GB |
+| 800 | 64,000 | 48.1 s | 38.1 s | 2.6 GB |
+
+Every planted false absence was recovered, except one at 100 genomes that
+synteny rejected because the random deletions had changed its neighbourhood.
+
+Memory grows by about 3 MB per genome, mostly the annotations synteny keeps for
+every genome. Time grows a little faster than the genome count, from 0.03 s
+per genome at 100 genomes to 0.06 s at 800, and the minimap2 search is the
+smaller part of it (10 of the 48 seconds at 800 genomes). The rest is synteny,
+and the audit tables in `cluster_synteny_blocks.tsv`, whose size follows the
+number of distinct gene neighbourhoods. These synthetic genomes are a worst
+case for that: every gap reshuffles the context of ten neighbours, and at 800
+genomes the table reached 2.3 GB. Assemblies with conserved synteny write far
+less.
+
+`--search-cache` removes the search from a rerun (10 seconds to 1 at 800
+genomes), so it pays off most where the search is the expensive part: many gaps
+per genome (`--min-prevalence 0`), `--multi-allele`, or larger genomes. The
+cache directory can be deleted at any time; the next run simply searches again.
+
 ## Reproducible review
 
 Three Python utilities ship in `benchmarks/` for checking a run rather than

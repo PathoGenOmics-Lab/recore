@@ -15,7 +15,7 @@ use crate::parser::{
 };
 use crate::relationships::{write_cluster_components, write_cluster_relationships};
 use crate::rescue::{
-    build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_cds,
+    build_gene_to_cluster_with_gff_aliases, cell_gene_id_variants, check_internal_stops_in_cds,
     check_internal_stops_in_hit, check_internal_stops_in_span, classify_hits,
     panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GffGene,
     GffIndex, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
@@ -37,8 +37,8 @@ use self::evolution::{
 use self::output::{
     clear_optional_outputs, count_core_after, count_soft_core_after, write_corrected_csv,
     write_corrected_gffs, write_html_report, write_multistate_matrix, write_nsc_report,
-    write_run_manifest, write_summary, MultistateMatrixInputs, NotSearched, SearchCoverage,
-    SummaryStats,
+    write_rescued_fasta, write_run_manifest, write_summary, MultistateMatrixInputs, NotSearched,
+    SearchCoverage, SummaryStats,
 };
 use self::quality::{
     cluster_prevalences, cluster_sequence_lengths, orthology_quality,
@@ -282,81 +282,52 @@ pub fn run(args: &Args) -> Result<()> {
         let mut parse_failures = 0usize;
         let mut unusable = 0usize;
         let annotation_files = resolve_annotation_files_for_pa(&pa, ann_dir);
-        for gi_val in 0..n_genomes {
-            let gi = GenomeIdx(gi_val);
-            let genome_name = pa.genome_name(gi);
-            let Some(path) = annotation_files.get(genome_name).cloned() else {
-                continue;
-            };
-            match parse_gff_genes(&path) {
-                Ok(mut raw_genes) => {
-                    if let Some(fasta_path) = genome_files.get(genome_name) {
-                        let contig_names =
-                            load_genome_contig_names(fasta_path).with_context(|| {
-                                format!("Cannot read FASTA contig names for {}", genome_name)
-                            })?;
-                        if let Some((from, to, n_records)) =
-                            normalize_gff_records_to_fasta(&mut raw_genes, &contig_names)
-                        {
-                            gff_contig_remaps.push((genome_name.to_string(), from, to, n_records));
+        // Each genome's GFF is read and indexed on its own, in parallel, and the
+        // outcomes are folded in genome order, so the warnings, the remaps and
+        // the index are what the one-at-a-time loop produced.
+        let gff_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(args.threads.max(1))
+            .build()
+            .context("Failed to build the GFF thread pool")?;
+        let outcomes: Vec<Result<GffOutcome>> = gff_pool.install(|| {
+            use rayon::prelude::*;
+            (0..n_genomes)
+                .into_par_iter()
+                .map(|gi_val| {
+                    let genome_name = pa.genome_name(GenomeIdx(gi_val));
+                    match annotation_files.get(genome_name) {
+                        Some(path) => {
+                            load_genome_gff(genome_name, path, genome_files.get(genome_name))
                         }
-                        // A GFF that annotates none of the assembly's contigs, or
-                        // has no CDS at all, used to count as loaded: every hit
-                        // then sat on "unannotated" sequence, became MISSING_CDS,
-                        // and nothing was corrected, with no warning that said so.
-                        let fasta_set: ahash::HashSet<&str> =
-                            contig_names.iter().map(String::as_str).collect();
-                        let on_assembly = raw_genes
-                            .iter()
-                            .filter(|record| fasta_set.contains(record.0.as_str()))
-                            .count();
-                        if raw_genes.is_empty() || on_assembly == 0 {
-                            unusable += 1;
-                            if raw_genes.is_empty() {
-                                warn!(
-                                    "GFF for {} ({}) has no CDS records; it is not used",
-                                    genome_name,
-                                    path.display()
-                                );
-                            } else {
-                                warn!(
-                                    "GFF for {} annotates none of its assembly's contigs \
-                                     (GFF seqid '{}', FASTA contig '{}'); it is not used",
-                                    genome_name,
-                                    raw_genes[0].0,
-                                    contig_names.first().map(String::as_str).unwrap_or("")
-                                );
-                            }
-                            continue;
-                        }
+                        None => Ok(GffOutcome::NoFile),
                     }
-                    let genes: Vec<(GffGene, Vec<String>, Vec<String>)> = raw_genes
-                        .into_iter()
-                        .map(|(contig, start, end, strand, gene_id, aliases, labels)| {
-                            (
-                                GffGene {
-                                    contig,
-                                    start,
-                                    end,
-                                    strand,
-                                    gene_id,
-                                },
-                                aliases,
-                                labels,
-                            )
-                        })
-                        .collect();
-                    data.insert(gi, GffIndex::build_with_aliases_and_labels(genes));
-                    gff_paths.insert(gi, path.clone());
+                })
+                .collect()
+        });
+        for (gi_val, outcome) in outcomes.into_iter().enumerate() {
+            let gi = GenomeIdx(gi_val);
+            match outcome? {
+                GffOutcome::Loaded { index, path, remap } => {
+                    if let Some((from, to, n_records)) = remap {
+                        gff_contig_remaps.push((
+                            pa.genome_name(gi).to_string(),
+                            from,
+                            to,
+                            n_records,
+                        ));
+                    }
+                    data.insert(gi, *index);
+                    gff_paths.insert(gi, path);
                 }
-                // `{:#}` for the same reason as the FASTA warning above, and it
-                // matters more here: this is the one line telling a reader that
-                // a genome just lost its whole annotation, and the run goes on
-                // to a different answer without it.
-                Err(e) => {
+                GffOutcome::Unusable(message) => {
+                    unusable += 1;
+                    warn!("{}", message);
+                }
+                GffOutcome::ParseFailure(message) => {
                     parse_failures += 1;
-                    warn!("Cannot parse GFF for {}: {:#}", genome_name, e)
+                    warn!("{}", message);
                 }
+                GffOutcome::NoFile => {}
             }
         }
         let loaded = data.len();
@@ -464,6 +435,7 @@ pub fn run(args: &Args) -> Result<()> {
         &args.preset,
         true,
         500,
+        args.search_cache.as_deref(),
     )?;
 
     let reference_hit_candidates = if let Some(reference_genome) = args.reference_genome.as_deref()
@@ -495,6 +467,7 @@ pub fn run(args: &Args) -> Result<()> {
                         &args.preset,
                         true,
                         5000,
+                        args.search_cache.as_deref(),
                     )?;
                     reference_hit_shadow_candidates(
                         &reference_hits,
@@ -578,84 +551,36 @@ pub fn run(args: &Args) -> Result<()> {
                 rescues_by_genome.len()
             );
             let mut upgraded = 0usize;
-
-            for (gi, rescue_indices) in rescues_by_genome {
-                let genome_name = pa.genome_name(gi);
-                let Some(fasta_path) = genome_files.get(genome_name) else {
-                    continue;
-                };
-                // Propagate, never skip: a genome that cannot be scanned used to
-                // be passed over in silence, and its pseudogenes went into the
-                // matrix as intact genes.
-                let contigs =
-                    crate::parser::load_genome_contigs(fasta_path).with_context(|| {
-                        format!(
-                            "Cannot scan genome {} for internal stop codons",
-                            genome_name
+            // One genome at a time was the slowest part of a large run after
+            // the search: each genome is read and scanned on its own, in
+            // parallel, and the findings applied afterwards. Genome order keeps
+            // the first error the same from run to run.
+            let mut genomes: Vec<(GenomeIdx, Vec<usize>)> = rescues_by_genome.into_iter().collect();
+            genomes.sort_by_key(|(gi, _)| *gi);
+            let scans: Vec<Result<Vec<(usize, usize)>>> = pool.install(|| {
+                use rayon::prelude::*;
+                genomes
+                    .par_iter()
+                    .map(|(gi, rescue_indices)| {
+                        scan_genome_for_internal_stops(
+                            *gi,
+                            rescue_indices,
+                            &rescues,
+                            &pa,
+                            &genome_files,
+                            &gff_indices,
                         )
-                    })?;
-
-                for rescue_idx in rescue_indices {
+                    })
+                    .collect()
+            });
+            for found in scans {
+                for (rescue_idx, n_stops) in found? {
                     let rescue = &mut rescues[rescue_idx];
-                    // A rescue on an annotated CDS is scanned in that CDS, in its
-                    // frame and to its stop; see check_internal_stops_in_cds.
-                    let annotated_cds = rescue
-                        .annotation_match
-                        .as_deref()
-                        .and_then(|id| gff_indices.get(&gi)?.get_by_id(id))
-                        .filter(|gene| {
-                            gene.contig == rescue.contig
-                                && gene.strand == rescue.strand
-                                && gene.start < rescue.end
-                                && rescue.start < gene.end
-                        });
-                    let stops = if let Some(gene) = annotated_cds {
-                        check_internal_stops_in_cds(
-                            &gene.contig,
-                            gene.start,
-                            gene.end,
-                            gene.strand,
-                            &contigs,
-                        )
-                    } else if let Some(query_start) = rescue.query_start {
-                        // No annotation, but one alignment: its start on the
-                        // representative fixes the reading frame.
-                        check_internal_stops_in_span(
-                            &rescue.contig,
-                            rescue.start,
-                            rescue.end,
-                            rescue.strand,
-                            query_start,
-                            &contigs,
-                        )
-                    } else {
-                        check_internal_stops_in_hit(
-                            // Build a minimal hit from rescue coords for the check
-                            &crate::search::Hit {
-                                query: String::new(),
-                                cluster: String::new(),
-                                query_length: 0,
-                                query_start: 0,
-                                query_end: 0,
-                                strand: rescue.strand,
-                                target: rescue.contig.clone(),
-                                target_start: rescue.start,
-                                target_end: rescue.end,
-                                target_length: 0,
-                                matches: 0,
-                                alignment_length: 0,
-                                mapq: 0,
-                            },
-                            Some(&contigs),
-                        )
+                    rescue.rescue_type = RescueType::Pseudogene {
+                        reason: PseudogeneReason::InternalStop { n_stops },
                     };
-                    if let Some(n_stops) = stops {
-                        rescue.rescue_type = RescueType::Pseudogene {
-                            reason: PseudogeneReason::InternalStop { n_stops },
-                        };
-                        rescue.confidence *= 0.5; // Pseudogenes get lower confidence
-                        upgraded += 1;
-                    }
+                    rescue.confidence *= 0.5; // Pseudogenes get lower confidence
+                    upgraded += 1;
                 }
             }
 
@@ -671,17 +596,51 @@ pub fn run(args: &Args) -> Result<()> {
     // ── 8. Synteny validation ──
     if args.synteny && !gff_indices.is_empty() {
         info!("Validating synteny...");
-        let mut synteny_cache = SyntenyReferenceCache::default();
-        for rescue in &mut rescues {
-            validate_synteny_with_cache(
-                rescue,
-                &pa,
-                &gff_indices,
-                &gene_to_cluster_maps,
-                &mut synteny_cache,
-                args.verbose,
-            );
+        // A rescue reads only its own cluster's reference contexts, so the
+        // rescues are grouped by cluster and the clusters validated in
+        // parallel, each with its own cache, then put back in their order. One
+        // rescue at a time it was the slowest stage of a large run.
+        let mut slots: Vec<Option<RescueEvent>> =
+            std::mem::take(&mut rescues).into_iter().map(Some).collect();
+        let mut order: Vec<usize> = (0..slots.len()).collect();
+        order.sort_by_key(|&i| (slots[i].as_ref().map(|r| r.cluster_idx), i));
+        let mut groups: Vec<Vec<(usize, RescueEvent)>> = Vec::new();
+        for i in order {
+            let rescue = slots[i].take().expect("each rescue is moved once");
+            let same_cluster = groups
+                .last()
+                .is_some_and(|group| group[0].1.cluster_idx == rescue.cluster_idx);
+            if !same_cluster {
+                groups.push(Vec::new());
+            }
+            groups
+                .last_mut()
+                .expect("a group was just pushed")
+                .push((i, rescue));
         }
+        pool.install(|| {
+            use rayon::prelude::*;
+            groups.par_iter_mut().for_each(|group| {
+                let mut synteny_cache = SyntenyReferenceCache::default();
+                for (_, rescue) in group.iter_mut() {
+                    validate_synteny_with_cache(
+                        rescue,
+                        &pa,
+                        &gff_indices,
+                        &gene_to_cluster_maps,
+                        &mut synteny_cache,
+                        args.verbose,
+                    );
+                }
+            });
+        });
+        for (i, rescue) in groups.into_iter().flatten() {
+            slots[i] = Some(rescue);
+        }
+        rescues = slots
+            .into_iter()
+            .map(|rescue| rescue.expect("every rescue comes back"))
+            .collect();
         let validated = rescues
             .iter()
             .filter(|r| r.synteny_ok == Some(true))
@@ -702,7 +661,7 @@ pub fn run(args: &Args) -> Result<()> {
             warn!("  Rerun with -v to see detailed synteny debug output");
         }
     } else if args.synteny && gff_indices.is_empty() {
-        warn!("Synteny requested (--synteny) but no GFF annotations loaded — skipping");
+        warn!("Synteny requested (--synteny) but no GFF annotations loaded, so it is skipped");
     }
 
     let reference_audit_candidates = if args.reference_genome.is_some() {
@@ -889,6 +848,7 @@ pub fn run(args: &Args) -> Result<()> {
             min_identity: args.mobile_element_min_identity,
             min_coverage: args.mobile_element_min_coverage,
             preset: &args.preset,
+            search_cache: args.search_cache.as_deref(),
         })?
     } else {
         Vec::new()
@@ -993,6 +953,7 @@ pub fn run(args: &Args) -> Result<()> {
             &gff_indices,
             &corrected_gene_to_cluster_maps,
             synteny_reference_gi,
+            args.threads,
             &args.output,
         )?;
         info!(
@@ -1061,6 +1022,11 @@ pub fn run(args: &Args) -> Result<()> {
         coverage: &coverage,
         output_dir: &args.output,
     })?;
+    if args.write_rescued_fasta {
+        let mut matrix_rescues: Vec<&RescueEvent> = matrix_rescue_map.values().copied().collect();
+        matrix_rescues.sort_by_key(|r| (r.genome_idx, r.cluster_idx));
+        write_rescued_fasta(&matrix_rescues, &pa, &genome_files, &args.output)?;
+    }
     if args.write_corrected_gff {
         let matrix_rescues: Vec<RescueEvent> =
             matrix_rescue_map.values().map(|r| (*r).clone()).collect();
@@ -1421,9 +1387,176 @@ fn stripped_gene_id(gene_id: &str) -> Option<&str> {
     panaroo_gene_id_suffix_variants(gene_id).into_iter().nth(1)
 }
 
+/// The rescues of one genome that read through an internal stop, with how
+/// many stops each has.
+fn scan_genome_for_internal_stops(
+    gi: GenomeIdx,
+    rescue_indices: &[usize],
+    rescues: &[RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    genome_files: &HashMap<String, PathBuf>,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+) -> Result<Vec<(usize, usize)>> {
+    let genome_name = pa.genome_name(gi);
+    let Some(fasta_path) = genome_files.get(genome_name) else {
+        return Ok(Vec::new());
+    };
+    // Propagate, never skip: a genome that cannot be scanned used to be passed
+    // over in silence, and its pseudogenes went into the matrix as intact genes.
+    let contigs = crate::parser::load_genome_contigs(fasta_path).with_context(|| {
+        format!(
+            "Cannot scan genome {} for internal stop codons",
+            genome_name
+        )
+    })?;
+    let mut found = Vec::new();
+    for &rescue_idx in rescue_indices {
+        let rescue = &rescues[rescue_idx];
+        // A rescue on an annotated CDS is scanned in that CDS, in its frame and
+        // to its stop; see check_internal_stops_in_cds.
+        let annotated_cds = rescue
+            .annotation_match
+            .as_deref()
+            .and_then(|id| gff_indices.get(&gi)?.get_by_id(id))
+            .filter(|gene| {
+                gene.contig == rescue.contig
+                    && gene.strand == rescue.strand
+                    && gene.start < rescue.end
+                    && rescue.start < gene.end
+            });
+        let stops = if let Some(gene) = annotated_cds {
+            check_internal_stops_in_cds(&gene.contig, gene.start, gene.end, gene.strand, &contigs)
+        } else if let Some(query_start) = rescue.query_start {
+            // No annotation, but one alignment: its start on the representative
+            // fixes the reading frame.
+            check_internal_stops_in_span(
+                &rescue.contig,
+                rescue.start,
+                rescue.end,
+                rescue.strand,
+                query_start,
+                &contigs,
+            )
+        } else {
+            check_internal_stops_in_hit(
+                // Build a minimal hit from rescue coords for the check
+                &crate::search::Hit {
+                    query: String::new(),
+                    cluster: String::new(),
+                    query_length: 0,
+                    query_start: 0,
+                    query_end: 0,
+                    strand: rescue.strand,
+                    target: rescue.contig.clone(),
+                    target_start: rescue.start,
+                    target_end: rescue.end,
+                    target_length: 0,
+                    matches: 0,
+                    alignment_length: 0,
+                    mapq: 0,
+                },
+                Some(&contigs),
+            )
+        };
+        if let Some(n_stops) = stops {
+            found.push((rescue_idx, n_stops));
+        }
+    }
+    Ok(found)
+}
+
+/// What became of one genome's GFF.
+enum GffOutcome {
+    Loaded {
+        index: Box<GffIndex>,
+        path: PathBuf,
+        /// A single GFF seqid mapped onto a differently named FASTA contig.
+        remap: Option<(String, String, usize)>,
+    },
+    /// Read, but annotating nothing of its assembly: the warning to give.
+    Unusable(String),
+    /// Not readable as GFF: the warning to give.
+    ParseFailure(String),
+    NoFile,
+}
+
+/// Read and index one genome's GFF against its assembly's contig names.
+fn load_genome_gff(
+    genome_name: &str,
+    path: &Path,
+    fasta_path: Option<&PathBuf>,
+) -> Result<GffOutcome> {
+    let mut raw_genes = match parse_gff_genes(path) {
+        Ok(raw_genes) => raw_genes,
+        // `{:#}` for the same reason as the FASTA warning, and it matters more
+        // here: this is the one line telling a reader that a genome just lost
+        // its whole annotation, and the run goes on to a different answer
+        // without it.
+        Err(e) => {
+            return Ok(GffOutcome::ParseFailure(format!(
+                "Cannot parse GFF for {}: {:#}",
+                genome_name, e
+            )))
+        }
+    };
+    let mut remap = None;
+    if let Some(fasta_path) = fasta_path {
+        let contig_names = load_genome_contig_names(fasta_path)
+            .with_context(|| format!("Cannot read FASTA contig names for {}", genome_name))?;
+        remap = normalize_gff_records_to_fasta(&mut raw_genes, &contig_names);
+        // A GFF that annotates none of the assembly's contigs, or has no CDS at
+        // all, used to count as loaded: every hit then sat on "unannotated"
+        // sequence, became MISSING_CDS, and nothing was corrected, with no
+        // warning that said so.
+        let fasta_set: ahash::HashSet<&str> = contig_names.iter().map(String::as_str).collect();
+        let on_assembly = raw_genes
+            .iter()
+            .filter(|record| fasta_set.contains(record.0.as_str()))
+            .count();
+        if raw_genes.is_empty() {
+            return Ok(GffOutcome::Unusable(format!(
+                "GFF for {} ({}) has no CDS records; it is not used",
+                genome_name,
+                path.display()
+            )));
+        }
+        if on_assembly == 0 {
+            return Ok(GffOutcome::Unusable(format!(
+                "GFF for {} annotates none of its assembly's contigs \
+                 (GFF seqid '{}', FASTA contig '{}'); it is not used",
+                genome_name,
+                raw_genes[0].0,
+                contig_names.first().map(String::as_str).unwrap_or("")
+            )));
+        }
+    }
+    let genes: Vec<(GffGene, Vec<String>, Vec<String>)> = raw_genes
+        .into_iter()
+        .map(|(contig, start, end, strand, gene_id, aliases, labels)| {
+            (
+                GffGene {
+                    contig,
+                    start,
+                    end,
+                    strand,
+                    gene_id,
+                },
+                aliases,
+                labels,
+            )
+        })
+        .collect();
+    Ok(GffOutcome::Loaded {
+        index: Box::new(GffIndex::build_with_aliases_and_labels(genes)),
+        path: path.to_path_buf(),
+        remap,
+    })
+}
+
 fn gff_gene_for_id<'a>(gff: &'a GffIndex, gene_id: &str) -> Option<&'a GffGene> {
-    gff.get_by_id(gene_id)
-        .or_else(|| stripped_gene_id(gene_id).and_then(|id| gff.get_by_id(id)))
+    cell_gene_id_variants(gene_id)
+        .into_iter()
+        .find_map(|id| gff.get_by_id(id))
 }
 
 fn gff_gene_for_cell<'a>(gff: &'a GffIndex, cell: &str) -> Option<&'a GffGene> {
