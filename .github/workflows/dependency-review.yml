@@ -11,7 +11,7 @@ name: Dependency review
 # already in the tree is somebody else's conversation, and Dependabot is the one
 # having it.
 #
-# What it can see here is Cargo.lock and requirements-docs.txt. The lockfile is
+# What it can see here is Cargo.lock. The lockfile is
 # committed, so the comparison is against the exact transitive versions the
 # build actually uses rather than whatever the ranges in Cargo.toml would
 # resolve to today. There is deliberately no package.json to review: the report

@@ -57,13 +57,26 @@ python3 -m http.server 8000 --directory out/
 
 ## Documentation
 
+The website is `docs/index.html` and `docs/reference.html`, styled by
+`docs/assets/site.css` and driven by `docs/assets/site.js`: plain files with no
+build step, so opening `docs/index.html` in a browser shows a change. Keep it
+short. It is there to get someone running in two minutes; the details belong in
+the markdown pages it links to.
+
+Check it the way CI does:
+
 ```bash
-pip install -r requirements-docs.txt
-mkdocs serve
+cargo build
+python3 tools/check_site.py --recore target/debug/recore --run-tutorial
 ```
 
-`docs/assets/example-report.html` is the report the [Run report](../guide/report.md)
-page links to. It is the tutorial run's own output, so regenerate it whenever the
+That fails on a dead link or anchor, an option the site mentions that
+`recore --help` does not have, an option missing from the reference, a default
+that differs from the binary's, an em-dash, and an example run whose counts
+differ from the ones the page shows.
+
+`docs/assets/example-report.html` is the report the website and the
+[Run report](../guide/report.md) page link to. It is the tutorial run's own output, so regenerate it whenever the
 viewer changes:
 
 ```bash
@@ -83,9 +96,6 @@ one source file, so regenerate those together rather than editing either by hand
 ```bash
 python3 tools/make_logo_variants.py
 ```
-
-CI builds with `mkdocs build --strict`, so a broken internal link or a page
-missing from the nav fails the build rather than shipping a dead link.
 
 ## Reporting a problem
 

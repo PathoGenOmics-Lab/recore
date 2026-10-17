@@ -147,21 +147,15 @@ cache directory can be deleted at any time; the next run simply searches again.
 Three Python utilities ship in `benchmarks/` for checking a run rather than
 trusting it:
 
-`self_benchmark.py`
+- `self_benchmark.py`: Masks known-present cells, reruns Recore, and estimates dataset-specific
+  masked-positive recall plus score calibration bins. This measures the tool on
+  *your* data rather than on a synthetic set.
 
-:   Masks known-present cells, reruns Recore, and estimates dataset-specific
-    masked-positive recall plus score calibration bins. This measures the tool on
-    *your* data rather than on a synthetic set.
+- `compare_runs.py`: Compares two output directories and labels every matrix call unchanged, new,
+  lost or changed. Use it when changing a policy or a threshold.
 
-`compare_runs.py`
-
-:   Compares two output directories and labels every matrix call unchanged, new,
-    lost or changed. Use it when changing a policy or a threshold.
-
-`recore_report.py`
-
-:   Builds a compact Markdown or HTML report for an output directory that was
-    generated without `--write-html-report`.
+- `recore_report.py`: Builds a compact Markdown or HTML report for an output directory that was
+  generated without `--write-html-report`.
 
 The synthetic benchmark itself, which creates known false absences, true
 absences and partial pseudogenes and then computes precision, recall and F1 from

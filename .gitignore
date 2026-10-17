@@ -14,7 +14,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Docs site (mkdocs build output)
+# Output of the MkDocs site this repository used to build
 /site/
 /.cache/
 

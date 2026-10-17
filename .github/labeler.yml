@@ -15,7 +15,7 @@
 #   viewer         the JavaScript and CSS that ship inside the HTML report
 #   tests          the test suites
 #   benchmarks     the Python benchmark harnesses and the numbers they produce
-#   documentation  the MkDocs site, the README, the changelog, the figures
+#   documentation  the website and docs, the README, the changelog, the figures
 #   packaging      what a release is made of: crate metadata, lockfile, licence
 #   ci             everything under .github, plus the repository's own scripts
 #
@@ -118,10 +118,8 @@ documentation:
       - any-glob-to-any-file:
           - "docs/**"
           - "assets/**"
-          - "mkdocs.yml"
           - "README.md"
           - "CHANGELOG.md"
-          - "requirements-docs.txt"
 
 # No CITATION.cff and no archived record to keep in step with either, so unlike
 # other repositories in the lab there is nothing else to list here. The lockfile

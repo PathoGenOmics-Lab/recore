@@ -21,7 +21,7 @@ tree pane only lists the genomes, and a notice above the workspace says so.
 Ancestral readings, tree colouring by subtree and rerooting need a real tree.
 
 If the workspace cannot start (a browser that cannot hold the embedded data, for
-instance), the report says why in place of the workspace, and ++d++ still opens
+instance), the report says why in place of the workspace, and <kbd>D</kbd> still opens
 the run details.
 
 ## The workspace
@@ -40,13 +40,13 @@ browser for the next report you open.
 
 ## Finding things
 
-Press ++cmd+k++ (or ++ctrl+k++, or ++slash++) to open the find field. It searches
+Press <kbd>Cmd</kbd>+<kbd>K</kbd> (or <kbd>Ctrl</kbd>+<kbd>K</kbd>, or <kbd>/</kbd>) to open the find field. It searches
 clusters **and** genomes at once, ranking prefix matches on the name above name
 matches above annotation matches. Enter opens the result: a cluster becomes the
 selected column, a genome scrolls the panes to its tip and opens its card.
 
 The arrow buttons beside the field step through the visible columns one at a
-time, and ++left++ / ++right++ do the same from the keyboard. ++shift++ with them
+time, and <kbd>←</kbd> / <kbd>→</kbd> do the same from the keyboard. <kbd>Shift</kbd> with them
 jumps ten.
 
 ## The tree
@@ -58,7 +58,7 @@ shows topology only. A scale bar under the pane gives the phylogram its units.
 
 **Root.** Every ancestral reading in the report depends on where the tree is
 rooted, so it is an explicit choice: the L8 outgroup when one is present, the
-tree as supplied, or the midpoint of the longest tip-to-tip path. ++alt++ and a
+tree as supplied, or the midpoint of the longest tip-to-tip path. <kbd>Alt</kbd> and a
 click on any tip roots on that genome instead.
 
 **Tip colour.** By the selected cluster's state, by MTBC lineage, by mechanism,
@@ -133,12 +133,12 @@ per lineage, how many genomes were corrected or had evidence kept out, out of
 the lineage's genomes.
 
 **Zoom.** The slider in each pane header drives its own axis, in equal ratios
-from end to end. A plain wheel always scrolls. ++cmd++ (or ++ctrl++) and the
-wheel zoom columns, which is also what a trackpad pinch does; ++alt++ and the
+from end to end. A plain wheel always scrolls. <kbd>Cmd</kbd> (or <kbd>Ctrl</kbd>) and the
+wheel zoom columns, which is also what a trackpad pinch does; <kbd>Alt</kbd> and the
 wheel zoom rows. Each notch is a factor of 1.25 and the cell under the pointer
-stays under the pointer. Press ++z++ to fit the data back to the window.
+stays under the pointer. Press <kbd>Z</kbd> to fit the data back to the window.
 
-Press ++z++ to see the whole matrix at once. When that makes cells smaller than
+Press <kbd>Z</kbd> to see the whole matrix at once. When that makes cells smaller than
 a pixel, the matrix is drawn as density: each pixel shows the share of present
 cells it covers, between the absent and present colours, and is tinted blue
 where any cell in it was corrected (crimson where evidence was kept out), more
@@ -156,7 +156,7 @@ pointer moves on, so a genome found from the find field is still easy to spot.
 ## Comparing two genomes
 
 Two genomes far apart in the tree are far apart in the matrix. **Pin to
-compare** in the genome card, or ++p++, keeps a genome's row in a band under the
+compare** in the genome card, or <kbd>P</kbd>, keeps a genome's row in a band under the
 column header, aligned with every column whatever the scroll; its name sits
 level with it in the tree pane's header, marked **A** or **B**, and its tip gets
 a blue ring. Pinning a third genome unpins the oldest. Hover a cell of the band
@@ -172,7 +172,7 @@ count takes the filter off again.
 
 ## Synteny
 
-Press ++s++ or use the layers button to show the synteny band. It draws the top
+Press <kbd>S</kbd> or use the layers button to show the synteny band. It draws the top
 unique five-neighbour blocks for the selected cluster, at most
 10 per cluster, with gene arrows keeping strand and proportional length.
 
@@ -190,7 +190,7 @@ This needs `cluster_synteny_blocks.tsv`, which means GFFs were loaded.
 
 ## Run details
 
-++d++ or the info button opens the run details. They start with what you need
+<kbd>D</kbd> or the info button opens the run details. They start with what you need
 to write the run up:
 
 - **Using these results**: a methods paragraph built from the run's own
@@ -228,36 +228,36 @@ The SVG carries every colour and font as a plain attribute, with no stylesheet
 or CSS variables, so illustration software and PDF tools draw it as the page
 does.
 
-++cmd+p++ prints the figure described above for the whole matrix (in the light
+<kbd>Cmd</kbd>+<kbd>P</kbd> prints the figure described above for the whole matrix (in the light
 palette, whatever the screen is in), then the run details as a document with
 every candidate. The live panes are swapped for the figure only while printing.
 
 ## Keyboard shortcuts
 
-Press ++question++ for this list in the report itself. A switch at its top turns
+Press <kbd>?</kbd> for this list in the report itself. A switch at its top turns
 the one-letter shortcuts off, for example when they fire by accident with speech
-input; ++cmd+k++ and the arrows keep working, and the choice is remembered in
+input; <kbd>Cmd</kbd>+<kbd>K</kbd> and the arrows keep working, and the choice is remembered in
 that browser.
 
 | Keys | Action |
 |------|--------|
-| ++cmd+k++ / ++ctrl+k++ / ++slash++ | find a cluster or genome |
-| ++left++ ++right++ | previous / next cluster |
-| ++shift++ + ++left++ ++right++ | jump ten clusters |
-| ++s++ | show or hide the synteny panel |
-| ++d++ | open the run details |
-| ++e++ | export the view |
-| ++f++ | fullscreen |
-| ++t++ | switch theme |
-| ++c++ | phylogram or cladogram |
-| ++r++ | reroot at the midpoint |
-| ++z++ | fit the matrix to the window |
-| ++p++ | pin or unpin the open genome, to compare two |
-| ++cmd++ / ++ctrl++ + wheel, or pinch | zoom columns under the pointer |
-| ++alt++ + wheel | zoom rows under the pointer |
-| ++shift++ + wheel | scroll sideways |
-| ++alt++ + click a tip | root the tree on that genome |
-| ++esc++ | close whatever is open |
+| <kbd>Cmd</kbd>+<kbd>K</kbd> / <kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>/</kbd> | find a cluster or genome |
+| <kbd>←</kbd> <kbd>→</kbd> | previous / next cluster |
+| <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> | jump ten clusters |
+| <kbd>S</kbd> | show or hide the synteny panel |
+| <kbd>D</kbd> | open the run details |
+| <kbd>E</kbd> | export the view |
+| <kbd>F</kbd> | fullscreen |
+| <kbd>T</kbd> | switch theme |
+| <kbd>C</kbd> | phylogram or cladogram |
+| <kbd>R</kbd> | reroot at the midpoint |
+| <kbd>Z</kbd> | fit the matrix to the window |
+| <kbd>P</kbd> | pin or unpin the open genome, to compare two |
+| <kbd>Cmd</kbd> / <kbd>Ctrl</kbd> + wheel, or pinch | zoom columns under the pointer |
+| <kbd>Alt</kbd> + wheel | zoom rows under the pointer |
+| <kbd>Shift</kbd> + wheel | scroll sideways |
+| <kbd>Alt</kbd> + click a tip | root the tree on that genome |
+| <kbd>Esc</kbd> | close whatever is open |
 
 ## Scale
 
