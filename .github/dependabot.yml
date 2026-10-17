@@ -64,37 +64,6 @@ updates:
         patterns: ["*"]
         update-types: ["major"]
 
-  # The documentation site's build dependencies.
-  #
-  # The directory is "/" and not "/docs" because that is where
-  # `requirements-docs.txt` actually lives. Dependabot finds it by reading the
-  # requirements-shaped `.txt` files in the directory rather than by matching a
-  # fixed filename, so the name being unusual costs nothing, but the directory
-  # being wrong would cost everything: a `pip` entry pointed at a directory with
-  # no requirements file in it does not fail, it simply never opens anything.
-  #
-  # This is the one ecosystem whose pull requests are checked by the docs build
-  # as well as by CI, because `requirements-docs.txt` is in the path filter of
-  # .github/workflows/docs.yml. The pin is `>=9.6,<10`, so mkdocs-material 10
-  # arrives as a major that widens that range, and a major of the theme is
-  # exactly the change that turns `mkdocs build --strict` red over a renamed
-  # option. That one waits for a person; the 9.x releases do not.
-  - package-ecosystem: pip
-    directory: "/"
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 2
-    labels: ["dependencies", "documentation"]
-    commit-message:
-      prefix: "docs"
-    groups:
-      docs-routine:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-      docs-major:
-        patterns: ["*"]
-        update-types: ["major"]
-
   # The actions the workflows themselves pin. These go stale silently: a
   # deprecated runner image, or a Node version dropped from an action, is only
   # noticed when a job starts warning, or fails.

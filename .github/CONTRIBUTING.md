@@ -95,13 +95,14 @@ a known fix.
 These are exactly what continuous integration runs, and running them locally
 first is the difference between one review round and three. The first three are
 the CI workflow, in the order it runs them; the fourth belongs to the
-documentation workflow and only fires when the documentation changed:
+documentation workflow and only fires when the website or the code it describes
+changed:
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 RECORE_REQUIRE_MINIMAP2=1 cargo test --locked --all-targets
-mkdocs build --strict          # only if you touched docs/ or mkdocs.yml
+python3 tools/check_site.py --recore target/debug/recore --run-tutorial  # docs/ or the CLI
 ```
 
 Three things about that list are worth explaining, because they are not the
@@ -180,7 +181,7 @@ python3 -m http.server 8000 --directory out/
 | `tests/integration.rs` | the end-to-end run, the one that needs minimap2 |
 | `benchmarks/` | Python benchmarks and the tutorial dataset generator |
 | `tools/` | `make_logo_variants.py`, which generates the logo variants and the report's dark-mode colour overrides |
-| `docs/` | the MkDocs Material site |
+| `docs/` | the website (plain HTML, no build step) and the long-form markdown pages |
 | `.github/workflows/` | CI, documentation build, release builds |
 
 Recore is a Rust command-line tool and nothing else. There is no desktop
@@ -234,15 +235,13 @@ you anything tends not to get run.
 
 ## Documentation
 
-```bash
-pip install -r requirements-docs.txt
-mkdocs serve
-```
-
-The documentation workflow builds with `mkdocs build --strict`, which turns a
-broken internal link or a page missing from the `nav` into a build failure
-instead of a dead link somebody finds six months later. Adding a page means
-adding it to `nav` in `mkdocs.yml`.
+The website is plain HTML in `docs/` (`index.html`, `reference.html` and
+`assets/`), with no build step: open `docs/index.html` to see a change. The
+documentation workflow runs `tools/check_site.py`, which fails on a dead link or
+anchor, an option `recore --help` does not have, an option missing from the
+reference, a default that differs from the binary's, or an example run whose
+counts differ from the page's, instead of a stale page somebody finds six
+months later. The long-form pages are markdown under `docs/` and read on GitHub.
 
 `docs/assets/example-report.html` is the tutorial run's own output, linked from
 the [Run report](../docs/guide/report.md) page. If you change the viewer, that

@@ -41,5 +41,5 @@ here iterates the whole matrix rather than the visible window.
 - [ ] `RECORE_REQUIRE_MINIMAP2=1 cargo test --locked --all-targets` passes. <!-- The variable turns the "minimap2 not in PATH" skip into a failure, so a green run means the end-to-end test actually ran. If you do not have minimap2 locally, say so and let CI be the check. -->
 - [ ] New behaviour has a test, or I have said above why it does not.
 - [ ] `CHANGELOG.md` has an entry under `## [Unreleased]`, if a user would notice this.
-- [ ] Documentation under `docs/` is updated if the change is user-visible, and `mkdocs build --strict` passes.
+- [ ] Documentation under `docs/` is updated if the change is user-visible, and `python3 tools/check_site.py --recore target/debug/recore --run-tutorial` passes.
 - [ ] If I touched the report: it still loads nothing from the network, it still draws only the visible window, and I regenerated `docs/assets/example-report.html` if the viewer changed.

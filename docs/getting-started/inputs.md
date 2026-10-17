@@ -57,29 +57,19 @@ fails in seconds rather than after an hour of minimap2:
 
 ## Choosing the optional inputs
 
-!!! tip "Use GFFs whenever you have them"
+> **Use GFFs whenever you have them.** Without annotations Recore can still
+> detect full-length sequence evidence and some partial or deletion evidence,
+> but it cannot reliably distinguish `SPLIT`, `START_VARIANT` and `PARALOG` by
+> annotation overlap, and synteny validation is not available at all.
 
-    Without annotations Recore can still detect full-length sequence evidence and
-    some partial or deletion evidence, but it cannot reliably distinguish
-    `SPLIT`, `START_VARIANT` and `PARALOG` by annotation overlap, and synteny
-    validation is not available at all.
+- `--synteny`: Use it with GFFs whenever paralogy or multi-locus clusters are plausible. It
+  is the check that keeps a paralogous hit from becoming a presence call.
 
-`--synteny`
+- `--multi-allele`: Use it when clusters have divergent alleles, so a diverged true allele is not
+  mistaken for a different gene.
 
-:   Use it with GFFs whenever paralogy or multi-locus clusters are plausible. It
-    is the check that keeps a paralogous hit from becoming a presence call.
+- `--min-prevalence`: `0.0` for exhaustive audits where every cluster matters. A higher value such
+  as `0.05` cuts rare-cluster noise in large publication runs.
 
-`--multi-allele`
-
-:   Use it when clusters have divergent alleles, so a diverged true allele is not
-    mistaken for a different gene.
-
-`--min-prevalence`
-
-:   `0.0` for exhaustive audits where every cluster matters. A higher value such
-    as `0.05` cuts rare-cluster noise in large publication runs.
-
-`--preset`
-
-:   `asm5` for assemblies within about 5% divergence, which is faster. `asm20`
-    for up to 20%, which is safer across a broader species range.
+- `--preset`: `asm5` for assemblies within about 5% divergence, which is faster. `asm20`
+  for up to 20%, which is safer across a broader species range.

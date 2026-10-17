@@ -119,18 +119,18 @@ jobs:
       #   CI / Build, test, clippy, fmt
       #                          rustfmt, clippy -D warnings, and the test suite
       #                          with the end-to-end run made mandatory.
-      #   Documentation / Build  mkdocs build --strict.
+      #   Documentation / Build  tools/check_site.py: the website against the code.
       #
-      # The docs workflow is filtered by path, so on most of these pull requests
-      # it never runs and never appears in the list. An absent check is read as
+      # The docs workflow is filtered by path, so on some of these pull requests
+      # (an action bump) it never runs and never appears in the list. An absent check is read as
       # satisfied, not as pending, because the alternative is a cargo bump
       # sitting here until the timeout waiting for a job that was never going to
       # start. Reading it that way is safe because both workflows hang off the
       # same pull_request event: by the time CI has finished, minutes later,
       # a docs run that was ever going to happen has long since registered
       # itself as queued. And it does happen on the pull requests where it
-      # matters, since requirements-docs.txt and docs.yml are both in that
-      # workflow's path filter.
+      # matters, since Cargo.lock and docs.yml are both in that workflow's path
+      # filter.
       #
       # If the same check ever shows up twice for one commit, both copies are
       # read: pending if either is pending, green only if every one is green.

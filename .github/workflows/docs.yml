@@ -1,12 +1,20 @@
 name: Documentation
 
-# Build the MkDocs Material site and publish it to GitHub Pages (gh-pages branch).
-# After the first successful run, set Settings -> Pages -> Source to "Deploy from
-# a branch" and pick the gh-pages branch (root).
+# Checks the website in docs/ against the code it describes.
 #
-# Deploys on a push to main, so the published site tracks main and does not
-# redeploy on every push to a working branch. To publish on demand from any
-# branch, use the "Run workflow" button (workflow_dispatch).
+# The site is plain HTML with no build step (docs/index.html, reference.html and
+# assets/), so there is nothing to build or deploy: GitHub Pages can serve the
+# folder as it is, with Settings -> Pages -> "Deploy from a branch" -> main ->
+# /docs, once the repository is public or the organisation is on a paid plan.
+# What can still go wrong is drift, and tools/check_site.py fails on it: a dead
+# link or anchor, an option the pages show that `recore --help` does not have,
+# an option or a default the reference gets wrong, and an example run whose
+# counts are not the ones the page promises. That last part runs the "Try it"
+# commands for real, which is why this needs minimap2 and a build.
+#
+# The workflow and job names are what the Dependabot auto-merge gate waits for
+# ("Documentation" / "Build"); tools/check_automerge_gate.py fails CI if they
+# drift apart.
 
 on:
   push:
@@ -14,72 +22,45 @@ on:
       - main
     paths:
       - "docs/**"
-      - "mkdocs.yml"
-      - "CHANGELOG.md"
-      - "requirements-docs.txt"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "benchmarks/make_tutorial_dataset.py"
+      - "tools/check_site.py"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
-      - "mkdocs.yml"
-      - "CHANGELOG.md"
-      - "requirements-docs.txt"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "benchmarks/make_tutorial_dataset.py"
+      - "tools/check_site.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.x"
-
-      - name: Install dependencies
-        run: pip install -r requirements-docs.txt
-
-      # --strict turns broken internal links and missing nav entries into
-      # errors, so a pull request that breaks one fails here instead of
-      # shipping a dead link.
-      - name: Build
-        run: mkdocs build --strict
-
-  deploy:
-    name: Deploy
-    needs: build
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.x"
-
-      - name: Cache MkDocs build
-        uses: actions/cache@v6
-        with:
-          key: mkdocs-material-${{ github.sha }}
-          path: .cache
-          restore-keys: |
-            mkdocs-material-
-
-      - name: Install dependencies
-        run: pip install -r requirements-docs.txt
-
-      - name: Build and deploy
-        run: mkdocs gh-deploy --force --strict
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install minimap2
+        run: sudo apt-get update && sudo apt-get install -y minimap2
+      - name: Build recore
+        run: cargo build --locked
+      - name: The website matches the code
+        run: python3 tools/check_site.py --recore target/debug/recore --run-tutorial

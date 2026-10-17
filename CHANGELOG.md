@@ -88,6 +88,18 @@ and Recore uses semantic versioning.
 
 ### Changed
 
+- The documentation site is now a short website instead of fourteen MkDocs
+  pages: an install line, a command builder that writes the run for your
+  pangenome tool and the files you have, a one-minute example with the counts it
+  should give, the example report to click through, the one setting that
+  matters, and the first questions people ask. A reference page lists every
+  option, output file, cell state and rescue type, with a filter. It is plain
+  HTML in `docs/` with no build step, so it opens from a clone and GitHub Pages
+  can serve the folder as it is. `tools/check_site.py` runs in CI and fails if a
+  link or anchor is dead, if the site shows an option `recore --help` does not
+  have, if the reference misses an option or gets a default wrong, or if the
+  example run no longer gives the counts the page promises. The long-form pages
+  stay as markdown, rendered on GitHub, and MkDocs is gone from the repository.
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
   Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
   or `held_out_quality` instead of a `corrected...` value, and a strict

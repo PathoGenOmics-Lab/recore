@@ -7,7 +7,7 @@
 **Post-hoc rescue, audit, and quality control of pangenome presence/absence matrices.**
 **Pure Rust · one external dependency · Linux and macOS**
 
-[Documentation](docs/) · [Install](#installation) · [Quick start](#quick-start) · [Tutorial](docs/getting-started/tutorial.md) · [Citation](#citation)
+[Documentation](#documentation) · [Install](#installation) · [Quick start](#quick-start) · [Tutorial](docs/getting-started/tutorial.md) · [Citation](#citation)
 
 <a href="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml"><img src="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
@@ -47,15 +47,15 @@ Needs [Rust 1.85+](https://www.rust-lang.org/tools/install) to build and
 [minimap2](https://github.com/lh3/minimap2) on `PATH` to run.
 
 ```bash
-git clone https://github.com/PathoGenOmics-Lab/recore.git
-cd recore
-cargo build --release        # binary at target/release/recore
+conda install -c bioconda minimap2     # or: brew install minimap2 / sudo apt install minimap2
+cargo install --git https://github.com/PathoGenOmics-Lab/recore --locked
+recore --version
 ```
 
-Tagged releases also ship Linux and macOS binaries on the
-[Releases](https://github.com/PathoGenOmics-Lab/recore/releases) page.
-[Installation](docs/getting-started/installation.md) covers conda, MMseqs2 and
-checking the install.
+Or build a clone with `cargo build --release` (the binary lands at
+`target/release/recore`). `--nsc-engine mmseqs2` also needs
+[MMseqs2](https://github.com/soedinglab/MMseqs2) on `PATH`; the default engine
+is built in.
 
 ## Quick start
 
@@ -95,13 +95,20 @@ with eleven false absences planted in it and walks through the run.
 
 ## Documentation
 
-Every page is a markdown file in this repository and reads here on GitHub.
+The quickest way in is the website in [`docs/`](docs/index.html): an install
+line, a command builder for your pangenome tool, a one-minute example, the
+example report to click through, and one reference page with every option,
+output file and cell state. It is plain HTML with no build step, so open
+`docs/index.html` from a clone; once the repository is public, GitHub Pages can
+serve it straight from `main` and `/docs`. `tools/check_site.py` keeps it
+honest in CI: every option it shows exists, the defaults match `recore --help`,
+and the example run gives the numbers the page promises.
+
+The long versions are markdown files in this repository and read here on GitHub.
 
 | Start here | |
 |---|---|
 | [Tutorial](docs/getting-started/tutorial.md) | a full run on a generated dataset with known answers |
-| [Installation](docs/getting-started/installation.md) | requirements, from source, pre-built binaries |
-| [Quick start](docs/getting-started/quickstart.md) | the run most people want, and what to read first |
 | [Inputs](docs/getting-started/inputs.md) | what each input is, and how the names have to match |
 
 | Reference | |
@@ -121,13 +128,6 @@ Every page is a markdown file in this repository and reads here on GitHub.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Benchmark design and
 reproduction is in [benchmarks/README.md](benchmarks/README.md).
-
-> [!NOTE]
-> The same pages build into a searchable site with an example report you can
-> open (`pip install -r requirements-docs.txt && mkdocs serve`). It is deployed
-> to `gh-pages` on every push to `main`, but GitHub Pages needs the repository
-> to be public, or the organisation to be on a paid plan, so
-> <https://pathogenomics-lab.github.io/recore/> is not served yet.
 
 If the documentation does not answer it, ask in
 [Discussions](https://github.com/PathoGenOmics-Lab/recore/discussions). Issues

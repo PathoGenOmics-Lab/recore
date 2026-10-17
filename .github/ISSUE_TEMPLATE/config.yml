@@ -3,10 +3,10 @@
 # put them is worse than an unstructured issue.
 blank_issues_enabled: true
 
-# The documentation links point at the markdown files in this repository rather
-# than at the built site. The MkDocs site exists and CI builds it on every push
-# to main, but GitHub Pages needs a public repository or a paid plan, and this
-# repository is private on the free plan, so the published URL would be a dead
+# The documentation links point at the files in this repository rather than at
+# a published site. The website in docs/ is plain HTML that GitHub Pages can
+# serve as it is, but Pages needs a public repository or a paid plan, and this
+# repository is private on the free plan, so a published URL would be a dead
 # link on the busiest page in the tracker. GitHub renders these files in place,
 # so the links work today and can be swapped for the site URL the day Pages is
 # available.
