@@ -109,10 +109,16 @@ reference-absent filter and the mechanism filter.
 **Column order.** Input matrix order, prevalence, mechanism, number of corrected
 cells, or cluster name.
 
-**Mechanism filter.** The mechanism cards double as filters: clicking one adds or
-removes that mechanism from the visible columns. The header button stays lit
-while any filter is on, so a filter left running two minutes ago does not
-silently explain a matrix that looks wrong.
+**Mechanism filter.** The matrix menu lists the mechanisms in view as a
+checklist, with each one's description in its tip. Ticking one shows only its
+clusters and refits the columns to the pane; active filters appear as chips
+beside the matrix count, and a click on a chip removes it. **Download TSV**
+saves the clusters in view with their counts of input, corrected, NSC,
+kept-out and absent cells.
+
+**Corrections by lineage.** For MTBC-style genome names the cluster card shows,
+per lineage, how many genomes were corrected or had evidence kept out, out of
+the lineage's genomes.
 
 **Zoom.** The slider in each pane header drives its own axis, in equal ratios
 from end to end. A plain wheel always scrolls. ++cmd++ (or ++ctrl++) and the

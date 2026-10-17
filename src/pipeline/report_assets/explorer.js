@@ -534,6 +534,54 @@ function cellCardHtml() {
     `<p class="cell-state"><i class="sw ${state.toLowerCase()}"></i>${escapeHtml(labels[state])}</p>` +
     body + `</section>`;
 }
+/* Which lineages carry this cluster's corrections. Counting walks only the
+   corrected and kept-out sets, so it costs the size of the finding, not of the
+   run; it was 14 screens of scrolling with tips coloured by state. */
+let genomeLineages = null;
+let lineageSizes = null;
+function lineageBreakdownHtml(clusterIdx) {
+  if (!genomeLineages) {
+    genomeLineages = data.genomes.map(name => lineageOfGenomeName(name));
+    lineageSizes = new Map();
+    for (const lineage of genomeLineages) lineageSizes.set(lineage, (lineageSizes.get(lineage) || 0) + 1);
+  }
+  if (lineageSizes.size < 2 && lineageSizes.has("unknown")) return "";
+  const sets = clusterSets(clusterIdx);
+  const n = data.genomes.length;
+  const tally = new Map();
+  const add = (set, key) => {
+    if (set.kind === "list") {
+      for (const g of set.idx) {
+        const row = tally.get(genomeLineages[g]) || {R: 0, K: 0};
+        row[key] += 1;
+        tally.set(genomeLineages[g], row);
+      }
+    } else if (set.kind === "all" || set.kind === "complement") {
+      const skip = set.kind === "complement" ? new Set(set.idx) : null;
+      for (let g = 0; g < n; g += 1) {
+        if (skip && skip.has(g)) continue;
+        const row = tally.get(genomeLineages[g]) || {R: 0, K: 0};
+        row[key] += 1;
+        tally.set(genomeLineages[g], row);
+      }
+    }
+  };
+  add(sets[1], "R");
+  add(sets[3], "K");
+  if (!tally.size) return "";
+  const rows = [...tally.entries()].sort((a, b) => (b[1].R + b[1].K) - (a[1].R + a[1].K)).slice(0, 8);
+  const body = rows.map(([lineage, c]) => {
+    const size = lineageSizes.get(lineage) || 1;
+    const r = c.R / size * 100;
+    const k = c.K / size * 100;
+    const words = [c.R ? `${formatInt(c.R)} corrected` : "", c.K ? `${formatInt(c.K)} kept out` : ""].filter(Boolean).join(", ");
+    return `<div class="lineage-row" data-tip="${escapeHtml(`${lineageLabel(lineage)}: ${words} of ${plural(size, "genome")}`)}">` +
+      `<span class="lineage-name"><i style="background:${lineageColor(lineage)}"></i>${escapeHtml(lineage)}</span>` +
+      `<span class="lineage-bar"><b class="r" style="width:${r.toFixed(1)}%"></b><b class="k" style="width:${k.toFixed(1)}%"></b></span>` +
+      `<small class="num">${escapeHtml(words)} <span class="muted">/ ${formatInt(size)}</span></small></div>`;
+  }).join("");
+  return `<div class="card-title">Corrections by lineage</div><div class="lineage-rows">${body}</div>`;
+}
 /** The cells Recore changed in this cluster, findings first. */
 const CHANGED_CELLS_SHOWN = 20;
 function changedCellsHtml(clusterIdx) {
@@ -913,15 +961,17 @@ function renderProcessLegend() {
   if (!processLegend) return;
   const cluster = data.clusters[selected] || {};
   const selectedMechanism = processKind(cluster);
-  const filterLabel = mechanismFilters.size
-    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing ${escapeHtml(mechanismFilterSummary())} (${plural(visibleClusters.length, "cluster")}). Clear filters</button>`
-    : `<span>Click mechanism cards to add/remove matrix-column filters.</span>`;
+  // A compact checklist: swatch, name and count, the description in the tip.
+  // The clear control sits first, so it is never scrolled out of view.
+  const head = mechanismFilters.size
+    ? `<div class="process-head"><span>${escapeHtml(mechanismFilterSummary())}: ${plural(visibleClusters.length, "cluster")}</span><button type="button" class="process-clear" data-clear-mechanism="1">Clear</button><button type="button" class="process-clear" data-download-visible="1">Download TSV</button></div>`
+    : `<div class="process-head"><span>Tick mechanisms to show only their clusters.</span><button type="button" class="process-clear" data-download-visible="1">Download TSV</button></div>`;
   const items = visibleProcessCounts().map(([mechanism, row]) => {
     const active = mechanism === selectedMechanism ? " active" : "";
-    const filtered = mechanismFilters.has(mechanism) ? " filtered" : "";
-    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processCss(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${plural(row.clusters, "cluster")}; ${plural(row.present, "present cell")}. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
+    const on = mechanismFilters.has(mechanism);
+    return `<button type="button" class="process-item${active}${on ? " filtered" : ""}" role="menuitemcheckbox" aria-checked="${on}" data-mechanism="${escapeHtml(mechanism)}" data-tip="${escapeHtml(processDescription(mechanism))}"><span class="process-check" aria-hidden="true">${on ? "&#10003;" : ""}</span><span class="process-swatch" style="background:${processCss(mechanism)}"></span><span class="process-name">${escapeHtml(processLabel(mechanism))}</span><small class="num">${formatInt(row.clusters)}</small></button>`;
   }).join("");
-  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processCss(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
+  processLegend.innerHTML = `${head}<div class="process-list">${items}</div>`;
 }
 function tipStyle(genomeIdx) {
   const mode = colorMode.value;
@@ -2722,6 +2772,7 @@ function renderClusterDetails() {
       ${prevalenceBar(cluster.present, total, prevalencePct)}
       <div class="card-title">Evidence in ${plural(total, "genome")}</div>
       <div class="count-rows">${stateCountRows(counts, total)}</div>
+      ${lineageBreakdownHtml(selected)}
       ${changedCellsHtml(selected)}
       <div class="card-title">Mechanism</div>
       <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
@@ -2754,6 +2805,7 @@ function render(scrollToSelected = false) {
   renderTreeScaleBar();
   renderOverview();
   updateTopBarMeta();
+  renderFilterChips();
   renderOverlays();
   if (afterRender) afterRender();
 }
@@ -3091,7 +3143,55 @@ function clearSyntenyHighlight() {
     link.classList.remove("highlight", "dimmed");
   });
 }
+/** The clusters in view, with what the matrix shows for each, as TSV. */
+function visibleClustersTsv() {
+  const lines = [["cluster", "annotation", "mechanism", "present_in_input", "corrected", "nsc", "kept_out", "absent"].join("\t")];
+  for (const idx of visibleClusters) {
+    const cluster = data.clusters[idx];
+    const c = countsForCluster(idx);
+    lines.push([cluster.name, cluster.annotation || "", processKind(cluster), c.P, c.R, c.N, c.K, c.A]
+      .map(v => String(v).replace(/[\t\n]/g, " ")).join("\t"));
+  }
+  return `${lines.join("\n")}\n`;
+}
+/* Active mechanism filters as removable chips beside the matrix count, so a
+   filter left on is visible with the menu closed. */
+function renderFilterChips() {
+  let box = document.getElementById("filterChips");
+  if (!box && topMatrixMeta) {
+    box = document.createElement("span");
+    box.id = "filterChips";
+    box.className = "filter-chips";
+    topMatrixMeta.after(box);
+  }
+  if (!box) return;
+  const key = mechanismFilterKey();
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = [...mechanismFilters].sort().map(mechanism =>
+    `<button type="button" class="filter-chip" data-remove-mechanism="${escapeHtml(mechanism)}" data-tip="Remove this filter"><i style="background:${processCss(mechanism)}"></i>${escapeHtml(processLabel(mechanism))} &times;</button>`).join("");
+}
+function applyMechanismFilters() {
+  refreshVisibleClusters();
+  populateOptions();
+  resetMatrixCache();
+  syncMenuIndicators();
+  // A filter changes how many columns there are; fit them to the pane again.
+  fitZoomToData();
+  if (matrixPane) matrixPane.scrollLeft = 0;
+  render(true);
+}
+document.addEventListener("click", event => {
+  const chip = event.target.closest("[data-remove-mechanism]");
+  if (!chip) return;
+  mechanismFilters.delete(chip.getAttribute("data-remove-mechanism"));
+  applyMechanismFilters();
+});
 processLegend.addEventListener("click", event => {
+  if (event.target.closest("[data-download-visible]")) {
+    downloadBlob(new Blob([visibleClustersTsv()], {type: "text/tab-separated-values"}), "recore_visible_clusters.tsv");
+    return;
+  }
   const clear = event.target.closest("[data-clear-mechanism]");
   const card = event.target.closest("[data-mechanism]");
   if (!clear && !card) return;
@@ -3105,11 +3205,7 @@ processLegend.addEventListener("click", event => {
       mechanismFilters.add(mechanism);
     }
   }
-  refreshVisibleClusters();
-  populateOptions();
-  resetMatrixCache();
-  syncMenuIndicators();
-  render(true);
+  applyMechanismFilters();
 });
 async function toggleFullscreen() {
   if (!document.fullscreenElement && explorerSection.requestFullscreen) {
@@ -3138,6 +3234,11 @@ if (columnOrder) {
     // Sorting is asked for to see the top of the new order; following the old
     // selection used to land the view thousands of columns into it.
     if (matrixPane) matrixPane.scrollLeft = 0;
+    if (visibleClusters.length) {
+      selected = originalClusterAtVisibleColumn(0);
+      selectedSyntenyReference = false;
+      populateOptions();
+    }
     render(false);
   });
 }
