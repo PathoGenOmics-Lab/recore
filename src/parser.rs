@@ -293,18 +293,80 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
 
 // ── FASTA / GFF parsing ──
 
+/// Parse a reference FASTA keyed by the first token of each header.
+///
+/// For the pan-genome reference use [`parse_pan_reference_for`], which resolves
+/// headers against the matrix's cluster names; this keyed-as-written form is
+/// for references with free names, such as `--mobile-element-reference`.
 pub fn parse_pan_reference(
     path: &Path,
     multi_allele: bool,
 ) -> Result<HashMap<String, Vec<Vec<u8>>>> {
+    parse_reference_records(path, multi_allele, None)
+}
+
+/// Parse the pan-genome reference, naming each record after the matrix cluster
+/// it belongs to.
+///
+/// Three header layouts are in use, and each record is resolved against the
+/// matrix's own cluster names in this order:
+///
+/// 1. `>cluster ...`, Panaroo's layout: the first token is the cluster.
+/// 2. `>seqid cluster`, Roary's layout: the second token is the cluster. This
+///    used to match nothing, and a Roary run exited 0 with no rescues at all.
+/// 3. `>cluster~~~ALLELE~n`: allele naming, where the cluster is the part before
+///    `~~~`. Only as a fallback: Panaroo writes `~~~` inside real cluster names
+///    when it merges genes (`pstB~~~phoT`), and cutting every name at `~~~`
+///    either lost those clusters or, worse, filed them under another cluster
+///    (`pstB~~~phoT` replaced `pstB`'s own sequence).
+///
+/// A header that matches none of these keeps its first token, and is reported
+/// as not being in the matrix.
+pub fn parse_pan_reference_for(
+    path: &Path,
+    multi_allele: bool,
+    clusters: &HashSet<&str>,
+) -> Result<HashMap<String, Vec<Vec<u8>>>> {
+    parse_reference_records(path, multi_allele, Some(clusters))
+}
+
+fn resolve_reference_name(header: &str, clusters: Option<&HashSet<&str>>) -> String {
+    let mut tokens = header.split_whitespace();
+    let first = tokens.next().unwrap_or(header);
+    let Some(clusters) = clusters else {
+        return first.to_string();
+    };
+    if clusters.contains(first) {
+        return first.to_string();
+    }
+    if let Some(second) = tokens.next() {
+        if clusters.contains(second) {
+            return second.to_string();
+        }
+    }
+    if let Some(pos) = first.find("~~~") {
+        let prefix = &first[..pos];
+        if clusters.contains(prefix) {
+            return prefix.to_string();
+        }
+    }
+    first.to_string()
+}
+
+fn parse_reference_records(
+    path: &Path,
+    multi_allele: bool,
+    clusters: Option<&HashSet<&str>>,
+) -> Result<HashMap<String, Vec<Vec<u8>>>> {
     use std::io::{BufRead, BufReader};
 
     let file = fs::File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
     let mut refs: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
     let mut current_name: Option<String> = None;
     let mut current_seq: Vec<u8> = Vec::new();
+    let mut records = 0usize;
 
     fn flush_record(
         name: String,
@@ -327,9 +389,25 @@ pub fn parse_pan_reference(
         }
     }
 
-    for line_result in reader.lines() {
-        let line = line_result?;
-        if let Some(header) = line.strip_prefix('>') {
+    // Bytes, not lines: only the name tokens have to be UTF-8, and a stray
+    // Latin-1 byte in a description used to abort the run with a bare
+    // "stream did not contain valid UTF-8" that named no file.
+    let mut line = Vec::with_capacity(4096);
+    let mut line_no = 0usize;
+    loop {
+        line.clear();
+        if reader
+            .read_until(b'\n', &mut line)
+            .with_context(|| format!("Cannot read {}", path.display()))?
+            == 0
+        {
+            break;
+        }
+        line_no += 1;
+        while matches!(line.last(), Some(b'\n' | b'\r')) {
+            line.pop();
+        }
+        if let Some(header) = line.strip_prefix(b">") {
             if let Some(name) = current_name.take() {
                 flush_record(
                     name,
@@ -339,16 +417,36 @@ pub fn parse_pan_reference(
                 );
             }
             current_seq.clear();
-
-            let id = header.split_whitespace().next().unwrap_or(header);
-            let name = if let Some(pos) = id.find("~~~") {
-                &id[..pos]
-            } else {
-                id
-            };
-            current_name = Some(name.to_string());
+            records += 1;
+            // The name is in the first two tokens; anything after them is free
+            // text and may be in any encoding.
+            let names: Vec<&[u8]> = header
+                .split(|b| b.is_ascii_whitespace())
+                .filter(|t| !t.is_empty())
+                .take(2)
+                .collect();
+            let mut decoded = Vec::with_capacity(names.len());
+            for token in names {
+                match std::str::from_utf8(token) {
+                    Ok(t) => decoded.push(t),
+                    Err(_) if !decoded.is_empty() => break,
+                    Err(_) => anyhow::bail!(
+                        "{}: line {}: sequence name is not valid UTF-8",
+                        path.display(),
+                        line_no
+                    ),
+                }
+            }
+            if decoded.is_empty() {
+                anyhow::bail!(
+                    "{}: line {}: FASTA header with no name",
+                    path.display(),
+                    line_no
+                );
+            }
+            current_name = Some(resolve_reference_name(&decoded.join(" "), clusters));
         } else {
-            current_seq.extend(line.trim().as_bytes());
+            current_seq.extend(line.iter().filter(|b| !b.is_ascii_whitespace()));
         }
     }
 
@@ -358,9 +456,10 @@ pub fn parse_pan_reference(
 
     let total_alleles: usize = refs.values().map(|v| v.len()).sum();
     info!(
-        "Parsed {} clusters ({} total alleles) from {}",
+        "Parsed {} clusters ({} total alleles, {} records) from {}",
         refs.len(),
         total_alleles,
+        records,
         path.display()
     );
     Ok(refs)
@@ -418,7 +517,10 @@ pub fn find_genome_files(dir: &Path) -> Result<HashMap<String, PathBuf>> {
         }
     }
 
-    info!("Found {} genome files in {}", files.len(), dir.display());
+    // Count files, not keys: an AS identifier is a second key for the same file,
+    // and counting keys reported twice the real number.
+    let distinct: HashSet<&PathBuf> = files.values().collect();
+    info!("Found {} genome files in {}", distinct.len(), dir.display());
     Ok(files)
 }
 
@@ -450,16 +552,122 @@ pub fn resolve_genome_file<'a>(
         .or_else(|| extract_as_id(genome_name).and_then(|as_id| genome_files.get(as_id)))
 }
 
+/// AS identifiers carried by more than one matrix column.
+fn shared_as_ids(names: &[String]) -> HashSet<&str> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut shared: HashSet<&str> = HashSet::new();
+    for as_id in names.iter().filter_map(|n| extract_as_id(n)) {
+        if !seen.insert(as_id) {
+            shared.insert(as_id);
+        }
+    }
+    shared
+}
+
+/// Whether a column may take a file through its AS identifier rather than its
+/// own name, and if not, why. The fallback used to take any file carrying the
+/// identifier, so a column with no assembly of its own was given another
+/// column's, and recore reported rescues from the wrong genome with no warning.
+fn as_fallback_refusal(
+    name: &str,
+    as_id: &str,
+    path: &Path,
+    shared: &HashSet<&str>,
+    exact_owner: &HashMap<PathBuf, &str>,
+) -> Option<String> {
+    if shared.contains(as_id) {
+        return Some(format!(
+            "the identifier {} is carried by more than one matrix column",
+            as_id
+        ));
+    }
+    if let Some(owner) = exact_owner.get(path) {
+        if *owner != name {
+            return Some(format!("it is column {}'s own file", owner));
+        }
+    }
+    None
+}
+
 /// Build a map keyed by presence/absence genome names, with AS-ID fallback.
 pub fn resolve_genome_files_for_pa(
     pa: &PresenceAbsence,
     genome_files: &HashMap<String, PathBuf>,
 ) -> HashMap<String, PathBuf> {
+    use log::warn;
+    let names = pa.genome_names();
+    let shared = shared_as_ids(names);
+    let exact_owner: HashMap<PathBuf, &str> = names
+        .iter()
+        .filter_map(|n| genome_files.get(n).map(|p| (p.clone(), n.as_str())))
+        .collect();
     let mut resolved = HashMap::new();
-    for genome_name in pa.genome_names() {
-        if let Some(path) = resolve_genome_file(genome_files, genome_name) {
+    for genome_name in names {
+        if let Some(path) = genome_files.get(genome_name) {
             resolved.insert(genome_name.clone(), path.clone());
+            continue;
         }
+        let Some(as_id) = extract_as_id(genome_name) else {
+            continue;
+        };
+        let Some(path) = genome_files.get(as_id) else {
+            continue;
+        };
+        if let Some(reason) = as_fallback_refusal(genome_name, as_id, path, &shared, &exact_owner) {
+            warn!(
+                "Genome {} has no FASTA of its own; not using {} through its AS identifier, because {}",
+                genome_name,
+                path.display(),
+                reason
+            );
+            continue;
+        }
+        resolved.insert(genome_name.clone(), path.clone());
+    }
+    resolved
+}
+
+/// The GFF for each matrix column, by exact name or, under the same rules as
+/// for FASTA files, by embedded AS identifier.
+pub fn resolve_annotation_files_for_pa(
+    pa: &PresenceAbsence,
+    ann_dir: &Path,
+) -> HashMap<String, PathBuf> {
+    use log::warn;
+    let names = pa.genome_names();
+    let shared = shared_as_ids(names);
+    let exact = |name: &str| {
+        [".gff", ".gff3", ".gff.gz", ".gff3.gz"]
+            .iter()
+            .map(|suffix| ann_dir.join(format!("{}{}", name, suffix)))
+            .find(|path| path.exists())
+    };
+    let mut resolved: HashMap<String, PathBuf> = HashMap::new();
+    let mut exact_owner: HashMap<PathBuf, &str> = HashMap::new();
+    for name in names {
+        if let Some(path) = exact(name) {
+            exact_owner.insert(path.clone(), name.as_str());
+            resolved.insert(name.clone(), path);
+        }
+    }
+    for name in names {
+        if resolved.contains_key(name) {
+            continue;
+        }
+        let (Some(as_id), Some(path)) = (extract_as_id(name), find_annotation_file(ann_dir, name))
+        else {
+            continue;
+        };
+        if let Some(reason) = as_fallback_refusal(name, as_id, &path, &shared, &exact_owner) {
+            warn!(
+                "Genome {} has no GFF of its own; not using {} through its AS identifier, because {}",
+                name,
+                path.display(),
+                reason
+            );
+            continue;
+        }
+        resolved.insert(name.clone(), path);
     }
     resolved
 }
@@ -870,6 +1078,16 @@ pub fn validate_inputs(
             csv_only += 1;
         }
     }
+    if csv_only == pa.n_clusters() {
+        // Nothing would be searched, and the run used to finish with exit 0 and
+        // no rescues, which reads exactly like a clean dataset.
+        anyhow::bail!(
+            "No cluster in the presence/absence CSV has a sequence in the pan-genome \
+             reference. Recore matches a FASTA header's first token (Panaroo: \
+             '>cluster'), or its second token (Roary: '>seqid cluster'), against the \
+             CSV's Gene column."
+        );
+    }
     if csv_only > 0 {
         warn!(
             "{} clusters in presence/absence CSV have no sequence in pan_genome_reference.fa (will be skipped)",
@@ -956,7 +1174,8 @@ mod tests {
     fn test_parse_pan_ref_single() {
         let fa =
             write_temp(">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n");
-        let refs = parse_pan_reference(fa.path(), false).unwrap();
+        let clusters: HashSet<&str> = ["clA", "clB"].into_iter().collect();
+        let refs = parse_pan_reference_for(fa.path(), false, &clusters).unwrap();
         assert_eq!(refs.len(), 2);
         assert_eq!(refs["clA"].len(), 1);
         assert_eq!(refs["clA"][0].len(), 12);
@@ -967,8 +1186,69 @@ mod tests {
     fn test_parse_pan_ref_multi() {
         let fa =
             write_temp(">clA~~~g1 prod\nATGCATGC\n>clA~~~g2 prod\nATGCATGCATGC\n>clB\nGGGGAAAA\n");
-        let refs = parse_pan_reference(fa.path(), true).unwrap();
+        let clusters: HashSet<&str> = ["clA", "clB"].into_iter().collect();
+        let refs = parse_pan_reference_for(fa.path(), true, &clusters).unwrap();
         assert_eq!(refs["clA"].len(), 2);
+    }
+
+    /// Roary writes '>seqid cluster'. Keyed by the first token, a Roary run
+    /// matched no cluster and exited 0 with no rescues.
+    #[test]
+    fn test_parse_pan_ref_roary_layout() {
+        let fa = write_temp(">L1_00001 clA\nATGCATGC\n>L1_00002 clB\nGGGG\n");
+        let clusters: HashSet<&str> = ["clA", "clB"].into_iter().collect();
+        let refs = parse_pan_reference_for(fa.path(), false, &clusters).unwrap();
+        assert_eq!(refs["clA"][0], b"ATGCATGC");
+        assert_eq!(refs["clB"][0], b"GGGG");
+    }
+
+    /// Panaroo writes '~~~' inside real cluster names. Cutting every name at
+    /// '~~~' lost 'pstB~~~phoT', and filed its sequence as an allele of 'pstB',
+    /// replacing pstB's own as the longest.
+    #[test]
+    fn test_parse_pan_ref_keeps_tilde_cluster_names() {
+        let fa = write_temp(">pstB\nAAAA\n>pstB~~~phoT\nCCCCCCCC\n");
+        let clusters: HashSet<&str> = ["pstB", "pstB~~~phoT"].into_iter().collect();
+        let refs = parse_pan_reference_for(fa.path(), false, &clusters).unwrap();
+        assert_eq!(refs["pstB"][0], b"AAAA");
+        assert_eq!(refs["pstB~~~phoT"][0], b"CCCCCCCC");
+    }
+
+    #[test]
+    fn test_parse_pan_ref_tolerates_non_utf8_descriptions() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(b">clA caf\xe9 product\nACGT\n").unwrap();
+        let clusters: HashSet<&str> = ["clA"].into_iter().collect();
+        let refs = parse_pan_reference_for(f.path(), false, &clusters).unwrap();
+        assert_eq!(refs["clA"][0], b"ACGT");
+    }
+
+    /// A column with no files of its own used to borrow another column's
+    /// assembly through a shared AS identifier, and rescues came from the
+    /// wrong genome.
+    #[test]
+    fn test_resolve_genome_files_does_not_borrow_another_columns_assembly() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("L4_AS00401.fasta"), ">c\nACGT\n").unwrap();
+        std::fs::write(dir.path().join("L1_AS00777.fasta"), ">c\nACGT\n").unwrap();
+        let pa = PresenceAbsence::new_for_test(
+            vec!["c".into()],
+            vec![
+                "L4_AS00401".into(),
+                "L4_AS00401_v2".into(),
+                "AS00777".into(),
+            ],
+            vec![vec!["x".into(), "".into(), "".into()]],
+        );
+        let files = find_genome_files(dir.path()).unwrap();
+        let resolved = resolve_genome_files_for_pa(&pa, &files);
+        assert!(resolved.contains_key("L4_AS00401"));
+        assert!(
+            !resolved.contains_key("L4_AS00401_v2"),
+            "AS00401 is another column's genome"
+        );
+        // A unique identifier with no exact owner still resolves.
+        assert!(resolved.contains_key("AS00777"));
     }
 
     #[test]

@@ -76,10 +76,88 @@ fn invalid_args_are_rejected_before_running_pipeline() {
     assert!(validate_args(&args).is_err());
 }
 
+/// Real input paths in a temporary directory, for the path checks.
+fn validation_fixture() -> (tempfile::TempDir, Args) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("pa.csv"), "Gene\n").unwrap();
+    std::fs::write(dir.path().join("pan_ref.fa"), ">g\nACGT\n").unwrap();
+    std::fs::create_dir(dir.path().join("genomes")).unwrap();
+    let mut args = default_args_for_validation();
+    args.presence_absence = dir.path().join("pa.csv");
+    args.pan_reference = dir.path().join("pan_ref.fa");
+    args.genomes = dir.path().join("genomes");
+    args.output = dir.path().join("out");
+    (dir, args)
+}
+
 #[test]
 fn default_args_pass_validation() {
-    let args = default_args_for_validation();
+    let (_dir, args) = validation_fixture();
     validate_args(&args).unwrap();
+    assert!(
+        args.output.is_dir(),
+        "the output directory is created and probed before the search"
+    );
+}
+
+/// Every one of these used to be discovered late or not at all: a misspelled
+/// --annotations ran to exit 0 without annotation logic, --synteny without -a
+/// was silently ignored, and a bad --mobile-element-reference failed after the
+/// whole search, having already deleted the previous run's outputs.
+#[test]
+fn input_paths_are_checked_before_any_work() {
+    let message = |args: &Args| format!("{:#}", validate_args(args).unwrap_err());
+
+    let (dir, mut args) = validation_fixture();
+    args.annotations = Some(dir.path().join("annotationz"));
+    assert!(message(&args).contains("-a/--annotations"));
+
+    let (_dir, mut args) = validation_fixture();
+    args.synteny = true;
+    assert!(message(&args).contains("--synteny needs --annotations"));
+
+    let (dir, mut args) = validation_fixture();
+    args.mobile_element_reference = Some(dir.path().join("missing_IS.fa"));
+    assert!(message(&args).contains("--mobile-element-reference"));
+
+    let (dir, mut args) = validation_fixture();
+    args.tree = Some(dir.path().join("missing.nwk"));
+    assert!(message(&args).contains("--tree"));
+
+    let (_dir, mut args) = validation_fixture();
+    args.genomes = args.presence_absence.clone();
+    assert!(message(&args).contains("is not a directory"));
+
+    let (dir, mut args) = validation_fixture();
+    std::fs::write(dir.path().join("afile"), "x").unwrap();
+    args.output = dir.path().join("afile");
+    assert!(message(&args).contains("exists and is not a directory"));
+}
+
+#[test]
+fn reference_genome_must_match_exactly_one_column() {
+    let pa = PresenceAbsence::new_for_test(
+        vec!["c".into()],
+        vec![
+            "L4_AS00401".into(),
+            "L2_AS00401".into(),
+            "L1_AS00101".into(),
+        ],
+        vec![vec!["x".into(), "".into(), "".into()]],
+    );
+    check_reference_genome(&pa, "L1_AS00101").unwrap();
+    // A unique AS identifier still resolves, with a warning.
+    check_reference_genome(&pa, "AS00101").unwrap();
+
+    let shared = format!("{:#}", check_reference_genome(&pa, "AS00401").unwrap_err());
+    assert!(shared.contains("several"), "{shared}");
+    assert!(
+        shared.contains("L4_AS00401") && shared.contains("L2_AS00401"),
+        "{shared}"
+    );
+
+    let unknown = format!("{:#}", check_reference_genome(&pa, "H37Rv").unwrap_err());
+    assert!(unknown.contains("matches no column"), "{unknown}");
 }
 
 #[test]

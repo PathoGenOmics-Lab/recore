@@ -24,6 +24,59 @@ pub(super) fn resolve_reference_genome(
     None
 }
 
+/// Refuse a --reference-genome that matches no column, or several.
+///
+/// Resolution falls back to the AS identifier embedded in a name, which used to
+/// take the first column carrying it: an ambiguous identifier picked one of two
+/// genomes silently, and a name not in the matrix at all (`L9_AS00401`) was
+/// quietly redirected to another lineage's genome. A name that matches nothing
+/// was only warned about after the whole run.
+pub(super) fn check_reference_genome(
+    pa: &crate::parser::PresenceAbsence,
+    requested: &str,
+) -> anyhow::Result<()> {
+    if pa.genome_names().iter().any(|g| g == requested) {
+        return Ok(());
+    }
+    let requested_as = extract_as_id(requested);
+    let candidates: Vec<&str> = pa
+        .genome_names()
+        .iter()
+        .map(String::as_str)
+        .filter(|g| requested_as.is_some() && extract_as_id(g) == requested_as)
+        .collect();
+    match candidates.as_slice() {
+        [] => {
+            let examples: Vec<&str> = pa
+                .genome_names()
+                .iter()
+                .take(5)
+                .map(String::as_str)
+                .collect();
+            anyhow::bail!(
+                "--reference-genome {:?} matches no column of the presence/absence matrix \
+                 (columns include {})",
+                requested,
+                examples.join(", ")
+            )
+        }
+        [one] => {
+            log::warn!(
+                "--reference-genome {:?} is not a matrix column; using {} by its AS identifier",
+                requested,
+                one
+            );
+            Ok(())
+        }
+        many => anyhow::bail!(
+            "--reference-genome {:?} matches several matrix columns by AS identifier ({}); \
+             pass the full column name",
+            requested,
+            many.join(", ")
+        ),
+    }
+}
+
 pub(super) fn reference_status_for(state: &str, accepted: bool) -> &'static str {
     if !accepted {
         return match state {

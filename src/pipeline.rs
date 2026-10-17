@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use crate::cli::{Args, MatrixPolicy};
 use crate::nscluster;
 use crate::parser::{
-    extract_as_id, find_annotation_file, find_genome_files, load_genome_contig_names,
-    normalize_gff_records_to_fasta, parse_gff_genes, parse_pan_reference, parse_presence_absence,
-    resolve_genome_files_for_pa, validate_inputs,
+    extract_as_id, find_genome_files, load_genome_contig_names, normalize_gff_records_to_fasta,
+    parse_gff_genes, parse_pan_reference, parse_pan_reference_for, parse_presence_absence,
+    resolve_annotation_files_for_pa, resolve_genome_files_for_pa, validate_inputs,
 };
 use crate::relationships::{write_cluster_components, write_cluster_relationships};
 use crate::rescue::{
@@ -43,8 +43,9 @@ use self::quality::{
     quality_allows_matrix_correction, OrthologyQuality,
 };
 use self::reference_audit::{
-    build_reference_cluster_events, reference_hit_shadow_candidates, resolve_reference_genome,
-    write_reference_cluster_events, write_reference_genome_audit, ReferenceAuditInputs,
+    build_reference_cluster_events, check_reference_genome, reference_hit_shadow_candidates,
+    resolve_reference_genome, write_reference_cluster_events, write_reference_genome_audit,
+    ReferenceAuditInputs,
 };
 
 #[cfg(test)]
@@ -124,7 +125,10 @@ pub fn run(args: &Args) -> Result<()> {
 
     // ── 1. Parse inputs ──
     let pa = parse_presence_absence(&args.presence_absence)?;
-    let pan_ref = parse_pan_reference(&args.pan_reference, args.multi_allele)?;
+    let matrix_clusters: ahash::HashSet<&str> =
+        pa.cluster_names().iter().map(String::as_str).collect();
+    let pan_ref =
+        parse_pan_reference_for(&args.pan_reference, args.multi_allele, &matrix_clusters)?;
     let cluster_seq_lengths = cluster_sequence_lengths(&pa, &pan_ref);
     let cluster_prevalence_by_idx = cluster_prevalences(&pa);
     let raw_genome_files = find_genome_files(&args.genomes)?;
@@ -138,6 +142,17 @@ pub fn run(args: &Args) -> Result<()> {
             "Resolved {} genome FASTA files by embedded AS identifier",
             alias_resolved
         );
+    }
+    if genome_files.is_empty() {
+        anyhow::bail!(
+            "No genome FASTA in {} matches a column of the presence/absence matrix \
+             (expected files like {}.fasta, .fa or .fna, optionally gzipped)",
+            args.genomes.display(),
+            pa.genome_name(GenomeIdx(0))
+        );
+    }
+    if let Some(reference) = args.reference_genome.as_deref() {
+        check_reference_genome(&pa, reference)?;
     }
     // ── 1b. Cross-validate inputs (includes path traversal checks) ──
     validate_inputs(&pa, &pan_ref, &genome_files)?;
@@ -236,10 +251,11 @@ pub fn run(args: &Args) -> Result<()> {
     let mut gff_contig_remaps: Vec<(String, String, String, usize)> = Vec::new();
     let gff_indices: HashMap<GenomeIdx, GffIndex> = if let Some(ref ann_dir) = args.annotations {
         let mut data = HashMap::new();
+        let annotation_files = resolve_annotation_files_for_pa(&pa, ann_dir);
         for gi_val in 0..n_genomes {
             let gi = GenomeIdx(gi_val);
             let genome_name = pa.genome_name(gi);
-            let Some(path) = find_annotation_file(ann_dir, genome_name) else {
+            let Some(path) = annotation_files.get(genome_name).cloned() else {
                 continue;
             };
             match parse_gff_genes(&path) {
@@ -336,9 +352,13 @@ pub fn run(args: &Args) -> Result<()> {
                 }
             }
         } else if loaded == 0 {
-            warn!("No GFF files found in {} — synteny and annotation-based classification will be skipped", ann_dir.display());
-            warn!(
-                "Expected files like: {}.gff or {}.gff3",
+            // An explicit --annotations that loads nothing is a mistake, not a
+            // dataset without annotations: the run used to continue without
+            // any annotation logic and report a different answer with exit 0.
+            anyhow::bail!(
+                "No GFF in {} could be loaded for any genome of the matrix \
+                 (expected files like {}.gff or {}.gff3, optionally gzipped)",
+                ann_dir.display(),
                 pa.genome_name(GenomeIdx(0)),
                 pa.genome_name(GenomeIdx(0))
             );
@@ -744,9 +764,6 @@ pub fn run(args: &Args) -> Result<()> {
     };
 
     // ── 12. Generate outputs ──
-    fs::create_dir_all(&args.output)?;
-    clear_optional_outputs(&args.output)?;
-
     // Sort rescues for deterministic output order regardless of thread scheduling
     rescues.sort_by(|a, b| {
         a.cluster_idx
@@ -780,6 +797,11 @@ pub fn run(args: &Args) -> Result<()> {
     } else {
         Vec::new()
     };
+
+    // Only now, with every search done: the previous run's optional outputs
+    // used to be deleted before the mobile-element search, so a failure there
+    // left a directory half from one run and half from the other.
+    clear_optional_outputs(&args.output)?;
 
     let all_rescue_map = build_best_rescue_map(rescues.iter());
     let matrix_rescue_map = build_best_rescue_map(rescues.iter().filter(|r| {
@@ -1038,7 +1060,86 @@ fn validate_args(args: &Args) -> Result<()> {
     if !matches!(args.nsc_engine.as_str(), "minhash" | "mmseqs2") {
         anyhow::bail!("--nsc-engine must be either 'minhash' or 'mmseqs2'");
     }
+    if args.nscluster && args.nsc_engine == "mmseqs2" && !command_runs("mmseqs") {
+        anyhow::bail!(
+            "--nsc-engine mmseqs2 needs MMseqs2 on PATH (the 'mmseqs' command was not \
+             found); install it or use the default --nsc-engine minhash"
+        );
+    }
+    if !args.nscluster && args.nsc_engine != "minhash" {
+        warn!("--nsc-engine has no effect without --nscluster");
+    }
+    validate_input_paths(args)?;
+    prepare_output_dir(&args.output)?;
     Ok(())
+}
+
+/// Check every input path before any work starts.
+///
+/// A misspelled --annotations directory used to warn "No GFF files found" and
+/// run on to exit 0 without any annotation logic, while the manifest recorded
+/// synteny as on; a bad --mobile-element-reference failed only after the whole
+/// search, by which point the previous run's outputs had already been deleted.
+fn validate_input_paths(args: &Args) -> Result<()> {
+    fn require(flag: &str, path: &std::path::Path, want_dir: bool) -> Result<()> {
+        let meta = fs::metadata(path)
+            .with_context(|| format!("Cannot access {} {}", flag, path.display()))?;
+        if want_dir && !meta.is_dir() {
+            anyhow::bail!("{} {} is not a directory", flag, path.display());
+        }
+        if !want_dir && meta.is_dir() {
+            anyhow::bail!(
+                "{} {} is a directory, expected a file",
+                flag,
+                path.display()
+            );
+        }
+        Ok(())
+    }
+    require("-p/--presence-absence", &args.presence_absence, false)?;
+    require("-r/--pan-reference", &args.pan_reference, false)?;
+    require("-g/--genomes", &args.genomes, true)?;
+    if let Some(dir) = &args.annotations {
+        require("-a/--annotations", dir, true)?;
+    }
+    if let Some(tree) = &args.tree {
+        require("--tree", tree, false)?;
+    }
+    if let Some(path) = &args.mobile_element_reference {
+        require("--mobile-element-reference", path, false)?;
+    }
+    if args.synteny && args.annotations.is_none() {
+        anyhow::bail!(
+            "--synteny needs --annotations: the flanking genes it compares come from the GFF files"
+        );
+    }
+    Ok(())
+}
+
+/// Create the output directory and prove it is writable, before the search.
+/// Problems here used to surface only at the end, as a bare "File exists (os
+/// error 17)" with no path.
+fn prepare_output_dir(dir: &std::path::Path) -> Result<()> {
+    if dir.exists() && !dir.is_dir() {
+        anyhow::bail!(
+            "-o/--output {} exists and is not a directory",
+            dir.display()
+        );
+    }
+    fs::create_dir_all(dir)
+        .with_context(|| format!("Cannot create output directory {}", dir.display()))?;
+    tempfile::NamedTempFile::new_in(dir)
+        .with_context(|| format!("Output directory {} is not writable", dir.display()))?;
+    Ok(())
+}
+
+fn command_runs(program: &str) -> bool {
+    std::process::Command::new(program)
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
 }
 
 // ── Output helpers ──
