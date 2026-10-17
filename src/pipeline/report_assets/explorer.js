@@ -3769,18 +3769,30 @@ matrixPane.addEventListener("click", event => {
    Canvases are bitmaps sized to the on-screen viewport, so printing without
    redrawing them clips the panes to whatever the screen happened to be. Redraw
    once the print layout is in place, and again when it is torn down. */
-window.addEventListener("beforeprint", () => {
-  applyLayout();
-  resetMatrixCache();
-  syntenyKey = "";
-  render(false);
-});
-window.addEventListener("afterprint", () => {
-  applyLayout();
-  resetMatrixCache();
-  syntenyKey = "";
-  render(false);
-});
+/* Printing swaps the live panes for the figure: the whole matrix, in the
+   light palette, with tips on their rows, a key and a caption. Redrawing the
+   canvases for paper ran under screen styles (dark, the pane's screen width)
+   and printed 17 of 24 columns. */
+function preparePrint() {
+  const main = document.getElementById("explorer");
+  if (!main || document.getElementById("printFigure")) return;
+  const image = document.createElement("img");
+  image.id = "printFigure";
+  image.className = "print-figure";
+  image.alt = "Corrected matrix with the phylogeny";
+  image.src = figureCanvas(true).toDataURL("image/png");
+  main.before(image);
+}
+function finishPrint() {
+  document.getElementById("printFigure")?.remove();
+}
+window.addEventListener("beforeprint", preparePrint);
+window.addEventListener("afterprint", finishPrint);
+if (window.matchMedia) {
+  const printQuery = window.matchMedia("print");
+  const onPrintChange = event => (event.matches ? preparePrint() : finishPrint());
+  if (printQuery.addEventListener) printQuery.addEventListener("change", onPrintChange);
+}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -3803,11 +3815,19 @@ const FIGURE_SCALE = 3;
 const FIGURE_MAX_DIM = 16000;
 const FIGURE_MAX_PIXELS = 90e6;
 const FIGURE_WHOLE_MAX = 4000;
-function figureRange() {
+function figureRange(forceWhole = false) {
   const rows = leafOrder.length;
   const cols = visibleClusters.length;
   if (cols * cellW <= FIGURE_WHOLE_MAX && rows * cellH <= FIGURE_WHOLE_MAX) {
-    return {c0: 0, c1: cols, r0: 0, r1: rows, whole: true};
+    return {c0: 0, c1: cols, r0: 0, r1: rows, whole: true, cw: cellW, ch: cellH};
+  }
+  if (forceWhole) {
+    // Paper takes the whole run: shrink the cells (to density if need be).
+    return {
+      c0: 0, c1: cols, r0: 0, r1: rows, whole: true,
+      cw: Math.min(cellW, 1600 / Math.max(1, cols)),
+      ch: Math.min(cellH, 1100 / Math.max(1, rows)),
+    };
   }
   const view = viewportSize(matrixViewport);
   const left = matrixScrollLeft();
@@ -3818,12 +3838,12 @@ function figureRange() {
     r0: Math.max(0, Math.floor(top / cellH)),
     r1: Math.min(rows, Math.ceil((top + view.h) / cellH)),
     whole: false,
+    cw: cellW,
+    ch: cellH,
   };
 }
-function drawFigure() {
-  const {c0, c1, r0, r1, whole} = figureRange();
-  const cw = cellW;
-  const ch = cellH;
+function drawFigure(forceWhole = false) {
+  const {c0, c1, r0, r1, whole, cw, ch} = figureRange(forceWhole);
   const margin = 16;
   const gap = 8;
   const treeW = treeWidth;
@@ -3855,9 +3875,12 @@ function drawFigure() {
   const keepCtx = treeCtx;
   const keepHighlights = highlightedRows;
   const keepCarriers = selectedSyntenyCarriers;
+  const keepCellH = cellH;
   highlightedRows = new Set();
   selectedSyntenyCarriers = new Set();
   try {
+    // The tree's rows follow the figure's row height, which paper may shrink.
+    cellH = ch;
     treeCtx = f;
     f.save();
     f.beginPath();
@@ -3868,6 +3891,7 @@ function drawFigure() {
     drawTreeNode(treeRoot, r0 * ch, r0, r1, matrixH, labelToggle.checked && ch >= TIP_LABEL_MIN_ROW);
     f.restore();
   } finally {
+    cellH = keepCellH;
     treeCtx = keepCtx;
     highlightedRows = keepHighlights;
     selectedSyntenyCarriers = keepCarriers;
@@ -3957,18 +3981,20 @@ function drawFigure() {
   f.fillText(caption, margin, keyY + 26);
   return out;
 }
-function exportViewPng() {
-  // Light palette for the figure, restored however the drawing ends.
+/** A figure in the light palette, restored however the drawing ends. */
+function figureCanvas(forceWhole = false) {
   const light = lightThemeDeclaration();
-  let out;
   try {
     drawingFigure = true;
     if (light) refreshThemeColors(light);
-    out = drawFigure();
+    return drawFigure(forceWhole);
   } finally {
     drawingFigure = false;
     if (light) refreshThemeColors();
   }
+}
+function exportViewPng() {
+  const out = figureCanvas();
   return new Promise(resolve => {
     out.toBlob(blob => {
       if (blob) downloadBlob(blob, "recore_matrix.png");

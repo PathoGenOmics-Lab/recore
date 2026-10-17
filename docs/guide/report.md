@@ -194,9 +194,9 @@ The SVG carries every colour and font as a plain attribute, with no stylesheet
 or CSS variables, so illustration software and PDF tools draw it as the page
 does.
 
-++cmd+p++ prints the whole thing: the workspace as page one, then the run details
-as a document. The canvases are redrawn for the print layout rather than being
-clipped to whatever the screen happened to be.
+++cmd+p++ prints the figure described above for the whole matrix (in the light
+palette, whatever the screen is in), then the run details as a document with
+every candidate. The live panes are swapped for the figure only while printing.
 
 ## Keyboard shortcuts
 

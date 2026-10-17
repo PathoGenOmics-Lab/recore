@@ -3457,9 +3457,47 @@ tr[data-cluster]:focus-visible {
   }
 }
 
+.print-figure {
+  display: none;
+}
+
 @media print {
-  .pane-overlay {
+  .pane-overlay,
+  .tip-bubble,
+  .matrix-tooltip,
+  .toolbar-inline,
+  .corrections-actions,
+  #copyMethods,
+  .workspace .panes-wrap {
     display: none !important;
+  }
+
+  .print-figure {
+    display: block;
+    width: 100%;
+    height: auto;
+    break-after: page;
+  }
+
+  #candidatesTable,
+  table.corrections {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  /* Paper has no Show all button: print every candidate. */
+  #candidatesTable tbody tr.hidden {
+    display: table-row !important;
+  }
+
+  #candidatesMore {
+    display: none !important;
+  }
+
+  #candidatesTable td,
+  table.corrections td {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   /* Reports get printed and pasted into supplementary material, so force the
