@@ -58,10 +58,21 @@ python3 -m http.server 8000 --directory out/
 ## Documentation
 
 The website is `docs/index.html` and `docs/reference.html`, styled by
-`docs/assets/site.css` and driven by `docs/assets/site.js`: plain files with no
-build step, so opening `docs/index.html` in a browser shows a change. Keep it
+`docs/assets/site.css` and driven by `docs/assets/site.js`: plain files, so
+opening `docs/index.html` in a browser shows a change. Keep the front page
 short. It is there to get someone running in two minutes; the details belong in
-the markdown pages it links to.
+the documentation.
+
+The Docs tab is these markdown pages. `tools/build_docs.py` turns each one into
+an `.html` page next to it, with the site's header, sidebar, contents and
+search, and writes `docs/documentation.html` and the search index. The pages
+are committed, so after editing a `.md` file, rebuild them:
+
+```bash
+python3 tools/build_docs.py
+```
+
+A new page is a line in `PAGES` at the top of that script.
 
 Check it the way CI does:
 
@@ -70,7 +81,8 @@ cargo build
 python3 tools/check_site.py --recore target/debug/recore --run-tutorial
 ```
 
-That fails on a dead link or anchor, an option the site mentions that
+That fails on a documentation page that no longer matches its markdown, a
+dead link or anchor, an option the site mentions that
 `recore --help` does not have, an option missing from the reference, a default
 that differs from the binary's, an em-dash, and an example run whose counts
 differ from the ones the page shows.

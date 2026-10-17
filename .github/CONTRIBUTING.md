@@ -236,12 +236,14 @@ you anything tends not to get run.
 ## Documentation
 
 The website is plain HTML in `docs/` (`index.html`, `reference.html` and
-`assets/`), with no build step: open `docs/index.html` to see a change. The
-documentation workflow runs `tools/check_site.py`, which fails on a dead link or
-anchor, an option `recore --help` does not have, an option missing from the
+`assets/`): open `docs/index.html` to see a change. The Docs tab is the
+markdown under `docs/`, turned into pages by `tools/build_docs.py`; after
+editing a `.md` file, run it and commit what it writes. The documentation
+workflow runs `tools/check_site.py`, which fails on a documentation page that
+no longer matches its markdown, a dead link or anchor, an option `recore --help` does not have, an option missing from the
 reference, a default that differs from the binary's, or an example run whose
 counts differ from the page's, instead of a stale page somebody finds six
-months later. The long-form pages are markdown under `docs/` and read on GitHub.
+months later. The markdown also reads on GitHub as it is.
 
 `docs/assets/example-report.html` is the tutorial run's own output, linked from
 the [Run report](../docs/guide/report.md) page. If you change the viewer, that

@@ -97,14 +97,16 @@ with eleven false absences planted in it and walks through the run.
 
 The quickest way in is the website in [`docs/`](docs/index.html): an install
 line, a command builder for your pangenome tool, a one-minute example, the
-example report to click through, and one reference page with every option,
-output file and cell state. It is plain HTML with no build step, so open
+example report to click through, a reference page with every option, output
+file and cell state, and a Docs tab with every page below, searchable. It is plain HTML with no build step, so open
 `docs/index.html` from a clone; once the repository is public, GitHub Pages can
-serve it straight from `main` and `/docs`. `tools/check_site.py` keeps it
-honest in CI: every option it shows exists, the defaults match `recore --help`,
-and the example run gives the numbers the page promises.
+serve it straight from `main` and `/docs`. The Docs pages are built from the
+markdown by `tools/build_docs.py`, and `tools/check_site.py` keeps the site
+honest in CI: the pages match their markdown, every option it shows exists, the
+defaults match `recore --help`, and the example run gives the numbers the page
+promises.
 
-The long versions are markdown files in this repository and read here on GitHub.
+The same pages are markdown files in this repository and read here on GitHub.
 
 | Start here | |
 |---|---|

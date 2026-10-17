@@ -104,6 +104,11 @@ and Recore uses semantic versioning.
   embedded report follows; pointing at a cell of the opening matrix says what
   happened to it; the policy section shows which of ten found genes each policy
   puts back; and GitHub is a button in the header, the opening and the end.
+  A Docs tab carries every long page in the site's design, with a page list,
+  contents that follow the reading, previous and next links, a search box over
+  all of them and an edit link to GitHub; `tools/build_docs.py` builds the pages
+  from the markdown, which stays the source and still reads on GitHub. Code
+  boxes are light in the light theme.
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
   Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
   or `held_out_quality` instead of a `corrected...` value, and a strict

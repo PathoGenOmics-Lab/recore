@@ -4,9 +4,12 @@
 The site is plain HTML with no build step, so nothing renders it and nothing
 fails when it drifts. This does, in four parts:
 
-  links    every internal link and #anchor resolves, and no page loads a
+  links    every internal link and #anchor resolves, on the front page, the
+           reference and every documentation page, and no page loads a
            stylesheet, script or image from another host (the site has to open
            from a clone, offline);
+  docs     the documentation pages are what tools/build_docs.py makes of the
+           markdown today, so an edited .md cannot ship with a stale page;
   flags    every option the pages or the command builder mention exists in
            `recore --help`, the reference lists every option there is, and
            its defaults are the ones the binary prints;
@@ -24,6 +27,7 @@ Exits 1 and lists every problem it found.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -34,6 +38,8 @@ from pathlib import Path
 
 SITE = Path("docs")
 PAGES = ["index.html", "reference.html"]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_docs  # noqa: E402  (tools/build_docs.py, next to this file)
 SCRIPTS = [SITE / "assets" / "site.js", SITE / "assets" / "site.css"]
 DATASET_SCRIPT = Path("benchmarks/make_tutorial_dataset.py")
 
@@ -141,6 +147,17 @@ def help_options(recore: str) -> tuple[set[str], set[str], dict[str, str]]:
     return longs, shorts, defaults
 
 
+def all_pages() -> dict[str, Page]:
+    """Every page of the site, by its path under docs/; the example report is
+    the report's own output and is checked by the report's tests."""
+    out = {}
+    for path in sorted(SITE.rglob("*.html")):
+        rel = path.relative_to(SITE).as_posix()
+        if rel != "assets/example-report.html":
+            out[rel] = parse(path)
+    return out
+
+
 def check_links(pages: dict[str, Page]) -> list[str]:
     problems = []
     for name, page in pages.items():
@@ -154,13 +171,22 @@ def check_links(pages: dict[str, Page]) -> list[str]:
                 if anchor and anchor not in page.ids:
                     problems.append(f"{name}: link to #{anchor}, which no element on the page has")
                 continue
-            path = SITE / target
-            if not path.exists():
+            resolved = os.path.normpath(os.path.join(os.path.dirname(name), target)).replace(os.sep, "/")
+            if resolved.startswith("..") or not (SITE / resolved).exists():
                 problems.append(f"{name}: <{tag}> points at {target}, which does not exist")
                 continue
-            if anchor and target in pages and anchor not in pages[target].ids:
+            if anchor and resolved in pages and anchor not in pages[resolved].ids:
                 problems.append(f"{name}: link to {target}#{anchor}, which no element there has")
     return problems
+
+
+def check_docs_built() -> list[str]:
+    stale = [
+        path.as_posix()
+        for path, text in build_docs.build().items()
+        if not path.exists() or path.read_text(encoding="utf-8") != text
+    ]
+    return [f"{p}: does not match its markdown; run python3 tools/build_docs.py" for p in stale]
 
 
 def check_flags(pages: dict[str, Page], recore: str) -> list[str]:
@@ -217,9 +243,9 @@ def check_flags(pages: dict[str, Page], recore: str) -> list[str]:
     return problems
 
 
-def check_dashes() -> list[str]:
+def check_dashes(pages: dict[str, Page]) -> list[str]:
     problems = []
-    for path in [SITE / p for p in PAGES] + SCRIPTS:
+    for path in [SITE / p for p in pages] + SCRIPTS:
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "\u2014" in line:
                 problems.append(f"{path}:{number}: em-dash")
@@ -279,19 +305,20 @@ def main() -> int:
     parser.add_argument("--run-tutorial", action="store_true", help="also run the Try-it commands (needs minimap2)")
     args = parser.parse_args()
 
-    pages = {name: parse(SITE / name) for name in PAGES}
-    problems = check_links(pages) + check_flags(pages, args.recore) + check_dashes()
+    pages = all_pages()
+    front = {name: pages[name] for name in PAGES}
+    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_dashes(pages)
     if args.run_tutorial:
         if not shutil.which("minimap2"):
             problems.append("Try it: minimap2 is not on PATH")
         else:
-            problems += check_tutorial(pages, args.recore)
+            problems += check_tutorial(front, args.recore)
     if problems:
         print("The website does not match the code:", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    checked = "links, options, defaults, dashes" + (", and the Try-it run" if args.run_tutorial else "")
+    checked = "generated pages, links, options, defaults, dashes" + (", and the Try-it run" if args.run_tutorial else "")
     print(f"docs/: {checked} all agree with the code")
     return 0
 

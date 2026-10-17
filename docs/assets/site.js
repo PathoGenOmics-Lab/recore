@@ -142,10 +142,12 @@
     if (source) addCopy(button, source);
   });
 
-  // Every other code block gets a button too.
+  // Every other code block gets a button too. A one-line block wraps rather
+  // than run under the button; a block of lines keeps its layout.
   document.querySelectorAll(".code").forEach(function (block) {
-    if (block.querySelector(".copy")) return;
     var pre = block.querySelector("pre");
+    if (pre && pre.textContent.trim().indexOf("\n") === -1) block.classList.add("one-line");
+    if (block.querySelector(".copy")) return;
     if (!pre) return;
     var button = document.createElement("button");
     button.type = "button";
@@ -585,6 +587,171 @@
       stage.classList.remove("live");
     });
   });
+
+  /* ── Documentation: search, page contents, menu ── */
+
+  var searchBox = document.querySelector("[data-docs-search]");
+  var resultsBox = document.querySelector("[data-docs-results]");
+  if (searchBox && resultsBox && window.RECORE_DOCS_INDEX) {
+    // The index lists URLs from the docs root; this page may sit a folder down.
+    var indexScript = document.querySelector('script[src$="assets/search-index.js"]');
+    var root = indexScript ? indexScript.getAttribute("src").replace("assets/search-index.js", "") : "";
+    var active = -1;
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Words match where a word starts, so "min" finds --min-prevalence and
+    // not the middle of "becoming".
+    function startsWord(w, flags) {
+      return new RegExp("(^|[^a-z0-9])(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", flags);
+    }
+
+    function highlight(text, words) {
+      var safe = escapeHtml(text);
+      words.forEach(function (w) {
+        safe = safe.replace(startsWord(w, "ig"), "$1<mark>$2</mark>");
+      });
+      return safe;
+    }
+
+    function snippet(text, word) {
+      var at = text.toLowerCase().indexOf(word);
+      if (at < 0) return text.slice(0, 140);
+      var start = Math.max(0, at - 60);
+      return (start > 0 ? "\u2026" : "") + text.slice(start, start + 150) + (start + 150 < text.length ? "\u2026" : "");
+    }
+
+    function search(query) {
+      var words = query.toLowerCase().split(/\s+/).filter(function (w) {
+        return w.length > 1;
+      });
+      if (!words.length) return [words, []];
+      var hits = [];
+      window.RECORE_DOCS_INDEX.forEach(function (entry) {
+        var page = entry.page.toLowerCase();
+        var section = entry.section.toLowerCase();
+        var text = entry.text.toLowerCase();
+        var score = 0;
+        for (var k = 0; k < words.length; k++) {
+          var pattern = startsWord(words[k], "i");
+          var inSection = pattern.test(section);
+          var inPage = pattern.test(page);
+          var inText = pattern.test(text);
+          if (!inSection && !inPage && !inText) return;
+          score += (inSection ? 5 : 0) + (inPage ? 3 : 0) + (inText ? 1 : 0);
+        }
+        hits.push({ entry: entry, score: score });
+      });
+      hits.sort(function (a, b) {
+        return b.score - a.score;
+      });
+      return [words, hits.slice(0, 8)];
+    }
+
+    function render() {
+      var found = search(searchBox.value.trim());
+      var words = found[0];
+      var hits = found[1];
+      active = -1;
+      if (!words.length) {
+        resultsBox.hidden = true;
+        return;
+      }
+      resultsBox.hidden = false;
+      if (!hits.length) {
+        resultsBox.innerHTML = '<div class="none">Nothing matches. Try another word.</div>';
+        return;
+      }
+      resultsBox.innerHTML = hits
+        .map(function (hit) {
+          var e = hit.entry;
+          var title = e.section ? e.page + " \u203a " + e.section : e.page;
+          return (
+            '<a href="' + root + e.url + '"><b>' + highlight(title, words) + "</b><small>" +
+            highlight(snippet(e.text, words[0]), words) + "</small></a>"
+          );
+        })
+        .join("");
+    }
+
+    function move(step) {
+      var links = resultsBox.querySelectorAll("a");
+      if (!links.length) return;
+      active = (active + step + links.length) % links.length;
+      links.forEach(function (link, k) {
+        link.classList.toggle("active", k === active);
+      });
+      links[active].scrollIntoView({ block: "nearest" });
+    }
+
+    searchBox.addEventListener("input", render);
+    searchBox.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        move(1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        move(-1);
+      } else if (event.key === "Enter") {
+        var links = resultsBox.querySelectorAll("a");
+        var pick = links[active >= 0 ? active : 0];
+        if (pick) window.location.href = pick.getAttribute("href");
+      } else if (event.key === "Escape") {
+        searchBox.value = "";
+        resultsBox.hidden = true;
+      }
+    });
+    document.addEventListener("click", function (event) {
+      if (!event.target.closest(".docs-search")) resultsBox.hidden = true;
+    });
+    // "/" jumps to the search box, as on most documentation sites.
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "/" && !/input|textarea|select/i.test(document.activeElement.tagName)) {
+        event.preventDefault();
+        searchBox.focus();
+      }
+    });
+  }
+
+  // The page contents follow the reader down the page.
+  var tocLinks = Array.prototype.slice.call(document.querySelectorAll(".docs-toc a"));
+  if (tocLinks.length) {
+    var targets = tocLinks
+      .map(function (link) {
+        return document.getElementById(link.getAttribute("href").slice(1));
+      })
+      .filter(Boolean);
+    var ticking = false;
+    function markCurrent() {
+      ticking = false;
+      var current = 0;
+      targets.forEach(function (heading, k) {
+        if (heading.getBoundingClientRect().top < 120) current = k;
+      });
+      tocLinks.forEach(function (link, k) {
+        link.classList.toggle("active", k === current);
+      });
+    }
+    window.addEventListener(
+      "scroll",
+      function () {
+        if (!ticking) {
+          ticking = true;
+          requestAnimationFrame(markCurrent);
+        }
+      },
+      { passive: true }
+    );
+    markCurrent();
+  }
+
+  // On a phone the page list starts folded, so the page itself comes first.
+  var docsMenu = document.querySelector(".docs-menu");
+  if (docsMenu && window.matchMedia && window.matchMedia("(max-width: 860px)").matches) {
+    docsMenu.open = false;
+  }
 
   /* ── Reference filter ── */
 
