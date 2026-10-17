@@ -116,7 +116,8 @@ jobs:
 
       # The gate is two checks:
       #
-      #   CI / test              rustfmt, clippy -D warnings, and the test suite
+      #   CI / Build, test, clippy, fmt
+      #                          rustfmt, clippy -D warnings, and the test suite
       #                          with the end-to-end run made mandatory.
       #   Documentation / Build  mkdocs build --strict.
       #
@@ -125,24 +126,25 @@ jobs:
       # satisfied, not as pending, because the alternative is a cargo bump
       # sitting here until the timeout waiting for a job that was never going to
       # start. Reading it that way is safe because both workflows hang off the
-      # same pull_request event: by the time `test` has finished, minutes later,
+      # same pull_request event: by the time CI has finished, minutes later,
       # a docs run that was ever going to happen has long since registered
       # itself as queued. And it does happen on the pull requests where it
       # matters, since requirements-docs.txt and docs.yml are both in that
       # workflow's path filter.
       #
-      # `test` can show up twice for the same commit, because ci.yml triggers on
-      # a bare `push:` as well as on `pull_request` and Dependabot pushes its
-      # branch to this repository, so the same job runs once for each event.
-      # Both copies are read: pending if either is pending, green only if every
-      # one of them is green.
+      # If the same check ever shows up twice for one commit, both copies are
+      # read: pending if either is pending, green only if every one is green.
       #
-      # The check names are the job names GitHub publishes, not the job ids:
-      # `test` has no `name:` in ci.yml so it is published under its id, and the
-      # docs job is published as `Build`. Renaming either one over in those files
-      # silently unhooks this gate, which is why the workflow name is matched
-      # too: a second job called `Build` appearing somewhere else must not be
-      # mistaken for the docs build.
+      # The check names are the names GitHub publishes, which is a job's `name:`
+      # when it has one and its id only when it does not. ci.yml's job is
+      # published as "Build, test, clippy, fmt" and the docs job as "Build".
+      # This gate used to wait for "test", the CI job's id, so it never saw CI
+      # finish: every routine update sat here for the full twenty-five minutes
+      # and was left unmerged. tools/check_automerge_gate.py now runs in CI and
+      # fails when a name below matches no job, so a rename breaks a pull
+      # request instead of breaking this silently. The workflow name is matched
+      # too, so that a second job called "Build" elsewhere is not mistaken for
+      # the docs build.
       - name: Wait for CI to answer
         id: gate
         if: steps.decide.outputs.may-merge == 'true'
@@ -207,9 +209,9 @@ jobs:
               # `|| echo unreadable` rather than a bare substitution: a jq that
               # trips over an unexpected payload must cost one poll, like the
               # API error above, not the whole job.
-              ci="$(state_of 'CI' 'test' || echo unreadable)"
+              ci="$(state_of 'CI' 'Build, test, clippy, fmt' || echo unreadable)"
               docs="$(state_of 'Documentation' 'Build' || echo unreadable)"
-              echo "CI/test=${ci} Documentation/Build=${docs}"
+              echo "CI=${ci} Documentation/Build=${docs}"
 
               if [ "$ci" = failure ] || [ "$docs" = failure ]; then
                 echo "green=false" >> "$GITHUB_OUTPUT"

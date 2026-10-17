@@ -49,7 +49,14 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install minimap2
-        run: sudo apt-get update && sudo apt-get install -y minimap2
+        # python3-yaml is for the gate check below, which reads the workflows.
+        run: sudo apt-get update && sudo apt-get install -y minimap2 python3-yaml
+      # The auto-merge gate names the checks it waits for, and a name that
+      # matches no job fails nothing: the gate just never sees CI finish. It
+      # waited for "test" while this job published its `name:`, and merged
+      # nothing for a month. This makes the drift fail here instead.
+      - name: The auto-merge gate waits for checks that exist
+        run: python3 tools/check_automerge_gate.py
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy (deny warnings)
