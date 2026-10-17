@@ -1,5 +1,5 @@
 use super::genes::cell_gene_id_variants;
-use super::gff::GffIndex;
+use super::gff::{GeneClusters, GffIndex};
 use super::types::{RescueEvent, SyntenyEvidence};
 use crate::parser::PresenceAbsence;
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -146,7 +146,7 @@ fn context_score(target: &SyntenyContext, reference: &SyntenyContext) -> (f64, u
 
 fn synteny_context(
     gff: &GffIndex,
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    gene_to_cluster: &GeneClusters,
     contig: &str,
     start: u64,
     end: u64,
@@ -157,12 +157,12 @@ fn synteny_context(
     let (upstream, downstream) =
         gff.context_window(contig, start, end, center_gene_id, n_neighbors);
     for gene in upstream {
-        if let Some(cluster) = gff.cluster_for_gene(gene, gene_to_cluster) {
+        if let Some(cluster) = gene_to_cluster.cluster_for_gene(&gene) {
             context.upstream.push(cluster);
         }
     }
     for gene in downstream {
-        if let Some(cluster) = gff.cluster_for_gene(gene, gene_to_cluster) {
+        if let Some(cluster) = gene_to_cluster.cluster_for_gene(&gene) {
             context.downstream.push(cluster);
         }
     }
@@ -281,7 +281,7 @@ fn reference_contexts_for_cluster<'a>(
     n_neighbors: usize,
     pa: &PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
     verbose: bool,
 ) -> &'a [ReferenceSyntenyContext] {
     cache
@@ -328,10 +328,10 @@ fn reference_contexts_for_cluster<'a>(
                     let ref_context = synteny_context(
                         ref_gff,
                         ref_g2c,
-                        &ref_gene.contig,
+                        ref_gene.contig,
                         ref_gene.start,
                         ref_gene.end,
-                        Some(ref_gene.gene_id.as_str()),
+                        Some(ref_gene.gene_id),
                         n_neighbors,
                     );
 
@@ -353,7 +353,7 @@ pub(super) fn validate_synteny(
     rescue: &mut RescueEvent,
     pa: &PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
     verbose: bool,
 ) {
     let mut cache = SyntenyReferenceCache::default();
@@ -371,7 +371,7 @@ pub(crate) fn validate_synteny_with_cache(
     rescue: &mut RescueEvent,
     pa: &PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
     cache: &mut SyntenyReferenceCache,
     verbose: bool,
 ) {

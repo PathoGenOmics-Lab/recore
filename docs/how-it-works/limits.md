@@ -108,28 +108,36 @@ Measured with [`benchmarks/search_scaling.py`](https://github.com/PathoGenOmics-
 on an Apple M4 Pro (14 cores, 24 GB) with 8 threads and minimap2 2.31:
 synthetic MTBC-sized genomes (one 4.9 Mb contig and 4,000 genes each), 80
 matrix gaps per genome of which 40 are false absences, GFFs and `--synteny`.
+The GFFs give each CDS an ID and a locus tag; the last two columns are the
+same runs with PGAP-style GFFs (`--rich-gff`), six names per CDS plus a
+product and a note.
 
-| Genomes | Gaps searched | Run time | Warm `--search-cache` | Peak memory |
-|---------|---------------|----------|-----------------------|-------------|
-| 100 | 8,000 | 3.4 s | 2.4 s | 0.5 GB |
-| 200 | 16,000 | 7.1 s | 6.1 s | 0.8 GB |
-| 400 | 32,000 | 18.0 s | 13.0 s | 1.5 GB |
-| 800 | 64,000 | 48.1 s | 38.1 s | 2.6 GB |
+| Genomes | Gaps searched | Run time | Warm `--search-cache` | Peak memory | PGAP-style GFFs: run time | PGAP-style GFFs: peak memory |
+|---------|---------------|----------|-----------------------|-------------|---------------------------|------------------------------|
+| 100 | 8,000 | 2.4 s | 1.3 s | 0.24 GB | 2.2 s | 0.32 GB |
+| 200 | 16,000 | 4.7 s | 2.8 s | 0.30 GB | 4.2 s | 0.43 GB |
+| 400 | 32,000 | 10.7 s | 6.3 s | 0.38 GB | 8.8 s | 0.64 GB |
+| 800 | 64,000 | 21.4 s | 13.5 s | 0.56 GB | 20.7 s | 1.05 GB |
 
 Every planted false absence was recovered, except one at 100 genomes that
 synteny rejected because the random deletions had changed its neighbourhood.
 
-Memory grows by about 3 MB per genome, mostly the annotations synteny keeps for
-every genome. Time grows a little faster than the genome count, from 0.03 s
-per genome at 100 genomes to 0.06 s at 800, and the minimap2 search is the
-smaller part of it (10 of the 48 seconds at 800 genomes). The rest is synteny,
-and the audit tables in `cluster_synteny_blocks.tsv`, whose size follows the
-number of distinct gene neighbourhoods. These synthetic genomes are a worst
-case for that: every gap reshuffles the context of ten neighbours, and at 800
-genomes the table reached 2.3 GB. Assemblies with conserved synteny write far
-less.
+Memory grows by about 0.5 MB per genome, or 1 MB with PGAP-style GFFs, nearly
+all of it the annotation synteny reads for every genome: 5,000 genomes like
+these would need about 2.5 GB, or 5.5 GB with PGAP-style GFFs. Each name is
+stored once per genome and the gene-to-cluster lookup keeps one cluster per
+name; when every name was a String in several maps, memory grew by 3.4 MB per
+genome (6.2 MB with PGAP-style GFFs). Time grows with the genome count, about
+0.027 s per genome, and the minimap2 search is about 9 of the 21 seconds at 800
+genomes. The rest is synteny, and the audit tables in
+`cluster_synteny_blocks.tsv`, whose size follows the number of distinct gene
+neighbourhoods. These synthetic genomes are a worst case for that: every gap
+reshuffles the context of ten neighbours, and at 800 genomes the table reached
+2.3 GB. Assemblies with conserved synteny write far less, and the table is
+written a bounded chunk of clusters at a time, so its size does not show in the
+memory.
 
-`--search-cache` removes the search from a rerun (10 seconds to 1 at 800
+`--search-cache` removes the search from a rerun (21 seconds to 13.5 at 800
 genomes), so it pays off most where the search is the expensive part: many gaps
 per genome (`--min-prevalence 0`), `--multi-allele`, or larger genomes. The
 cache directory can be deleted at any time; the next run simply searches again.

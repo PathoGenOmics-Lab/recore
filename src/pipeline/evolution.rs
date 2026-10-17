@@ -732,31 +732,6 @@ pub(super) fn corrected_cluster_present(
         || nsc_presence.contains(&(ci.val(), gi.val()))
 }
 
-pub(super) fn mobile_kind_from_labels(labels: &[&str]) -> Option<(&'static str, String)> {
-    let joined = labels.join("|");
-    let normalized = joined
-        .to_ascii_lowercase()
-        .replace("%20", " ")
-        .replace('_', " ");
-    let kind = if normalized.contains("is6110") {
-        "IS6110"
-    } else if normalized.contains("is1081") {
-        "IS1081"
-    } else if normalized.contains("insertion sequence")
-        || normalized.contains("transposase")
-        || normalized.contains("is element")
-    {
-        "insertion_sequence"
-    } else if normalized.contains("integrase") || normalized.contains("phage") {
-        "phage_or_integrase"
-    } else if normalized.contains("recombinase") {
-        "recombinase"
-    } else {
-        return None;
-    };
-    Some((kind, joined))
-}
-
 pub(super) struct MobileElementSearchInput<'a> {
     pub(super) path: &'a Path,
     pub(super) genome_files: &'a HashMap<String, PathBuf>,
@@ -909,7 +884,7 @@ pub(super) fn nearest_mobile_element_for_rescue(
     let Some(gff) = gff_indices.get(&rescue.genome_idx) else {
         return best;
     };
-    for gene in &gff.genes {
+    for gene in gff.genes() {
         if gene.contig != rescue.contig {
             continue;
         }
@@ -917,10 +892,12 @@ pub(super) fn nearest_mobile_element_for_rescue(
         if distance > mobile_window {
             continue;
         }
-        let labels = gff.labels_for_gene(gene);
-        let Some((kind, label)) = mobile_kind_from_labels(&labels) else {
+        // Worked out from the gene's names and descriptions when the GFF was
+        // read; see GffIndex::mobile_annotation.
+        let Some((kind, label)) = gff.mobile_annotation(&gene) else {
             continue;
         };
+        let label = label.to_string();
         let candidate = MobileElementEvidence {
             genome_name: pa.genome_name(rescue.genome_idx).to_string(),
             source: "annotation",
@@ -1994,14 +1971,13 @@ pub(super) struct ClusterContextSummary {
 }
 
 pub(super) fn context_signature(
-    gff: &GffIndex,
-    genes: &[&GffGene],
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    genes: &[GffGene],
+    gene_to_cluster: &GeneClusters,
     pa: &crate::parser::PresenceAbsence,
 ) -> String {
     let names: Vec<&str> = genes
         .iter()
-        .filter_map(|gene| gff.cluster_for_gene(gene, gene_to_cluster))
+        .filter_map(|gene| gene_to_cluster.cluster_for_gene(gene))
         .map(|ci| pa.cluster_name(ci))
         .collect();
     if names.is_empty() {
@@ -2047,11 +2023,11 @@ pub(super) fn context_interpretation(
 fn synteny_gene_record(
     gff: &GffIndex,
     gene: &GffGene,
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    gene_to_cluster: &GeneClusters,
     pa: &crate::parser::PresenceAbsence,
 ) -> SyntenyGeneRecord {
-    let cluster = gff
-        .cluster_for_gene(gene, gene_to_cluster)
+    let cluster = gene_to_cluster
+        .cluster_for_gene(gene)
         .map(|ci| pa.cluster_name(ci).to_string())
         .unwrap_or_else(|| "NA".to_string());
     let display_gene_id = gff
@@ -2059,11 +2035,11 @@ fn synteny_gene_record(
         .into_iter()
         .map(display_reference_gene_id)
         .find(|id| id.starts_with("Rv"))
-        .unwrap_or_else(|| display_reference_gene_id(&gene.gene_id));
+        .unwrap_or_else(|| display_reference_gene_id(gene.gene_id));
     SyntenyGeneRecord {
         cluster,
         gene_id: display_gene_id,
-        contig: gene.contig.clone(),
+        contig: gene.contig.to_string(),
         start: gene.start + 1,
         end: gene.end,
         strand: gene.strand,
@@ -2093,10 +2069,10 @@ fn synteny_gap_record(contig: &str, start_0based: u64, end_0based: u64) -> Synte
 
 fn ordered_synteny_gene_records(
     gff: &GffIndex,
-    upstream: &[&GffGene],
+    upstream: &[GffGene],
     center: Option<&GffGene>,
-    downstream: &[&GffGene],
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    downstream: &[GffGene],
+    gene_to_cluster: &GeneClusters,
     pa: &crate::parser::PresenceAbsence,
 ) -> Vec<SyntenyGeneRecord> {
     let mut records =
@@ -2158,32 +2134,40 @@ fn synteny_gene_identity_signature(records: &[SyntenyGeneRecord]) -> String {
 
 fn build_reference_boundary_index(
     gff: &GffIndex,
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    gene_to_cluster: &GeneClusters,
     pa: &crate::parser::PresenceAbsence,
     n_neighbors: usize,
 ) -> ReferenceBoundaryIndex {
     let mut index = ReferenceBoundaryIndex::default();
-    if gff.genes.is_empty() {
+    let all: Vec<GffGene> = gff.genes().collect();
+    if all.is_empty() {
         return index;
     }
 
     let mut range_start = 0usize;
-    while range_start < gff.genes.len() {
-        let contig = gff.genes[range_start].contig.clone();
+    while range_start < all.len() {
+        let contig = all[range_start].contig.to_string();
         let mut range_end = range_start + 1;
-        while range_end < gff.genes.len() && gff.genes[range_end].contig == contig {
+        while range_end < all.len() && all[range_end].contig == contig {
             range_end += 1;
         }
-        let slice = &gff.genes[range_start..range_end];
+        let slice = &all[range_start..range_end];
         for (gene_idx, gene) in slice.iter().enumerate() {
-            let Some(focal_ci) = gff.cluster_for_gene(gene, gene_to_cluster) else {
+            let Some(focal_ci) = gene_to_cluster.cluster_for_gene(gene) else {
                 continue;
             };
             index.by_focal.entry(focal_ci).or_insert_with(|| {
-                let upstream: Vec<&GffGene> =
-                    slice[..gene_idx].iter().rev().take(n_neighbors).collect();
-                let downstream: Vec<&GffGene> =
-                    slice[gene_idx + 1..].iter().take(n_neighbors).collect();
+                let upstream: Vec<GffGene> = slice[..gene_idx]
+                    .iter()
+                    .rev()
+                    .take(n_neighbors)
+                    .copied()
+                    .collect();
+                let downstream: Vec<GffGene> = slice[gene_idx + 1..]
+                    .iter()
+                    .take(n_neighbors)
+                    .copied()
+                    .collect();
                 ordered_synteny_gene_records(
                     gff,
                     &upstream,
@@ -2195,9 +2179,17 @@ fn build_reference_boundary_index(
             });
         }
         for boundary in 0..=slice.len() {
-            let upstream: Vec<&GffGene> =
-                slice[..boundary].iter().rev().take(n_neighbors).collect();
-            let downstream: Vec<&GffGene> = slice[boundary..].iter().take(n_neighbors).collect();
+            let upstream: Vec<GffGene> = slice[..boundary]
+                .iter()
+                .rev()
+                .take(n_neighbors)
+                .copied()
+                .collect();
+            let downstream: Vec<GffGene> = slice[boundary..]
+                .iter()
+                .take(n_neighbors)
+                .copied()
+                .collect();
             let gap_start = if boundary > 0 {
                 slice[boundary - 1].end
             } else {
@@ -2221,7 +2213,7 @@ fn build_reference_boundary_index(
             let mut cluster_ids: Vec<ClusterIdx> = upstream
                 .iter()
                 .chain(downstream.iter())
-                .filter_map(|gene| gff.cluster_for_gene(gene, gene_to_cluster))
+                .filter_map(|gene| gene_to_cluster.cluster_for_gene(gene))
                 .collect();
             cluster_ids.sort_unstable();
             cluster_ids.dedup();
@@ -2288,100 +2280,156 @@ fn best_reference_context(
     index.contexts[best_idx].genes.clone()
 }
 
+/// Runs of consecutive clusters to build in parallel and write in order. A run
+/// is cut by the genomes its clusters are present in, not by a count of
+/// clusters, so what one holds does not grow with the number of genomes: a
+/// cluster for every thread at least, then clusters until the run's
+/// genome-cluster pairs reach the budget.
+fn cluster_chunks(
+    pa: &crate::parser::PresenceAbsence,
+    threads: usize,
+) -> Vec<std::ops::Range<usize>> {
+    const PAIRS_PER_CHUNK: usize = 32 * 1024;
+    let mut chunks = Vec::new();
+    let mut chunk_start = 0usize;
+    while chunk_start < pa.n_clusters() {
+        let mut chunk_end = chunk_start;
+        let mut pairs = 0usize;
+        while chunk_end < pa.n_clusters()
+            && (chunk_end - chunk_start < threads || pairs < PAIRS_PER_CHUNK)
+        {
+            pairs += pa.present_count(ClusterIdx(chunk_end));
+            chunk_end += 1;
+        }
+        chunks.push(chunk_start..chunk_end);
+        chunk_start = chunk_end;
+    }
+    chunks
+}
+
+/// One cluster's locus contexts: its summary, and its context rows ranked by
+/// carriers.
+fn cluster_locus_contexts(
+    ci: ClusterIdx,
+    pa: &crate::parser::PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
+) -> (
+    ClusterContextSummary,
+    Vec<(String, String, ContextAccumulator)>,
+) {
+    let mut context_rows: BTreeMap<(String, String), ContextAccumulator> = BTreeMap::new();
+    let mut n_mapped = 0usize;
+    let mut n_unresolved = 0usize;
+
+    let mut genomes = pa.present_genomes(ci).to_vec();
+    genomes.sort_by_key(|gi| gi.val());
+
+    for gi in genomes {
+        let Some(gff) = gff_indices.get(&gi) else {
+            continue;
+        };
+        let Some(g2c) = gene_to_cluster_maps.get(&gi) else {
+            continue;
+        };
+        let cell = pa.cell(ci, gi);
+        let Some(gene) = gff_gene_for_cell(gff, cell) else {
+            n_unresolved += 1;
+            continue;
+        };
+
+        let (upstream, downstream) =
+            gff.context_window(gene.contig, gene.start, gene.end, Some(gene.gene_id), 2);
+        let upstream_sig = context_signature(&upstream, g2c, pa);
+        let downstream_sig = context_signature(&downstream, g2c, pa);
+        n_mapped += 1;
+
+        let row = context_rows
+            .entry((upstream_sig, downstream_sig))
+            .or_default();
+        row.count += 1;
+        if row.examples.len() < 5 {
+            row.examples
+                .push(format!("{}:{}", pa.genome_name(gi), gene.gene_id));
+        }
+    }
+
+    let n_unique_contexts = context_rows.len();
+    let dominant_count = context_rows
+        .values()
+        .map(|row| row.count)
+        .max()
+        .unwrap_or(0);
+    let dominant_fraction = if n_mapped > 0 {
+        dominant_count as f64 / n_mapped as f64
+    } else {
+        0.0
+    };
+    // Judged by neighbourhood, not by exact signature. A context that shares
+    // even one neighbouring cluster with the dominant one is the same locus
+    // with something gained, lost or unannotated next to it: a pseudogene,
+    // a missing CDS or a true loss beside a single-copy gene changes its
+    // signature without making it a second copy. Only a context with no
+    // neighbour in common is evidence of another locus. Signature
+    // differences alone used to label single-copy genes as paralogs.
+    let dominant = context_rows
+        .iter()
+        .max_by(|a, b| a.1.count.cmp(&b.1.count).then_with(|| b.0.cmp(a.0)))
+        .map(|(key, _)| key.clone());
+    let compatible: usize = context_rows
+        .iter()
+        .filter(|(key, _)| dominant.as_ref().is_none_or(|d| shares_neighbour(d, key)))
+        .map(|(_, row)| row.count)
+        .sum();
+    let compatible_fraction = if n_mapped > 0 {
+        compatible as f64 / n_mapped as f64
+    } else {
+        0.0
+    };
+    let interpretation = context_interpretation(n_mapped, n_unique_contexts, compatible_fraction);
+    let summary = ClusterContextSummary {
+        cluster_idx: ci,
+        n_present: pa.present_count(ci),
+        n_mapped,
+        n_unresolved,
+        n_unique_contexts,
+        dominant_count,
+        dominant_fraction,
+        interpretation,
+    };
+
+    let mut rows: Vec<(String, String, ContextAccumulator)> = context_rows
+        .into_iter()
+        .map(|((upstream, downstream), acc)| (upstream, downstream, acc))
+        .collect();
+    rows.sort_by(|a, b| {
+        b.2.count
+            .cmp(&a.2.count)
+            .then(a.0.cmp(&b.0))
+            .then(a.1.cmp(&b.1))
+    });
+    (summary, rows)
+}
+
+/// Each cluster's neighbourhoods, in `cluster_locus_context.tsv`, and a summary
+/// per cluster, in `cluster_locus_summary.tsv`.
+///
+/// One cluster at a time in one thread, this was a sixth of a run on 400
+/// genomes and grew with every genome. Clusters do not depend on each other,
+/// so they are built in parallel a run at a time and written in cluster order,
+/// the same rows in the same order.
 pub(super) fn write_cluster_locus_contexts(
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
+    threads: usize,
     output_dir: &std::path::Path,
 ) -> Result<(usize, Vec<ClusterContextSummary>)> {
-    let mut context_rows: BTreeMap<(usize, String, String), ContextAccumulator> = BTreeMap::new();
-    let mut summaries = Vec::new();
-
-    for ci_val in 0..pa.n_clusters() {
-        let ci = ClusterIdx(ci_val);
-        let mut n_mapped = 0usize;
-        let mut n_unresolved = 0usize;
-        let mut context_counts: HashMap<(String, String), usize> = HashMap::new();
-
-        let mut genomes = pa.present_genomes(ci).to_vec();
-        genomes.sort_by_key(|gi| gi.val());
-
-        for gi in genomes {
-            let Some(gff) = gff_indices.get(&gi) else {
-                continue;
-            };
-            let Some(g2c) = gene_to_cluster_maps.get(&gi) else {
-                continue;
-            };
-            let cell = pa.cell(ci, gi);
-            let Some(gene) = gff_gene_for_cell(gff, cell) else {
-                n_unresolved += 1;
-                continue;
-            };
-
-            let (upstream, downstream) = gff.context_window(
-                &gene.contig,
-                gene.start,
-                gene.end,
-                Some(gene.gene_id.as_str()),
-                2,
-            );
-            let upstream_sig = context_signature(gff, &upstream, g2c, pa);
-            let downstream_sig = context_signature(gff, &downstream, g2c, pa);
-            let key = (upstream_sig.clone(), downstream_sig.clone());
-            *context_counts.entry(key).or_insert(0) += 1;
-            n_mapped += 1;
-
-            let row_key = (ci.val(), upstream_sig, downstream_sig);
-            let row = context_rows.entry(row_key).or_default();
-            row.count += 1;
-            if row.examples.len() < 5 {
-                row.examples
-                    .push(format!("{}:{}", pa.genome_name(gi), gene.gene_id));
-            }
-        }
-
-        let n_unique_contexts = context_counts.len();
-        let dominant_count = context_counts.values().copied().max().unwrap_or(0);
-        let dominant_fraction = if n_mapped > 0 {
-            dominant_count as f64 / n_mapped as f64
-        } else {
-            0.0
-        };
-        // Judged by neighbourhood, not by exact signature. A context that shares
-        // even one neighbouring cluster with the dominant one is the same locus
-        // with something gained, lost or unannotated next to it: a pseudogene,
-        // a missing CDS or a true loss beside a single-copy gene changes its
-        // signature without making it a second copy. Only a context with no
-        // neighbour in common is evidence of another locus. Signature
-        // differences alone used to label single-copy genes as paralogs.
-        let dominant = context_counts
-            .iter()
-            .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
-            .map(|(key, _)| key.clone());
-        let compatible: usize = context_counts
-            .iter()
-            .filter(|(key, _)| dominant.as_ref().is_none_or(|d| shares_neighbour(d, key)))
-            .map(|(_, count)| *count)
-            .sum();
-        let compatible_fraction = if n_mapped > 0 {
-            compatible as f64 / n_mapped as f64
-        } else {
-            0.0
-        };
-        let interpretation =
-            context_interpretation(n_mapped, n_unique_contexts, compatible_fraction);
-        summaries.push(ClusterContextSummary {
-            cluster_idx: ci,
-            n_present: pa.present_count(ci),
-            n_mapped,
-            n_unresolved,
-            n_unique_contexts,
-            dominant_count,
-            dominant_fraction,
-            interpretation,
-        });
-    }
+    let threads = threads.max(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .context("Failed to build the locus context thread pool")?;
 
     let context_path = output_dir.join("cluster_locus_context.tsv");
     let context_file = fs::File::create(&context_path)?;
@@ -2390,37 +2438,41 @@ pub(super) fn write_cluster_locus_contexts(
         context_w,
         "gene_cluster\tcontext_rank\tn_genomes\tfraction_of_mapped_contexts\tupstream_context\tdownstream_context\texample_genomes"
     )?;
+    let mut summaries = Vec::with_capacity(pa.n_clusters());
     let mut written_context_rows = 0usize;
-    let mut rows_by_cluster: BTreeMap<usize, Vec<(String, String, ContextAccumulator)>> =
-        BTreeMap::new();
-    for ((ci, upstream, downstream), acc) in context_rows {
-        rows_by_cluster
-            .entry(ci)
-            .or_default()
-            .push((upstream, downstream, acc));
-    }
-    for (ci_val, mut rows) in rows_by_cluster {
-        rows.sort_by(|a, b| {
-            b.2.count
-                .cmp(&a.2.count)
-                .then(a.0.cmp(&b.0))
-                .then(a.1.cmp(&b.1))
+    for chunk in cluster_chunks(pa, threads) {
+        let built: Vec<_> = pool.install(|| {
+            use rayon::prelude::*;
+            chunk
+                .into_par_iter()
+                .map(|ci_val| {
+                    cluster_locus_contexts(
+                        ClusterIdx(ci_val),
+                        pa,
+                        gff_indices,
+                        gene_to_cluster_maps,
+                    )
+                })
+                .collect()
         });
-        let mapped = summaries[ci_val].n_mapped.max(1);
-        for (rank, (upstream, downstream, acc)) in rows.into_iter().enumerate() {
-            write_tsv_fields(
-                &mut context_w,
-                &[
-                    pa.cluster_name(ClusterIdx(ci_val)).to_string(),
-                    (rank + 1).to_string(),
-                    acc.count.to_string(),
-                    format!("{:.3}", acc.count as f64 / mapped as f64),
-                    upstream,
-                    downstream,
-                    acc.examples.join(";"),
-                ],
-            )?;
-            written_context_rows += 1;
+        for (summary, rows) in built {
+            let mapped = summary.n_mapped.max(1);
+            for (rank, (upstream, downstream, acc)) in rows.into_iter().enumerate() {
+                write_tsv_fields(
+                    &mut context_w,
+                    &[
+                        pa.cluster_name(summary.cluster_idx).to_string(),
+                        (rank + 1).to_string(),
+                        acc.count.to_string(),
+                        format!("{:.3}", acc.count as f64 / mapped as f64),
+                        upstream,
+                        downstream,
+                        acc.examples.join(";"),
+                    ],
+                )?;
+                written_context_rows += 1;
+            }
+            summaries.push(summary);
         }
     }
     context_w.flush()?;
@@ -2464,11 +2516,16 @@ pub(super) fn write_cluster_locus_contexts(
 /// in one thread: on 200 genomes of 4,000 genes that held 1.2 GB and took half
 /// the run. Clusters do not depend on each other, so they are now built in
 /// parallel a chunk at a time and written in cluster order, the same rows in
-/// the same order, holding one chunk's blocks at a time.
+/// the same order, holding one chunk's rows at a time.
+///
+/// A block is a genome's neighbourhood, so where annotations share no gene IDs
+/// every genome is a block of its own: chunks of 256 clusters held 200 MB of
+/// rows on 400 genomes, more with every genome added. Chunks are now cut by
+/// genome-cluster pairs; see cluster_chunks.
 pub(super) fn write_cluster_synteny_blocks(
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
     reference_gi: Option<GenomeIdx>,
     threads: usize,
     output_dir: &std::path::Path,
@@ -2487,19 +2544,18 @@ pub(super) fn write_cluster_synteny_blocks(
         "gene_cluster\tblock_rank\tn_genomes\tfraction_of_present\tupstream_block_5\tdownstream_block_5\tblock_interpretation\texample_genomes\tcarrier_genomes\trepresentative_genome\trepresentative_gene\trepresentative_contig\trepresentative_start\trepresentative_end\trepresentative_strand\trepresentative_length_bp\trepresentative_block_genes\treference_block_genes"
     )?;
 
-    const CLUSTERS_PER_CHUNK: usize = 256;
+    let threads = threads.max(1);
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads.max(1))
+        .num_threads(threads)
         .build()
         .context("Failed to build the synteny block thread pool")?;
-    let clusters: Vec<usize> = (0..pa.n_clusters()).collect();
     let mut written = 0usize;
-    for chunk in clusters.chunks(CLUSTERS_PER_CHUNK) {
-        let rows: Vec<Vec<Vec<String>>> = pool.install(|| {
+    for chunk in cluster_chunks(pa, threads) {
+        let rows: Vec<Result<(Vec<u8>, usize)>> = pool.install(|| {
             use rayon::prelude::*;
             chunk
-                .par_iter()
-                .map(|&ci_val| {
+                .into_par_iter()
+                .map(|ci_val| {
                     cluster_synteny_block_rows(
                         ClusterIdx(ci_val),
                         pa,
@@ -2512,25 +2568,25 @@ pub(super) fn write_cluster_synteny_blocks(
                 .collect()
         });
         for cluster_rows in rows {
-            for fields in cluster_rows {
-                write_tsv_fields(&mut w, &fields)?;
-                written += 1;
-            }
+            let (lines, n_rows) = cluster_rows?;
+            w.write_all(&lines)?;
+            written += n_rows;
         }
     }
     w.flush()?;
     Ok(written)
 }
 
-/// One cluster's synteny block rows, ranked by carriers.
+/// One cluster's synteny block rows, ranked by carriers, as TSV lines, and how
+/// many there are.
 fn cluster_synteny_block_rows(
     ci: ClusterIdx,
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
     reference_boundary_index: &ReferenceBoundaryIndex,
     cluster_index: &HashMap<String, ClusterIdx>,
-) -> Vec<Vec<String>> {
+) -> Result<(Vec<u8>, usize)> {
     let mut blocks: BTreeMap<String, SyntenyBlockAccumulator> = BTreeMap::new();
     let mut genomes = pa.present_genomes(ci).to_vec();
     genomes.sort_by_key(|gi| gi.val());
@@ -2545,17 +2601,12 @@ fn cluster_synteny_block_rows(
             continue;
         };
 
-        let (upstream, downstream) = gff.context_window(
-            &gene.contig,
-            gene.start,
-            gene.end,
-            Some(gene.gene_id.as_str()),
-            5,
-        );
-        let upstream_sig = context_signature(gff, &upstream, g2c, pa);
-        let downstream_sig = context_signature(gff, &downstream, g2c, pa);
+        let (upstream, downstream) =
+            gff.context_window(gene.contig, gene.start, gene.end, Some(gene.gene_id), 5);
+        let upstream_sig = context_signature(&upstream, g2c, pa);
+        let downstream_sig = context_signature(&downstream, g2c, pa);
         let representative_genes =
-            ordered_synteny_gene_records(gff, &upstream, Some(gene), &downstream, g2c, pa);
+            ordered_synteny_gene_records(gff, &upstream, Some(&gene), &downstream, g2c, pa);
         let block_signature = synteny_gene_identity_signature(&representative_genes);
         let row = blocks.entry(block_signature).or_default();
         row.count += 1;
@@ -2571,8 +2622,8 @@ fn cluster_synteny_block_rows(
         if row.representative.is_none() {
             row.representative = Some(SyntenyBlockRepresentative {
                 genome: pa.genome_name(gi).to_string(),
-                gene_id: gene.gene_id.clone(),
-                contig: gene.contig.clone(),
+                gene_id: gene.gene_id.to_string(),
+                contig: gene.contig.to_string(),
                 start: gene.start + 1,
                 end: gene.end,
                 strand: gene.strand,
@@ -2586,7 +2637,9 @@ fn cluster_synteny_block_rows(
     rows.sort_by(|a, b| b.1.count.cmp(&a.1.count).then(a.0.cmp(&b.0)));
     let present = pa.present_count(ci).max(1);
     let n_blocks = rows.len();
-    rows.into_iter()
+    // Each row is formatted and written as it is made.
+    let row_fields = rows
+        .into_iter()
         .enumerate()
         .map(|(rank, (_signature, acc))| {
             let fraction = acc.count as f64 / present as f64;
@@ -2641,6 +2694,10 @@ fn cluster_synteny_block_rows(
                     .unwrap_or_default(),
                 encode_synteny_gene_records(&reference_genes),
             ]
-        })
-        .collect()
+        });
+    let mut lines = Vec::new();
+    for fields in row_fields {
+        write_tsv_fields(&mut lines, &fields)?;
+    }
+    Ok((lines, n_blocks))
 }

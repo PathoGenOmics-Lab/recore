@@ -9,6 +9,23 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- Memory no longer grows by megabytes with every genome. Each genome's
+  annotation was held as a String per name in up to six maps, and its
+  gene-to-cluster lookup as a map of every name, copied again for the corrected
+  matrix: 3.4 MB per genome with minimal GFFs and 6.2 MB with PGAP-style ones
+  (six names per CDS), so 5,000 genomes would have needed about 17 and 32 GB.
+  Each name is now stored once, in one buffer per genome with a sorted table
+  of hashes; the lookup keeps one cluster per name and is corrected in place;
+  matrix cells are one string per cluster; and `cluster_synteny_blocks.tsv` and
+  `cluster_locus_context.tsv` are built in chunks bounded by genome-cluster
+  pairs instead of by clusters, the locus contexts now in parallel too. On 800
+  synthetic genomes peak memory went from 2.8 to 0.56 GB (5.5 to 1.0 GB with
+  PGAP-style GFFs) and run time from 33 to 22 seconds. Every output is byte for
+  byte the same.
+- When two corrections in one genome named the same gene ID, the cluster its
+  neighbours took in `cluster_locus_context.tsv` and
+  `cluster_synteny_blocks.tsv` depended on hash-map order and could change from
+  run to run. The first cluster in matrix order now wins.
 - Large runs are faster and use less memory, with identical outputs.
   `cluster_synteny_blocks.tsv` held every cluster's blocks before writing the
   first and was built in one thread: on 200 genomes of 4,000 genes, half the run

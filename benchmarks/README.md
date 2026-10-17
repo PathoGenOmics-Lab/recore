@@ -149,6 +149,12 @@ equal the false absences planted). The datasets are generated afresh and
 removed afterwards unless `--keep-workdir` is given. The numbers belong to the
 machine they ran on, which the table records; the shape is what carries over.
 
+The GFFs carry an ID and a locus tag. `--rich-gff` writes PGAP-style records
+instead (a name, a gene symbol, an old locus tag, a protein ID,
+cross-references, a product and a long note), six names per CDS, which is what
+an annotation index has to hold for most real assemblies; that run goes to
+`benchmarks/search_scaling_rich_metrics.tsv`.
+
 ## AMAP performance benchmark
 
 `amap_performance_benchmark.py` profiles Recore on the full local AMAP

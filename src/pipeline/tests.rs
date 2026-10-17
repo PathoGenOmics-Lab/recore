@@ -1737,7 +1737,7 @@ fn reference_hit_shadow_candidates_capture_partial_annotated_paralog() {
         vec!["L4_AS00146".into()],
         vec![vec!["".into()], vec!["rv_duf222".into()]],
     );
-    let gff = GffIndex::build(vec![GffGene {
+    let gff = GffIndex::build(vec![GffRecord {
         contig: "chr".into(),
         start: 0,
         end: 954,
@@ -1749,7 +1749,10 @@ fn reference_hit_shadow_candidates_capture_partial_annotated_paralog() {
     let mut gene_map = HashMap::new();
     gene_map.insert("rv_duf222".to_string(), ClusterIdx(1));
     let mut gene_to_cluster_maps = HashMap::new();
-    gene_to_cluster_maps.insert(GenomeIdx(0), gene_map);
+    gene_to_cluster_maps.insert(
+        GenomeIdx(0),
+        GeneClusters::from_map(&gff_indices[&GenomeIdx(0)], &gene_map),
+    );
     let mut hits = HashMap::new();
     hits.insert(
         (GenomeIdx(0), ClusterIdx(0)),
@@ -1932,7 +1935,7 @@ fn mobile_element_detection_uses_gff_aliases() {
         vec![vec!["".into()]],
     );
     let gff = GffIndex::build_with_aliases(vec![(
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 150,
             end: 300,
@@ -1982,7 +1985,7 @@ fn mobile_element_sequence_hits_are_name_agnostic_and_prioritized() {
     gff_indices.insert(
         GenomeIdx(0),
         GffIndex::build_with_aliases(vec![(
-            GffGene {
+            GffRecord {
                 contig: "chr".into(),
                 start: 90,
                 end: 210,

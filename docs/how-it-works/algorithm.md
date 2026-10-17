@@ -83,7 +83,11 @@ For each genome with a GFF file, builds a `GffIndex`:
 
 1. Genes sorted by (contig, start position)
 2. Per-contig range index for O(log n) overlap queries via binary search (`partition_point`)
-3. Gene ID index for O(1) lookup by name
+3. Every name of every CDS (its gene ID, then its aliases) stored once, back to back in one buffer, with a sorted table of name hashes for lookup by name
+4. Products and notes read once to recognise mobile elements, then dropped
+
+A CDS costs 32 bytes plus its names, so the index grows with a genome's gene
+count and the length of its names, not with how many maps refer to them.
 
 The index supports:
 - `overlapping(contig, start, end)` → all CDS features overlapping a query region
@@ -94,13 +98,18 @@ The index supports:
 
 ## Phase 4: Gene-to-Cluster Maps
 
-For each genome involved in the search, builds a HashMap from gene ID → ClusterIdx. This maps every gene ID found in the CSV cells to its Panaroo cluster assignment.
+For each genome with an annotation, builds a map from gene ID → ClusterIdx. This maps every gene ID found in the CSV cells to its Panaroo cluster assignment.
 
 Panaroo appends suffixes to gene IDs that don't exist in the original GFF:
 - `_pseudo` for pseudogene annotations
 - `_dup_N` for duplicate gene copies
 
 The map indexes both the original ID and stripped versions to maximize GFF matching success.
+
+The map is then read into one cluster for each name of the genome's
+`GffIndex` (4 bytes each, a `GeneClusters`) and dropped. Every later lookup is
+for a name the annotation uses, so this answers each one as the map did. The
+genomes are done in parallel.
 
 ---
 

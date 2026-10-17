@@ -33,6 +33,7 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_METRICS = REPO_ROOT / "benchmarks" / "search_scaling_metrics.tsv"
+DEFAULT_RICH_METRICS = REPO_ROOT / "benchmarks" / "search_scaling_rich_metrics.tsv"
 BASES = np.frombuffer(b"ACGT", dtype=np.uint8)
 STOPS = {b"TAA", b"TAG", b"TGA"}
 
@@ -44,7 +45,33 @@ def random_orf(rng: np.random.Generator, codons: int) -> bytes:
     return b"ATG" + b"".join(sense[:codons]) + b"TAA"
 
 
-def build_dataset(out: Path, n_genomes: int, n_genes: int, gaps: int, seed: int) -> dict:
+PRODUCTS = [
+    "DNA-directed RNA polymerase subunit beta",
+    "ATP-dependent Clp protease proteolytic subunit",
+    "PE family protein",
+    "hypothetical protein",
+    "ABC transporter ATP-binding protein",
+    "transcriptional regulator, TetR family",
+]
+
+
+def gff_attributes(genome: str, i: int, rich: bool) -> str:
+    """The CDS attributes: an ID and a locus tag, or a PGAP-style record with a
+    name, a product, a long note, cross-references and a protein ID, which is
+    what most real annotations carry and what an annotation index holds."""
+    tag = f"{genome}_{i:05d}"
+    if not rich:
+        return f"ID={tag};locus_tag={tag}"
+    return (
+        f"ID=cds-{tag};Parent=gene-{tag};Name=WP_{i:09d}.1;gene=gen{i:05d};locus_tag={tag};"
+        f"old_locus_tag=Rv{i:04d};protein_id=WP_{i:09d}.1;Dbxref=GenBank:WP_{i:09d}.1,GeneID:{1000000 + i};"
+        f"product={PRODUCTS[i % len(PRODUCTS)]};"
+        "Note=Derived by automated computational analysis using gene prediction method%3A Protein Homology. "
+        "GO_function%3A GO%3A0003677 - DNA binding [Evidence IEA]"
+    )
+
+
+def build_dataset(out: Path, n_genomes: int, n_genes: int, gaps: int, seed: int, rich_gff: bool = False) -> dict:
     """Write pa.csv, pan_ref.fa, genomes/ and annotations/ under `out`."""
     rng = np.random.default_rng(seed)
     genes = [random_orf(rng, int(rng.integers(250, 500))) for _ in range(n_genes)]
@@ -82,7 +109,7 @@ def build_dataset(out: Path, n_genomes: int, n_genes: int, gaps: int, seed: int)
             if i not in absent[g]:
                 gff_lines.append(
                     f"{genome}_1\tsynthetic\tCDS\t{pos + 1}\t{pos + len(gene)}\t.\t+\t0\t"
-                    f"ID={genome}_{i:05d};locus_tag={genome}_{i:05d}"
+                    + gff_attributes(genome, i, rich_gff)
                 )
             pos += len(gene)
         contig = bytearray(b"".join(seq_parts))
@@ -161,11 +188,19 @@ def main() -> int:
     parser.add_argument("--gaps", type=int, default=80, help="matrix gaps per genome, half of them false")
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--rich-gff",
+        action="store_true",
+        help="PGAP-style annotations (names, products, notes, cross-references) instead of an ID and a locus tag",
+    )
     parser.add_argument("--minimap2")
     parser.add_argument("--recore", help="recore binary (default: target/release/recore, built if missing)")
     parser.add_argument("--workdir", help="where datasets and outputs go (default: a temporary directory)")
     parser.add_argument("--keep-workdir", action="store_true")
-    parser.add_argument("--metrics", default=str(DEFAULT_METRICS))
+    parser.add_argument(
+        "--metrics",
+        help="output TSV (default: search_scaling_metrics.tsv, or search_scaling_rich_metrics.tsv with --rich-gff)",
+    )
     args = parser.parse_args()
 
     minimap2 = find_minimap2(args.minimap2)
@@ -187,7 +222,7 @@ def main() -> int:
             if data.exists():
                 shutil.rmtree(data)
             t0 = time.monotonic()
-            info = build_dataset(data, n, args.genes, args.gaps, args.seed)
+            info = build_dataset(data, n, args.genes, args.gaps, args.seed, args.rich_gff)
             print(f"{n} genomes: dataset in {time.monotonic() - t0:.0f}s ({info['genome_mb']} Mb each)", flush=True)
             cache = workdir / f"cache_{n}"
             if cache.exists():
@@ -199,6 +234,7 @@ def main() -> int:
                 "genomes": n,
                 "genome_mb": info["genome_mb"],
                 "genes_per_genome": args.genes,
+                "annotation": "rich" if args.rich_gff else "minimal",
                 "gaps_searched": plain["searched"],
                 "false_absences": info["false_absences"],
                 "rescued": plain["rescued"],
@@ -223,7 +259,7 @@ def main() -> int:
         if not args.keep_workdir and not args.workdir:
             shutil.rmtree(workdir, ignore_errors=True)
 
-    metrics = Path(args.metrics)
+    metrics = Path(args.metrics) if args.metrics else DEFAULT_RICH_METRICS if args.rich_gff else DEFAULT_METRICS
     metrics.parent.mkdir(parents=True, exist_ok=True)
     with open(metrics, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()), delimiter="\t")

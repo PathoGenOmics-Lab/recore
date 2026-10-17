@@ -11,9 +11,9 @@ mod synteny;
 mod types;
 
 pub use self::conflicts::resolve_conflicts;
-pub use self::genes::build_gene_to_cluster_with_gff_aliases;
+pub use self::genes::build_gene_clusters;
 pub(crate) use self::genes::{cell_gene_id_variants, panaroo_gene_id_suffix_variants};
-pub use self::gff::{GffGene, GffIndex};
+pub use self::gff::{GeneClusters, GffGene, GffIndex, GffRecord};
 pub(crate) use self::orf::reverse_complement;
 pub use self::orf::{
     check_internal_stops_in_cds, check_internal_stops_in_hit, check_internal_stops_in_span,
@@ -25,7 +25,7 @@ pub use self::types::{
 };
 
 #[cfg(test)]
-use self::genes::build_gene_to_cluster;
+use self::genes::{build_gene_to_cluster, build_gene_to_cluster_with_gff_aliases};
 #[cfg(test)]
 use self::orf::count_internal_stops;
 #[cfg(test)]
@@ -497,7 +497,7 @@ fn best_within_contig_chain(hits: &[&Hit]) -> Option<FragmentChain> {
 fn compatible_single_cds<'a>(
     chain: &FragmentChain,
     gff_index: Option<&'a GffIndex>,
-) -> Option<&'a GffGene> {
+) -> Option<GffGene<'a>> {
     let gff = gff_index?;
     let overlapping = gff.overlapping(&chain.contig, chain.start, chain.end);
     let span_len = chain.end.saturating_sub(chain.start) as f64;
@@ -539,10 +539,10 @@ fn classify_matched_gene(
     coverage: f64,
     ci: ClusterIdx,
     pa: &PresenceAbsence,
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    gene_to_cluster: &GeneClusters,
 ) -> (RescueType, f64) {
     let base_confidence = identity / 100.0 * coverage / 100.0;
-    if let Some(&other_ci) = gene_to_cluster.get(matched_gene_id) {
+    if let Some(other_ci) = gene_to_cluster.get(matched_gene_id) {
         if other_ci != ci {
             if identity >= 95.0 {
                 return (
@@ -636,7 +636,7 @@ fn detect_start_variant_from_span(
         }
         let overlap = end.min(gene.end).saturating_sub(start.max(gene.start)) as f64;
         if hit_len > 0.0 && overlap / hit_len > 0.8 {
-            return Some((start_diff, gene.gene_id.clone()));
+            return Some((start_diff, gene.gene_id.to_string()));
         }
     }
 
@@ -667,7 +667,7 @@ pub fn classify_hits(
     gi: GenomeIdx,
     pa: &PresenceAbsence,
     gff_index: Option<&GffIndex>,
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    gene_to_cluster: &GeneClusters,
     min_coverage: f64,
 ) -> Option<RescueEvent> {
     if hits.is_empty() {
@@ -863,14 +863,14 @@ pub fn classify_hits(
                 chain.evidence.note = Some("same_cds_alignment_split".to_string());
                 let (rescue_type, annotation_match, confidence) = {
                     let (rescue_type, confidence) = classify_matched_gene(
-                        &gene.gene_id,
+                        gene.gene_id,
                         chain.avg_identity,
                         chain.coverage,
                         ci,
                         pa,
                         gene_to_cluster,
                     );
-                    (rescue_type, Some(gene.gene_id.clone()), confidence)
+                    (rescue_type, Some(gene.gene_id.to_string()), confidence)
                 };
 
                 let (final_type, final_ann, final_conf) = if matches!(
@@ -1081,7 +1081,7 @@ fn classify_single_hit(
     ci: ClusterIdx,
     pa: &PresenceAbsence,
     gff_index: Option<&GffIndex>,
-    gene_to_cluster: &HashMap<String, ClusterIdx>,
+    gene_to_cluster: &GeneClusters,
 ) -> (RescueType, Option<String>, f64) {
     let base_confidence = hit.identity() / 100.0 * hit.query_coverage() / 100.0;
 
@@ -1118,12 +1118,12 @@ fn classify_single_hit(
     let Some((matched_gene, _recip)) = best_gene else {
         return (
             RescueType::Dropped,
-            Some(overlapping[0].gene_id.clone()),
+            Some(overlapping[0].gene_id.to_string()),
             base_confidence,
         );
     };
 
-    if let Some(&other_ci) = gene_to_cluster.get(&matched_gene.gene_id) {
+    if let Some(other_ci) = gene_to_cluster.get(matched_gene.gene_id) {
         if other_ci != ci {
             // Gene is annotated but assigned to a different Panaroo cluster.
             // High identity (≥95%) → SPLIT (same gene, mis-clustered by Panaroo).
@@ -1133,7 +1133,7 @@ fn classify_single_hit(
                     RescueType::Split {
                         other_cluster: pa.cluster_name(other_ci).to_string(),
                     },
-                    Some(matched_gene.gene_id.clone()),
+                    Some(matched_gene.gene_id.to_string()),
                     base_confidence * 1.1,
                 );
             } else {
@@ -1141,7 +1141,7 @@ fn classify_single_hit(
                     RescueType::Paralog {
                         other_cluster: pa.cluster_name(other_ci).to_string(),
                     },
-                    Some(matched_gene.gene_id.clone()),
+                    Some(matched_gene.gene_id.to_string()),
                     base_confidence * 0.7, // lower confidence: paralog, not real gene
                 );
             }
@@ -1150,7 +1150,7 @@ fn classify_single_hit(
 
     (
         RescueType::Dropped,
-        Some(matched_gene.gene_id.clone()),
+        Some(matched_gene.gene_id.to_string()),
         base_confidence,
     )
 }

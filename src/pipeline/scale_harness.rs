@@ -992,7 +992,7 @@ fn scale_report() {
     };
     // Evidence rows the way the pipeline builds them, so the per-cell
     // evidence panel and the kept-out cells are exercised at this size too.
-    let no_annotations: HashMap<GenomeIdx, HashMap<String, ClusterIdx>> = HashMap::new();
+    let no_annotations: HashMap<GenomeIdx, GeneClusters> = HashMap::new();
     let prevalences: Vec<f64> = (0..pa.n_clusters())
         .map(|ci| pa.prevalence(ClusterIdx(ci)))
         .collect();
