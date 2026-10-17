@@ -617,18 +617,21 @@ Recore writes structured log output to stderr. Use `-v` / `--verbose` for debug-
 
 ### Standard output (INFO level)
 
+This is the tutorial run from [Tutorial](../getting-started/tutorial.md), with
+timestamps removed:
+
 ```
-[INFO recore::pipeline] Parsed presence/absence: 4103 clusters × 479 genomes (core: 1539, soft-core 95%: 3781)
-[INFO recore::pipeline] Gaps: 91509 total, 91509 after prevalence filter (≥0%), 0 skipped
-[INFO recore::pipeline] Core genome (before): 1539 / 4103 clusters
-[INFO recore::pipeline] Loaded GFF annotations for 479 genomes
-[INFO recore::pipeline] Prepared batch search: 4103 queries × 479 genomes
-[INFO recore::pipeline] Built minimap2 index
+[INFO recore::parser] Parsed presence/absence: 24 clusters × 12 genomes (core: 14, soft-core 95%: 14)
+[INFO recore::pipeline] Gaps: 50 total, 39 after prevalence filter (≥10%), 11 skipped
+[INFO recore::pipeline] Core genome (before): 14 / 24 clusters
+[INFO recore::pipeline] Loaded GFF annotations for 12 genomes
+[INFO recore::search] Prepared search: 39 query sequences across 12 genomes, one minimap2 run per genome
+[INFO recore::pipeline] Raw rescues before filtering: 11
+[INFO recore::pipeline] Upgraded 3 sequence-only rescues to PSEUDOGENE:internal_stop
 [INFO recore::pipeline] Validating synteny...
-[INFO recore::pipeline] Synteny: 747 validated, 195 failed, 5 skipped (no flanking genes found)
-[INFO recore::pipeline] Synteny rejection: 947 → 752 rescues (195 explicit FAIL candidates written to synteny_rejected_report.tsv)
-[INFO recore::pipeline] Final rescues: 752 (DROPPED: 378, SPLIT: 206, ...)
-[INFO recore::pipeline] Core genome: 1539 → 1546 (+7)
+[INFO recore::pipeline] Synteny: 11 validated, 0 failed, 0 skipped (no flanking genes found)
+[INFO recore::pipeline] Final rescues: 11 (DROPPED: 6, MISSING_CDS: 2, SPLIT: 0, FRAGMENTED: 0, ALIGNMENT_SPLIT: 0, START_VARIANT: 0, PARALOG: 0, PSEUDOGENE: 3)
+[INFO recore::pipeline] Core genome: 14 → 17 (+3)
 ```
 
 ### Verbose output (DEBUG level, with -v)

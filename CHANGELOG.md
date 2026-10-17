@@ -9,6 +9,14 @@ and Recore uses semantic versioning.
 
 ### Changed
 
+- `--min-identity` and every identity threshold now compare against exact
+  identity. It used to read 5 to 10 points low, so more distant copies clear the
+  default of 90 than before; raise it for clonal species. The tutorial's paralog
+  trap is now an 85% copy, since a 96% annotated copy at the orthologous locus
+  is a `DROPPED` rescue by the rules as written.
+- The separate exact missing-CDS pass is gone. It reran every genome to recover
+  candidates the shared secondary budget had hidden, and with per-genome search
+  it found nothing new.
 - Gzip inputs are now read strictly: bytes after the final gzip member are an
   error instead of being ignored, so a `.gz` file carrying NUL padding, a stray
   newline or appended junk is refused where it used to be read as far as its
@@ -210,6 +218,24 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- Rescues are no longer lost on large pangenomes. Every genome was searched in
+  one shared minimap2 target, so once more than about fifty genomes carried a
+  gene their copies used up the secondary budget and the gap genomes' hits were
+  dropped, with exit code 0: 400 genomes with 10 planted false absences gave
+  back none. Each gap genome is now searched alone, which also stops a weaker
+  copy or the pieces of a split gene being cut for scoring under half a
+  carrier's copy. On 60 MTB-sized genomes with 2,443 planted false absences,
+  2,108 came back before and all of them now, in a third of the time with
+  `--synteny` and a quarter of the memory.
+- Identity is exact. The main search ran without base-level alignment, so a
+  99.6% identical gene read as 93.6%, and `--min-identity 95` cut the tutorial
+  from 11 rescues to 3. It also misfiled a gene at a locus with no CDS as
+  `DROPPED` instead of `MISSING_CDS` when its approximate identity fell under
+  95%. Short genes are kept in every exact pass, and one SNP near either end no
+  longer clips an alignment short of the gene's end.
+- A genome FASTA with sequence before its first header, an empty or non-UTF-8
+  contig name, or one contig name used twice now fails with the file and line.
+  The first was spliced onto the previous genome's last contig.
 - Gzipped inputs are read to the end of the file instead of stopping at the
   first gzip member. `bgzip`, which is what samtools, bcftools and tabix write,
   emits one member per block, so a bgzipped genome or annotation reached the

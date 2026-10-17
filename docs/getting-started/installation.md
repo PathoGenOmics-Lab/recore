@@ -8,7 +8,7 @@
 | [minimap2](https://github.com/lh3/minimap2) | any recent release, on `PATH` | every sequence search |
 | [MMseqs2](https://github.com/soedinglab/MMseqs2) | optional | alignment-based nucleotide similarity clustering with `--nsc-engine mmseqs2` |
 
-minimap2 is not optional. Recore shells out to it for the batch search, and a
+minimap2 is not optional. Recore shells out to it for the search, and a
 run fails immediately if it is not on `PATH`.
 
 ## From source

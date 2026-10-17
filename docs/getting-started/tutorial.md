@@ -81,8 +81,9 @@ Read that against what was planted:
 - **11 rescues** is exactly the 11 planted cells, split into `DROPPED` 6
   (`Rv0003` and `Rv0012`), `MISSING_CDS` 2 (`Rv0006`) and `PSEUDOGENE` 3
   (`Rv0009`).
-- **`PARALOG: 0`**: the diverged copy in `L4_AS00404` did not clear the evidence
-  bar, so it produced nothing at all. It must not, and it did not.
+- **`PARALOG: 0`**: the diverged copy in `L4_AS00404` is 85% identical, under
+  the 90% `--min-identity` bar, so it produced nothing at all. It must not,
+  and it did not.
 
 ## 3. Eleven found, eight corrected
 
@@ -143,22 +144,27 @@ done
 | Policy | With `--synteny` | Without |
 |--------|------------------|---------|
 | `strict` | 8 | **0** |
-| `balanced` | 8 | 8 |
-| `sensitive` | 11 | 8 |
+| `balanced` | 8 | 6 |
+| `sensitive` | 11 | 9 |
 
 Three things fall out of that table:
 
 - **`strict` without annotation context corrects nothing.** It only accepts
   same-locus evidence, and without synteny none of the eight correctable cells
-  has any: they come through as `SEQUENCE_ONLY`, which strict does not take.
-  (The other three are `PSEUDOGENE` either way.) Strict is not "balanced but
-  fussier", it is a different question.
-- **`balanced` does not care.** Full-length sequence evidence is enough for it,
-  so the eight cells are corrected either way. What changes is the provenance:
-  `STRICT_PRESENT` with synteny, `SEQUENCE_ONLY` without.
+  has any: six come through as `SEQUENCE_ONLY` and the two `Rv0006` cells as
+  `MISSING_CDS_UNVALIDATED`, and strict takes neither. (The other three are
+  `PSEUDOGENE` either way.) Strict is not "balanced but fussier", it is a
+  different question.
+- **`balanced` takes full-length sequence, but not an unconfirmed locus.** The
+  six `Rv0003` and `Rv0012` cells sit on annotated CDSs, so they are corrected
+  either way; what changes is the provenance, `STRICT_PRESENT` with synteny and
+  `SEQUENCE_ONLY` without. The two `Rv0006` cells are a gene with no CDS
+  annotated over it. Only synteny can say the locus is where the gene belongs,
+  so without it balanced holds them back as audit-only.
 - **`sensitive` with synteny reaches 11.** The extra three are the `Rv0009`
   pseudogenes. That is the policy saying "a disrupted homologue counts as
   presence", which is a claim you have to be willing to make in writing.
+  Without synteny it still takes them, and still holds back `Rv0006`.
 
 ## 5. Read the multistate matrix
 
