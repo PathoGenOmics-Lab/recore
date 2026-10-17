@@ -1669,45 +1669,106 @@ fn matched_phylo_tips(node: &PhyloNode) -> usize {
     }
 }
 
-fn pruned_phylo_json(node: &PhyloNode) -> Option<String> {
+/// The tree as the explorer reads it: only tips that are matrix genomes, and no
+/// one-child nodes (a chain of them collapses into its child, branch lengths
+/// summed), so a reroot in the browser cannot grow a nameless tip.
+///
+/// Iterative throughout: a ladder-shaped tree is as deep as it has tips, and the
+/// recursive version overflowed the stack and copied every subtree's text once
+/// per level above it.
+pub(super) fn pruned_phylo_json(root: &PhyloNode) -> Option<String> {
     use std::fmt::Write as _;
 
-    if node.children.is_empty() {
-        let gi = node.genome_idx?;
-        let mut out = String::new();
-        let length = node
-            .branch_length
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "null".to_string());
-        write!(
-            out,
-            "{{\"label\":{},\"genome\":{},\"length\":{},\"children\":[]}}",
-            json_script_escape(node.label.as_deref().unwrap_or("")),
-            gi.val(),
-            length
-        )
-        .expect("write to String is infallible");
-        return Some(out);
+    // Flatten in pre-order; children keep their order.
+    let mut nodes: Vec<&PhyloNode> = Vec::new();
+    let mut children: Vec<Vec<usize>> = Vec::new();
+    let mut stack = vec![(root, usize::MAX)];
+    while let Some((node, parent)) = stack.pop() {
+        let idx = nodes.len();
+        nodes.push(node);
+        children.push(Vec::new());
+        if parent != usize::MAX {
+            children[parent].push(idx);
+        }
+        for child in node.children.iter().rev() {
+            stack.push((child, idx));
+        }
     }
-
-    let children: Vec<String> = node.children.iter().filter_map(pruned_phylo_json).collect();
-    if children.is_empty() {
+    // Children come after their parent, so one backward pass sees every
+    // subtree before the node that holds it.
+    let mut kept: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    let mut keep = vec![false; nodes.len()];
+    for idx in (0..nodes.len()).rev() {
+        if children[idx].is_empty() {
+            keep[idx] = nodes[idx].genome_idx.is_some();
+        } else {
+            kept[idx] = children[idx].iter().copied().filter(|&c| keep[c]).collect();
+            keep[idx] = !kept[idx].is_empty();
+        }
+    }
+    if !keep[0] {
         return None;
     }
+    let collapse = |mut idx: usize| -> (usize, Option<f64>) {
+        let mut length = nodes[idx].branch_length;
+        while kept[idx].len() == 1 {
+            let child = kept[idx][0];
+            length = match (length, nodes[child].branch_length) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+            };
+            idx = child;
+        }
+        (idx, length)
+    };
 
+    enum Step {
+        Enter(usize, Option<f64>, bool),
+        Exit,
+    }
     let mut out = String::new();
-    let length = node
-        .branch_length
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "null".to_string());
-    write!(
-        out,
-        "{{\"label\":{},\"genome\":null,\"length\":{},\"children\":[{}]}}",
-        json_script_escape(node.label.as_deref().unwrap_or("")),
-        length,
-        children.join(",")
-    )
-    .expect("write to String is infallible");
+    let (top, top_length) = collapse(0);
+    let mut steps = vec![Step::Enter(top, top_length, false)];
+    while let Some(step) = steps.pop() {
+        let (idx, length, comma) = match step {
+            Step::Exit => {
+                out.push_str("]}");
+                continue;
+            }
+            Step::Enter(idx, length, comma) => (idx, length, comma),
+        };
+        if comma {
+            out.push(',');
+        }
+        let node = nodes[idx];
+        let label = json_script_escape(node.label.as_deref().unwrap_or(""));
+        let length = length
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        if kept[idx].is_empty() {
+            let gi = node.genome_idx.expect("only tips with a genome are kept");
+            write!(
+                out,
+                "{{\"label\":{},\"genome\":{},\"length\":{},\"children\":[]}}",
+                label,
+                gi.val(),
+                length
+            )
+            .expect("write to String is infallible");
+            continue;
+        }
+        write!(
+            out,
+            "{{\"label\":{},\"genome\":null,\"length\":{},\"children\":[",
+            label, length
+        )
+        .expect("write to String is infallible");
+        steps.push(Step::Exit);
+        for (k, &child) in kept[idx].iter().enumerate().rev() {
+            let (child, child_length) = collapse(child);
+            steps.push(Step::Enter(child, child_length, k > 0));
+        }
+    }
     Some(out)
 }
 

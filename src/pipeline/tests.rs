@@ -442,11 +442,11 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("let syntenyHidden = true"));
     assert!(text.contains("selectedSyntenyReference"));
     assert!(text.contains("id='syntenySvg'"));
-    assert!(text.contains("treeEdgeStyle"));
+    assert!(text.contains("treeEdgeColor"));
     assert!(text.contains("subtreeLineage"));
     assert!(text.contains("\"synteny\""));
     assert!(text.contains("selectedSyntenyBlock"));
-    assert!(text.contains("synteny-tip-ring"));
+    assert!(text.contains("function tidyTree"));
     assert!(text.contains("genomeBits"));
     assert!(text.contains("syntenyCarrierIndices"));
     assert!(text.contains("referenceGenes"));
@@ -2544,4 +2544,73 @@ fn genome_qc_does_not_review_genomes_without_corrections() {
     assert_eq!(status["g0"].0, "pass");
     assert_eq!(status["g7"].0, "review");
     assert!(status["g7"].1.contains("correction_burden_above_cohort"));
+}
+
+fn tip(name: &str, genome: Option<usize>, length: f64) -> PhyloNode {
+    PhyloNode {
+        label: Some(name.into()),
+        genome_idx: genome.map(GenomeIdx),
+        branch_length: Some(length),
+        children: Vec::new(),
+    }
+}
+
+fn inner(children: Vec<PhyloNode>, length: Option<f64>) -> PhyloNode {
+    PhyloNode {
+        label: None,
+        genome_idx: None,
+        branch_length: length,
+        children,
+    }
+}
+
+/// A clade with no matrix genome is dropped, and a node left with one child
+/// collapses into it with the lengths summed: a unary node became a nameless
+/// tip, painted present in every core column, after a reroot in the browser.
+#[test]
+fn tree_json_drops_unmatched_tips_and_collapses_unary_nodes() {
+    let tree = inner(
+        vec![
+            inner(vec![tip("a", Some(0), 1.0)], Some(2.0)),
+            inner(vec![tip("unmatched", None, 1.0)], Some(3.0)),
+            inner(
+                vec![tip("b", Some(1), 0.5), tip("c", Some(2), 0.25)],
+                Some(4.0),
+            ),
+        ],
+        None,
+    );
+    let json = output::pruned_phylo_json(&tree).unwrap();
+    assert!(!json.contains("unmatched"));
+    assert!(json.contains("{\"label\":\"a\",\"genome\":0,\"length\":3,\"children\":[]}"));
+    assert_eq!(json.matches("\"genome\":null").count(), 2, "{json}");
+    // No node of the output has exactly one child.
+    assert!(!json
+        .contains("\"children\":[{\"label\":\"a\",\"genome\":0,\"length\":3,\"children\":[]}]}"));
+    assert!(output::pruned_phylo_json(&tip("x", None, 1.0)).is_none());
+}
+
+/// A ladder tree is as deep as it has tips. The writer must not recurse: run it
+/// on a 50,000-level ladder in a thread with a 2 MB stack.
+#[test]
+fn tree_json_handles_a_fifty_thousand_level_ladder() {
+    let handle = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| {
+            let depth = 50_000;
+            let mut node = tip("t0", Some(0), 1.0);
+            for i in 1..depth {
+                node = inner(vec![node, tip(&format!("t{i}"), Some(i), 1.0)], Some(0.5));
+            }
+            let json = output::pruned_phylo_json(&node).unwrap();
+            let tips = json.matches("\"children\":[]").count();
+            // Take the tree apart by hand: dropping it would recurse too.
+            let mut stack = vec![node];
+            while let Some(mut n) = stack.pop() {
+                stack.extend(std::mem::take(&mut n.children));
+            }
+            tips
+        })
+        .unwrap();
+    assert_eq!(handle.join().unwrap(), 50_000);
 }

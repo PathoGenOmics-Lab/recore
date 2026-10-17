@@ -2700,6 +2700,10 @@ input.switch:focus-visible {
   text-overflow: ellipsis;
 }
 
+.pane-head small.warn {
+  color: var(--warning);
+}
+
 .pane-head .legend {
   margin-left: auto;
   font-size: 12px;

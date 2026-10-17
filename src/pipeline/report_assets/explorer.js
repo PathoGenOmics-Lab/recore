@@ -136,10 +136,10 @@ const lineageDescriptions = {
   L6:"West African 2 (M. africanum)",
   L9:"East African",
   L10:"Horn of Africa",
-  A1:"Animal-adapted",
-  A2:"Animal-adapted",
-  A3:"Animal-adapted",
-  A4:"Animal-adapted",
+  A1:"Animal-associated",
+  A2:"Animal-associated",
+  A3:"Animal-associated",
+  A4:"Animal-associated",
   L8:"African Great Lakes",
   "M. canettii":"Outgroup",
   unknown:"Lineage not parsed from genome name",
@@ -304,6 +304,8 @@ let overviewKey = "";
    before that during start-up. */
 let afterRender = null;
 let treeRoot = data.tree;
+let leafByGenome = new Map();
+let offTreeGenomes = [];
 
 /* ---- Cell decoding -------------------------------------------------------
    Cells arrive as one base64 blob per cluster holding the genome indices that
@@ -891,21 +893,7 @@ function burdenOf(mode, stats) {
   return [stats.R + stats.N, maxGenomeStats.correction, colors.R, "corrected or NSC cells"];
 }
 function subtreeLineage(node) {
-  if (node._subtreeLineage !== undefined) return node._subtreeLineage;
-  if (!node.children || !node.children.length) {
-    node._subtreeLineage = lineageOfGenomeName(tipName(node));
-    return node._subtreeLineage;
-  }
-  const childLineages = (node.children || []).map(subtreeLineage);
-  const first = childLineages[0] || "unknown";
-  node._subtreeLineage = childLineages.every(lineage => lineage === first) ? first : "mixed";
-  return node._subtreeLineage;
-}
-function treeEdgeStyle(child) {
-  if (colorMode.value !== "lineage") return "";
-  const lineage = subtreeLineage(child);
-  if (!lineage || lineage === "mixed") return "";
-  return ` style="stroke:${lineageColor(lineage)};stroke-width:1.35;stroke-opacity:.82"`;
+  return node._lineage || "unknown";
 }
 function selectedSyntenyBlockData() {
   const cluster = data.clusters[selected];
@@ -942,37 +930,62 @@ function syntenyCarrierIndices(block) {
   }
   return out;
 }
+/* ---- Tree walks ------------------------------------------------------------
+   Every walk uses an explicit stack. A ladder-shaped tree of 10,000 tips is
+   10,000 levels deep, and the recursive versions threw RangeError past about
+   2,500 levels, which left the whole workspace blank. */
+function copyNode(node) {
+  return {label: node.label || "", genome: node.genome, length: Number(node.length || 0), children: []};
+}
 function cloneNode(node) {
-  return {
-    label: node.label || "",
-    genome: node.genome,
-    length: Number(node.length || 0),
-    children: (node.children || []).map(cloneNode),
-  };
+  const root = copyNode(node);
+  const stack = [[node, root]];
+  while (stack.length) {
+    const [source, target] = stack.pop();
+    for (const child of source.children || []) {
+      const copy = copyNode(child);
+      target.children.push(copy);
+      stack.push([child, copy]);
+    }
+  }
+  return root;
+}
+/** Nodes with every parent before its children, leaves left to right. */
+function preorder(root) {
+  const out = [];
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    out.push(node);
+    const children = node.children || [];
+    for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
+  }
+  return out;
+}
+function isLeaf(node) {
+  return !node.children || !node.children.length;
+}
+function hasGenome(node) {
+  return node.genome !== null && node.genome !== undefined;
 }
 function tipName(node) {
-  return node.genome === null || node.genome === undefined
+  return !hasGenome(node)
     ? (node.label || "")
     : (data.genomes[node.genome] || node.label || "");
 }
 function isL8Tip(node) {
-  return (!node.children || !node.children.length) && /^L8[_-]/.test(tipName(node));
+  return isLeaf(node) && /^L8[_-]/.test(tipName(node));
 }
-function assignTreeIds(node, parent, nodes, edges) {
-  const id = nodes.length;
-  node._id = id;
-  node._parent = parent;
-  nodes.push(node);
-  (node.children || []).forEach(child => {
-    const childId = assignTreeIds(child, node, nodes, edges);
-    const length = Number(child.length || 0);
-    edges.push([id, childId, length]);
-  });
-  return id;
-}
-function collectL8Leaves(node, out) {
-  if (isL8Tip(node)) out.push(node);
-  (node.children || []).forEach(child => collectL8Leaves(child, out));
+function assignTreeIds(root, nodes, edges) {
+  root._parent = null;
+  for (const node of preorder(root)) {
+    node._id = nodes.length;
+    nodes.push(node);
+    for (const child of node.children || []) child._parent = node;
+  }
+  for (const node of nodes) {
+    for (const child of node.children || []) edges.push([node._id, child._id, Number(child.length || 0)]);
+  }
 }
 function commonAncestor(nodes) {
   if (!nodes.length) return null;
@@ -993,60 +1006,98 @@ function commonAncestor(nodes) {
   }
   return mrca;
 }
+function treeHasTip(root, test) {
+  return preorder(root).some(node => isLeaf(node) && test(node));
+}
+/* Drops leaves that carry no genome, which rerooting turned an unmatched or
+   unary branch into: such a tip drew a nameless row painted present in every
+   core column. Collapses one-child nodes into their child, summing the branch
+   lengths. Counts tips and marks L8 subtrees once per node, so sorting the
+   children costs nothing more. */
+function tidyTree(root, sortBy) {
+  const order = preorder(root);
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const node = order[i];
+    const kept = [];
+    for (let child of node.children || []) {
+      if (isLeaf(child) && !hasGenome(child)) continue;
+      while (child.children.length === 1) {
+        const only = child.children[0];
+        only.length = Number(only.length || 0) + Number(child.length || 0);
+        child = only;
+      }
+      kept.push(child);
+    }
+    node.children = kept;
+    node._tips = kept.length ? kept.reduce((sum, child) => sum + child._tips, 0) : (hasGenome(node) ? 1 : 0);
+    node._l8 = kept.length ? kept.some(child => child._l8) : isL8Tip(node);
+    if (sortBy === "l8") kept.sort((x, y) => Number(y._l8) - Number(x._l8) || y._tips - x._tips);
+    else if (sortBy === "tips") kept.sort((x, y) => y._tips - x._tips);
+  }
+  let top = root;
+  while (top.children.length === 1) top = top.children[0];
+  top.length = 0;
+  return top;
+}
 function rootByL8(node) {
   const root = cloneNode(node);
   const nodes = [];
-  const edges = [];
-  assignTreeIds(root, null, nodes, edges);
-  const leaves = [];
-  collectL8Leaves(root, leaves);
+  assignTreeIds(root, nodes, []);
+  const leaves = nodes.filter(isL8Tip);
   if (!leaves.length) return root;
   const rootNode = leaves.length === 1 && leaves[0]._parent ? leaves[0]._parent : commonAncestor(leaves);
-  const adj = nodes.map(() => []);
-  edges.forEach(([a, b, length]) => {
-    adj[a].push({id:b, length});
-    adj[b].push({id:a, length});
-  });
-  function build(id, parentId, length) {
-    const source = nodes[id];
-    const children = adj[id]
-      .filter(edge => edge.id !== parentId)
-      .map(edge => build(edge.id, id, edge.length));
-    children.sort((a, b) => Number(hasL8Tip(b)) - Number(hasL8Tip(a)) || countTips(b) - countTips(a));
-    return {label: source.label || "", genome: source.genome, length, children};
+  const {adj} = graphOf(nodes);
+  return buildFrom(nodes, adj, rootNode ? rootNode._id : root._id, null, 0);
+}
+function findLeafByGenome(_node, genomeIdx) {
+  return leafByGenome.get(genomeIdx) || null;
+}
+/* Depth and distance on the way down; rows, row spans and the lineage of each
+   subtree on the way up. One pass each, whatever the shape of the tree. */
+function layoutTree(root) {
+  leafOrder = [];
+  leafByGenome = new Map();
+  maxDepth = 0;
+  maxDistance = 0;
+  const order = preorder(root);
+  root.depth = 0;
+  root.distance = 0;
+  for (const node of order) {
+    if (node.depth > maxDepth) maxDepth = node.depth;
+    if (node.distance > maxDistance) maxDistance = node.distance;
+    if (isLeaf(node)) {
+      node.row = leafOrder.length;
+      leafOrder.push(node.genome);
+      leafByGenome.set(node.genome, node);
+      continue;
+    }
+    for (const child of node.children) {
+      child.depth = node.depth + 1;
+      child.distance = node.distance + Number(child.length || 0);
+    }
   }
-  return build(rootNode ? rootNode._id : root._id, null, 0);
-}
-function hasL8Tip(node) {
-  return isL8Tip(node) || (node.children || []).some(hasL8Tip);
-}
-function countTips(node) {
-  if (!node.children || !node.children.length) return 1;
-  return node.children.reduce((sum, child) => sum + countTips(child), 0);
-}
-function findLeafByGenome(node, genomeIdx) {
-  if ((!node.children || !node.children.length) && node.genome === genomeIdx) return node;
-  for (const child of node.children || []) {
-    const found = findLeafByGenome(child, genomeIdx);
-    if (found) return found;
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const node = order[i];
+    if (isLeaf(node)) {
+      node._span = {first: node.row, last: node.row};
+      node._lineage = lineageOfGenomeName(tipName(node));
+      continue;
+    }
+    let sum = 0;
+    let first = Infinity;
+    let last = -Infinity;
+    const lineage = node.children[0]._lineage;
+    let same = true;
+    for (const child of node.children) {
+      sum += child.row;
+      if (child._span.first < first) first = child._span.first;
+      if (child._span.last > last) last = child._span.last;
+      if (child._lineage !== lineage) same = false;
+    }
+    node.row = sum / node.children.length;
+    node._span = {first, last};
+    node._lineage = same ? lineage : "mixed";
   }
-  return null;
-}
-function layout(node, depth, distance = 0) {
-  node.depth = depth;
-  node.distance = distance;
-  maxDepth = Math.max(maxDepth, depth);
-  maxDistance = Math.max(maxDistance, distance);
-  if (!node.children || node.children.length === 0) {
-    node.row = leafOrder.length;
-    leafOrder.push(node.genome);
-    return node.row;
-  }
-  let sum = 0;
-  let count = 0;
-  node.children.forEach(child => { sum += layout(child, depth + 1, distance + Number(child.length || 0)); count += 1; });
-  node.row = count ? sum / count : leafOrder.length;
-  return node.row;
 }
 /* Keeps the selection inside the visible set and repaints the find field. This
    used to build one <option> per cluster on every keystroke, which at 30,000
@@ -1131,42 +1182,6 @@ function xForNode(node) {
     return tipX;
   }
   return 14 + node.depth * (usable / Math.max(1, maxDepth));
-}
-function drawNode(node, parts) {
-  const x = xForNode(node);
-  const y = node.row * cellH + cellH / 2;
-  if (node.children && node.children.length) {
-    node.children.forEach(child => {
-      const cx = xForNode(child);
-      const cy = child.row * cellH + cellH / 2;
-      const branchTitle = treeMode === "phylogram" ? `<title>branch length ${formatBranchLength(child.length)}</title>` : "";
-      const edgeStyle = treeEdgeStyle(child);
-      parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge"${edgeStyle}>${branchTitle}</line>`);
-      parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"${edgeStyle}/>`);
-      drawNode(child, parts);
-    });
-  } else {
-    const style = tipStyle(node.genome);
-    const label = data.genomes[node.genome] || node.label || "";
-    const radius = Math.max(0.18, Math.min(5, cellH / 2 - 0.08));
-    const strokeWidth = Math.max(0.2, Math.min(1.2, cellH * 0.45));
-    parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="${strokeWidth}"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
-    if (highlightedRows.has(node.row)) {
-    treeCtx.strokeStyle = "#0ea5e9";
-    treeCtx.lineWidth = 1.6;
-    treeCtx.beginPath();
-    treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
-    treeCtx.stroke();
-  }
-  if (isSelectedSyntenyCarrier(node.genome)) {
-      const ringRadius = radius + Math.max(1.2, Math.min(3, cellH * 0.30));
-      const ringTitle = selectedSyntenyReference ? "selected H37Rv reference context" : `selected synteny #${selectedSyntenyBlock + 1}`;
-      parts.push(`<circle cx="${x}" cy="${y}" r="${ringRadius}" class="synteny-tip-ring"><title>${escapeHtml(label)}: ${escapeHtml(ringTitle)}</title></circle>`);
-    }
-    if (labelToggle.checked && leafOrder.length <= 1500 && cellH >= 4) {
-      parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
-    }
-  }
 }
 function formatBranchLength(value) {
   const n = Number(value || 0);
@@ -1876,7 +1891,16 @@ function setupDragHandle(handle, side) {
   });
 }
 function treeCaption() {
-  const rootLabel = hasL8Tip(treeRoot) ? "L8-rooted" : "input-rooted";
+  // Read the mode, not the tips: an L8 tip in the tree said "L8-rooted" under
+  // every root.
+  const mode = rootMode ? rootMode.value : defaultRootMode;
+  const rootLabel = mode === "l8"
+    ? "L8-rooted"
+    : mode === "midpoint"
+      ? "midpoint-rooted"
+      : mode.startsWith("genome:")
+        ? `rooted on ${data.genomes[Number(mode.slice(7))] || "a genome"}`
+        : "rooted as supplied";
   return treeMode === "phylogram" && maxDistance > 0
     ? `phylogram, ${rootLabel}, longest root-to-tip path ${formatBranchLength(maxDistance)}`
     : `cladogram, ${rootLabel}, branch lengths ignored`;
@@ -1885,8 +1909,17 @@ function updateTopBarMeta() {
   if (topTreeMeta) {
     // Short in the header, full text on hover: the caption is the first thing
     // that should give way when the pane narrows.
-    topTreeMeta.textContent = plural(leafOrder.length, "tip");
-    topTreeMeta.setAttribute("data-tip", `${plural(leafOrder.length, "matched tip")} · ${treeCaption()}`);
+    // Matrix genomes the tree does not have are not drawn; say so instead of
+    // letting "10 genomes" in the top bar and 4 rows on screen disagree.
+    const offTree = offTreeGenomes;
+    topTreeMeta.textContent = offTree.length
+      ? `${plural(leafOrder.length, "tip")} · ${formatInt(offTree.length)} not on the tree`
+      : plural(leafOrder.length, "tip");
+    topTreeMeta.classList.toggle("warn", offTree.length > 0);
+    const missing = offTree.length
+      ? ` · not on the tree, so not drawn: ${offTree.slice(0, 20).join(", ")}${offTree.length > 20 ? `, and ${formatInt(offTree.length - 20)} more` : ""}`
+      : "";
+    topTreeMeta.setAttribute("data-tip", `${plural(leafOrder.length, "matched tip")} · ${treeCaption()}${missing}`);
   }
   if (topMatrixMeta) topMatrixMeta.textContent = `${formatInt(visibleClusters.length)} / ${plural(data.clusters.length, "cluster")}`;
   if (topSyntenyMeta) {
@@ -1917,6 +1950,11 @@ function referenceMechanismRow(cluster) {
     // making the reader look up what "P" means.
     const spelled = labels[refState] || refState;
     bits.push(`State in reference: <strong>${escapeHtml(spelled)}</strong>`);
+  }
+  if (!bits.length && !data.referenceGenome) {
+    // Without --reference-genome nothing was looked up, so "no equivalent
+    // detected" claimed a search that never ran.
+    return `<dt>Reference (audit)</dt><dd class="muted">No reference genome supplied (--reference-genome).</dd>`;
   }
   if (!bits.length) {
     const mechanism = processKind(cluster);
@@ -2221,25 +2259,38 @@ function fitLabel(text, maxWidth) {
    be the reader's choice rather than whatever the Newick happened to carry.
    assignTreeIds already yields an adjacency list, so rooting anywhere is a
    matter of picking the node and rebuilding downwards from it. */
+function graphOf(nodes) {
+  const adj = nodes.map(() => []);
+  for (const node of nodes) {
+    for (const child of node.children || []) {
+      const length = Number(child.length || 0);
+      adj[node._id].push({id: child._id, length});
+      adj[child._id].push({id: node._id, length});
+    }
+  }
+  return {adj};
+}
 function treeGraph(node) {
   const root = cloneNode(node);
   const nodes = [];
-  const edges = [];
-  assignTreeIds(root, null, nodes, edges);
-  const adj = nodes.map(() => []);
-  edges.forEach(([a, b, length]) => {
-    adj[a].push({id: b, length: Number(length) || 0});
-    adj[b].push({id: a, length: Number(length) || 0});
-  });
-  return {root, nodes, adj};
+  assignTreeIds(root, nodes, []);
+  return {root, nodes, adj: graphOf(nodes).adj};
 }
-function buildFrom(nodes, adj, id, parentId, length) {
-  const source = nodes[id];
-  const children = adj[id]
-    .filter(edge => edge.id !== parentId)
-    .map(edge => buildFrom(nodes, adj, edge.id, id, edge.length));
-  children.sort((a, b) => countTips(b) - countTips(a));
-  return {label: source.label || "", genome: source.genome, length, children};
+function buildFrom(nodes, adj, rootId, parentId = null, length = 0) {
+  const root = copyNode(nodes[rootId]);
+  root.length = length;
+  const stack = [[rootId, parentId, root]];
+  while (stack.length) {
+    const [id, from, target] = stack.pop();
+    for (const edge of adj[id]) {
+      if (edge.id === from) continue;
+      const child = copyNode(nodes[edge.id]);
+      child.length = edge.length;
+      target.children.push(child);
+      stack.push([edge.id, id, child]);
+    }
+  }
+  return root;
 }
 /** Farthest node from a start, by summed branch length. */
 function farthestFrom(adj, start) {
@@ -2261,28 +2312,40 @@ function farthestFrom(adj, start) {
   return {best, dist, prev};
 }
 /* Midpoint rooting: the two most distant tips define the tree's diameter, and
-   the root goes halfway along the path between them. */
-function midpointRoot(nodes, adj) {
-  if (!adj.length) return 0;
+   the root goes exactly halfway along the path between them, splitting the
+   edge that straddles the midpoint. Rooting on the nearer end of that edge put
+   every root distance off by up to half an edge. */
+function midpointTree(nodes, adj) {
+  if (nodes.length <= 1) return buildFrom(nodes, adj, 0);
   const first = farthestFrom(adj, 0).best;
   const {best: second, dist, prev} = farthestFrom(adj, first);
   const half = dist[second] / 2;
-  let cursor = second;
-  while (prev[cursor] >= 0 && dist[cursor] > half) {
-    const parent = prev[cursor];
-    // Stop at whichever end of the straddling edge is nearer the midpoint.
-    if (dist[parent] <= half) {
-      return half - dist[parent] <= dist[cursor] - half ? parent : cursor;
-    }
-    cursor = parent;
+  if (!(half > 0)) {
+    // No lengths to halve: root beside the tip, never on it, so it stays a tip.
+    const next = adj[first][0];
+    return buildFrom(nodes, adj, next ? next.id : first);
   }
-  return cursor;
+  let cursor = second;
+  while (prev[cursor] >= 0 && dist[prev[cursor]] > half) cursor = prev[cursor];
+  const parent = prev[cursor];
+  const eps = 1e-12 * Math.max(1, half);
+  if (parent < 0 || Math.abs(dist[cursor] - half) <= eps) return buildFrom(nodes, adj, cursor);
+  if (Math.abs(dist[parent] - half) <= eps) return buildFrom(nodes, adj, parent);
+  return {
+    label: "",
+    genome: null,
+    length: 0,
+    children: [
+      buildFrom(nodes, adj, cursor, parent, dist[cursor] - half),
+      buildFrom(nodes, adj, parent, cursor, half - dist[parent]),
+    ],
+  };
 }
 function rerootTree(mode) {
-  if (mode === "input") return cloneNode(data.tree);
-  if (mode === "l8") return rootByL8(data.tree);
+  if (mode === "input") return tidyTree(cloneNode(data.tree), "none");
+  if (mode === "l8") return tidyTree(rootByL8(data.tree), "l8");
   const {nodes, adj} = treeGraph(data.tree);
-  if (mode === "midpoint") return buildFrom(nodes, adj, midpointRoot(nodes, adj), null, 0);
+  if (mode === "midpoint") return tidyTree(midpointTree(nodes, adj), "tips");
   if (mode.startsWith("genome:")) {
     const genomeIdx = Number(mode.slice(7));
     const id = nodes.findIndex(n => n.genome === genomeIdx);
@@ -2290,18 +2353,16 @@ function rerootTree(mode) {
       // Root on the tip's parent, so the chosen genome hangs off the root as an
       // outgroup rather than becoming a degenerate root itself.
       const parent = adj[id][0];
-      return buildFrom(nodes, adj, parent ? parent.id : id, null, 0);
+      return tidyTree(buildFrom(nodes, adj, parent ? parent.id : id, null, 0), "tips");
     }
   }
-  return rootByL8(data.tree);
+  return tidyTree(hasL8 ? rootByL8(data.tree) : cloneNode(data.tree), hasL8 ? "l8" : "none");
 }
 /** Rebuild layout state after the displayed root changes. */
 function applyRoot(mode) {
   treeRoot = rerootTree(mode);
-  leafOrder = [];
-  maxDepth = 0;
-  maxDistance = 0;
-  layout(treeRoot, 0, 0);
+  layoutTree(treeRoot);
+  offTreeGenomes = data.genomes.filter((_, gi) => !leafByGenome.has(gi));
   buildRowOfGenome();
   resetMatrixCache();
   syntenyKey = "";
@@ -2326,61 +2387,63 @@ function renderTree() {
   drawTreeNode(treeRoot, top, firstRow, lastRow, view.h, showLabels);
   renderLineageStrip(view.h, top, firstRow, lastRow);
 }
-function drawTreeNode(node, top, firstRow, lastRow, viewH, showLabels) {
-  const rowSpan = nodeRowSpan(node);
-  // Whole subtrees outside the band cost nothing.
-  if (rowSpan.last < firstRow || rowSpan.first > lastRow) return;
-  const x = xForNode(node);
-  const y = node.row * cellH + cellH / 2 - top;
-  if (node.children && node.children.length) {
-    for (const child of node.children) {
-      const childSpan = nodeRowSpan(child);
-      if (childSpan.last < firstRow || childSpan.first > lastRow) continue;
-      const cx = xForNode(child);
-      const cy = child.row * cellH + cellH / 2 - top;
-      treeCtx.strokeStyle = treeEdgeColor(child);
-      treeCtx.beginPath();
-      treeCtx.moveTo(x, cy);
-      treeCtx.lineTo(cx, cy);
-      treeCtx.moveTo(x, y);
-      treeCtx.lineTo(x, cy);
-      treeCtx.stroke();
-      drawTreeNode(child, top, firstRow, lastRow, viewH, showLabels);
+function drawTreeNode(root, top, firstRow, lastRow, viewH, showLabels) {
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    // Whole subtrees outside the band cost nothing.
+    if (node._span.last < firstRow || node._span.first > lastRow) continue;
+    const x = xForNode(node);
+    const y = node.row * cellH + cellH / 2 - top;
+    if (!isLeaf(node)) {
+      for (const child of node.children) {
+        if (child._span.last < firstRow || child._span.first > lastRow) continue;
+        const cx = xForNode(child);
+        const cy = child.row * cellH + cellH / 2 - top;
+        treeCtx.strokeStyle = treeEdgeColor(child);
+        treeCtx.beginPath();
+        treeCtx.moveTo(x, cy);
+        treeCtx.lineTo(cx, cy);
+        treeCtx.moveTo(x, y);
+        treeCtx.lineTo(x, cy);
+        treeCtx.stroke();
+        stack.push(child);
+      }
+      continue;
     }
-    return;
-  }
-  if (node.row < firstRow || node.row >= lastRow) return;
-  const style = tipStyle(node.genome);
-  const radius = Math.max(0.5, Math.min(4.5, cellH / 2 - 0.5));
-  treeCtx.fillStyle = style.fill;
-  treeCtx.beginPath();
-  treeCtx.arc(x, y, radius, 0, Math.PI * 2);
-  treeCtx.fill();
-  if (radius >= 1.5) {
-    treeCtx.strokeStyle = style.stroke;
-    treeCtx.lineWidth = 1;
-    treeCtx.stroke();
-  }
-  if (highlightedRows.has(node.row)) {
-    treeCtx.strokeStyle = "#0ea5e9";
-    treeCtx.lineWidth = 1.6;
+    if (node.row < firstRow || node.row >= lastRow) continue;
+    const style = tipStyle(node.genome);
+    const radius = Math.max(0.5, Math.min(4.5, cellH / 2 - 0.5));
+    treeCtx.fillStyle = style.fill;
     treeCtx.beginPath();
-    treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
-    treeCtx.stroke();
-  }
-  if (isSelectedSyntenyCarrier(node.genome)) {
-    treeCtx.strokeStyle = "#f97316";
-    treeCtx.lineWidth = 1.4;
-    treeCtx.beginPath();
-    treeCtx.arc(x, y, radius + Math.max(1.4, Math.min(3, cellH * 0.3)), 0, Math.PI * 2);
-    treeCtx.stroke();
-  }
-  if (showLabels) {
-    treeCtx.fillStyle = labelInk;
-    treeCtx.font = LABEL_FONT;
-    treeCtx.textBaseline = "middle";
-    treeCtx.textAlign = "left";
-    treeCtx.fillText(fitTipLabel(data.genomes[node.genome] || ""), x + radius + 4, y);
+    treeCtx.arc(x, y, radius, 0, Math.PI * 2);
+    treeCtx.fill();
+    if (radius >= 1.5) {
+      treeCtx.strokeStyle = style.stroke;
+      treeCtx.lineWidth = 1;
+      treeCtx.stroke();
+    }
+    if (highlightedRows.has(node.row)) {
+      treeCtx.strokeStyle = "#0ea5e9";
+      treeCtx.lineWidth = 1.6;
+      treeCtx.beginPath();
+      treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
+      treeCtx.stroke();
+    }
+    if (isSelectedSyntenyCarrier(node.genome)) {
+      treeCtx.strokeStyle = "#f97316";
+      treeCtx.lineWidth = 1.4;
+      treeCtx.beginPath();
+      treeCtx.arc(x, y, radius + Math.max(1.4, Math.min(3, cellH * 0.3)), 0, Math.PI * 2);
+      treeCtx.stroke();
+    }
+    if (showLabels) {
+      treeCtx.fillStyle = labelInk;
+      treeCtx.font = LABEL_FONT;
+      treeCtx.textBaseline = "middle";
+      treeCtx.textAlign = "left";
+      treeCtx.fillText(fitTipLabel(data.genomes[node.genome] || ""), x + radius + 4, y);
+    }
   }
 }
 function fitTipLabel(text) {
@@ -2395,19 +2458,6 @@ function fitTipLabel(text) {
 }
 /** Row span covered by a subtree, memoised: used to skip offscreen branches. */
 function nodeRowSpan(node) {
-  if (node._span) return node._span;
-  if (!node.children || !node.children.length) {
-    node._span = {first: node.row, last: node.row};
-    return node._span;
-  }
-  let first = Infinity;
-  let last = -Infinity;
-  for (const child of node.children) {
-    const span = nodeRowSpan(child);
-    if (span.first < first) first = span.first;
-    if (span.last > last) last = span.last;
-  }
-  node._span = {first, last};
   return node._span;
 }
 function treeEdgeColor(child) {
@@ -2642,7 +2692,18 @@ function resetMatrixCache() {
   hoverCol = -1;
 }
 refreshThemeColors();
-const defaultRootMode = hasL8Tip(data.tree) ? "l8" : "input";
+const hasL8 = treeHasTip(data.tree, isL8Tip);
+const defaultRootMode = hasL8 ? "l8" : "input";
+if (rootMode) {
+  // No L8 tip, no L8 outgroup to offer.
+  const l8Option = [...rootMode.options].find(option => option.value === "l8");
+  if (l8Option && !hasL8) l8Option.remove();
+}
+// Lineage colouring only means something when some tip names a lineage.
+if (!treeHasTip(data.tree, node => lineageOfGenomeName(tipName(node)) !== "unknown")) {
+  const lineageOption = [...colorMode.options].find(option => option.value === "lineage");
+  if (lineageOption) lineageOption.remove();
+}
 applyRoot(defaultRootMode);
 if (rootMode) rootMode.value = defaultRootMode;
 computeGenomeStats();
