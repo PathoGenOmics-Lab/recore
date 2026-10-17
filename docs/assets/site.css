@@ -2,74 +2,9 @@
    opens from a clone as well as from GitHub Pages. The cell colours are the
    report's, so the page teaches the report's visual language. */
 
+/* Dark by default, whatever the system says; light only when chosen with the
+   toggle, which the report shares (its key is recore.theme). */
 :root {
-  --bg: #fbfbfa;
-  --bg-elev: #ffffff;
-  --bg-subtle: #f3f4f6;
-  --ink: #16171d;
-  --ink-soft: #3d3f48;
-  --muted: #5f616b;
-  --line: #e4e5e9;
-  --line-strong: #cfd1d7;
-  --brand-a: #02a79e;
-  --brand-b: #0265ba;
-  --brand-c: #3912c0;
-  --grad-a: #02a79e;
-  --grad-b: #0265ba;
-  --grad-c: #3912c0;
-  --accent: #0b5cc4;
-  --accent-hover: #0849a0;
-  --accent-soft: #e8f0fc;
-  --code-bg: #12141b;
-  --code-ink: #e6e8ef;
-  --code-muted: #8b90a0;
-  --code-flag: #7cc4ff;
-  --code-value: #f4c27a;
-  --present: #b3bbc7;
-  --rescue: #0f6fd6;
-  --nsc: #e07b00;
-  --kept: #c01048;
-  --absent: #eef0f3;
-  --absent-stroke: #d2d5db;
-  --ok: #0f7a52;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 1px 2px rgba(16, 18, 27, 0.06), 0 8px 24px rgba(16, 18, 27, 0.06);
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0c0d10;
-    --bg-elev: #15171c;
-    --bg-subtle: #1b1d23;
-    --ink: #f3f4f6;
-    --ink-soft: #d6d8de;
-    --muted: #a2a5b0;
-    --line: #262830;
-    --line-strong: #383b45;
-    --grad-a: #35d4c8;
-    --grad-b: #5aa8ff;
-    --grad-c: #a493ff;
-    --accent: #5aa2ff;
-    --accent-hover: #86baff;
-    --accent-soft: #14243b;
-    --code-bg: #090a0d;
-    --present: #5d6676;
-    --rescue: #4b9bff;
-    --nsc: #ff9a2e;
-    --kept: #ff4f80;
-    --absent: #1f2128;
-    --absent-stroke: #454856;
-    --ok: #3fcf8e;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme="dark"] {
   --bg: #0c0d10;
   --bg-elev: #15171c;
   --bg-subtle: #1b1d23;
@@ -78,13 +13,21 @@
   --muted: #a2a5b0;
   --line: #262830;
   --line-strong: #383b45;
+  --brand-a: #02a79e;
+  --brand-b: #0265ba;
+  --brand-c: #3912c0;
   --grad-a: #35d4c8;
   --grad-b: #5aa8ff;
   --grad-c: #a493ff;
   --accent: #5aa2ff;
   --accent-hover: #86baff;
   --accent-soft: #14243b;
+  --on-accent: #0a1220;
   --code-bg: #090a0d;
+  --code-ink: #e6e8ef;
+  --code-muted: #8b90a0;
+  --code-flag: #7cc4ff;
+  --code-value: #f4c27a;
   --present: #5d6676;
   --rescue: #4b9bff;
   --nsc: #ff9a2e;
@@ -92,8 +35,40 @@
   --absent: #1f2128;
   --absent-stroke: #454856;
   --ok: #3fcf8e;
+  --radius: 12px;
+  --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #fbfbfa;
+  --bg-elev: #ffffff;
+  --bg-subtle: #f3f4f6;
+  --ink: #16171d;
+  --ink-soft: #3d3f48;
+  --muted: #5f616b;
+  --line: #e4e5e9;
+  --line-strong: #cfd1d7;
+  --grad-a: #02a79e;
+  --grad-b: #0265ba;
+  --grad-c: #3912c0;
+  --accent: #0b5cc4;
+  --accent-hover: #0849a0;
+  --accent-soft: #e8f0fc;
+  --on-accent: #ffffff;
+  --code-bg: #12141b;
+  --present: #b3bbc7;
+  --rescue: #0f6fd6;
+  --nsc: #e07b00;
+  --kept: #c01048;
+  --absent: #eef0f3;
+  --absent-stroke: #d2d5db;
+  --ok: #0f7a52;
+  --shadow: 0 1px 2px rgba(16, 18, 27, 0.06), 0 8px 24px rgba(16, 18, 27, 0.06);
+  color-scheme: light;
 }
 
 *,
@@ -221,26 +196,16 @@ p {
   display: block;
 }
 
-.logo-dark {
+.logo-light {
   display: none !important;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .logo-light {
-    display: none !important;
-  }
-
-  :root:not([data-theme="light"]) .logo-dark {
-    display: block !important;
-  }
-}
-
-:root[data-theme="dark"] .logo-light {
-  display: none !important;
-}
-
-:root[data-theme="dark"] .logo-dark {
+:root[data-theme="light"] .logo-light {
   display: block !important;
+}
+
+:root[data-theme="light"] .logo-dark {
+  display: none !important;
 }
 
 .nav {
@@ -262,6 +227,38 @@ p {
 .nav a[aria-current="page"] {
   color: var(--ink);
   background: var(--bg-subtle);
+}
+
+.gh-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  flex: none;
+}
+
+.gh-link:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.gh-link svg {
+  width: 17px;
+  height: 17px;
+}
+
+@media (max-width: 420px) {
+  .gh-link span {
+    display: none;
+  }
 }
 
 .icon-btn {
@@ -309,26 +306,20 @@ p {
   line-height: 1.2;
 }
 
+.btn svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .btn-primary:hover {
   background: var(--accent-hover);
-  color: #fff;
-}
-
-:root[data-theme="dark"] .btn-primary,
-:root[data-theme="dark"] .btn-primary:hover {
-  color: #0a1220;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .btn-primary,
-  :root:not([data-theme="light"]) .btn-primary:hover {
-    color: #0a1220;
-  }
+  color: var(--on-accent);
 }
 
 .btn-ghost {
@@ -414,6 +405,7 @@ p {
 /* The animated matrix: genes across, genomes down. */
 
 .demo {
+  position: relative;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -434,6 +426,52 @@ p {
 .demo-step {
   font-weight: 650;
   color: var(--ink-soft);
+}
+
+.demo-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.mini-btn {
+  border: 1px solid var(--line-strong);
+  background: var(--bg-subtle);
+  color: var(--ink-soft);
+  font: 600 0.78rem var(--font);
+  padding: 4px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  color: var(--ink);
+}
+
+.grid .cell:hover {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.cell-tip {
+  position: absolute;
+  z-index: 5;
+  max-width: 250px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.cell-tip b {
+  display: block;
+  margin-bottom: 2px;
 }
 
 .grid {
@@ -668,6 +706,13 @@ p {
   tab-size: 2;
 }
 
+/* A one-line command that would hide under the copy button wraps instead;
+   what is copied is the text, not the wrapping. */
+.code.wrap pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .code .p {
   color: var(--code-muted);
   user-select: none;
@@ -798,17 +843,7 @@ p {
 .seg button[aria-pressed="true"] {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
-}
-
-:root[data-theme="dark"] .seg button[aria-pressed="true"] {
-  color: #0a1220;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .seg button[aria-pressed="true"] {
-    color: #0a1220;
-  }
+  color: var(--on-accent);
 }
 
 .opt {
@@ -1057,21 +1092,11 @@ p {
 
 .report-cover span {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   padding: 11px 18px;
   border-radius: 10px;
   font-weight: 650;
   box-shadow: var(--shadow);
-}
-
-:root[data-theme="dark"] .report-cover span {
-  color: #0a1220;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .report-cover span {
-    color: #0a1220;
-  }
 }
 
 .report-stage.live .report-cover {
@@ -1102,7 +1127,7 @@ p {
   width: 100%;
   height: 720px;
   border: 0;
-  background: #fff;
+  background: var(--bg-elev);
 }
 
 .hints {
@@ -1149,13 +1174,26 @@ p {
 
 .policy {
   position: relative;
+  /* A button centres what it holds; the cards read from the top. */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 20px;
+  cursor: pointer;
 }
 
-.policy.recommended {
+.policy:hover {
+  border-color: var(--line-strong);
+}
+
+.policy[aria-pressed="true"] {
   border: 2px solid var(--accent);
   padding: 19px;
 }
@@ -1165,7 +1203,7 @@ p {
   top: -11px;
   left: 18px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1174,24 +1212,20 @@ p {
   border-radius: 999px;
 }
 
-:root[data-theme="dark"] .badge {
-  color: #0a1220;
+.policy-name {
+  display: block;
+  font-weight: 700;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .badge {
-    color: #0a1220;
-  }
-}
-
-.policy h3 code {
+.policy-name code {
   font-size: 1.02rem;
   background: none;
   border: none;
   padding: 0;
 }
 
-.policy p {
+.policy-text {
+  display: block;
   color: var(--ink-soft);
   font-size: 0.93rem;
   margin-top: 8px;
@@ -1217,9 +1251,100 @@ p {
 }
 
 .policy .meter-label {
+  display: block;
   font-size: 0.8rem;
   color: var(--muted);
   margin-top: 6px;
+}
+
+/* What the chosen policy puts back, out of ten genes Recore found. */
+
+.evidence {
+  margin-top: 18px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.ev-head {
+  font-weight: 650;
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+}
+
+.ev-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 5px 0;
+}
+
+.ev-cells {
+  display: flex;
+  gap: 5px;
+}
+
+.ev-cell {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--absent);
+  box-shadow: inset 0 0 0 1px var(--absent-stroke);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.ev-cell.rescued {
+  background: var(--rescue);
+  box-shadow: none;
+  transform: scale(1.06);
+}
+
+.ev-cell.kept {
+  background: var(--absent);
+  box-shadow: inset 0 0 0 2px var(--kept);
+  background-image: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--kept) 45%, transparent) 3px 4.5px);
+}
+
+.ev-label {
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+}
+
+.ev-sum {
+  margin-top: 12px;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.ev-sum b {
+  color: var(--ink);
+}
+
+/* ── Where the project lives ── */
+
+.cta {
+  background:
+    radial-gradient(60% 120% at 0% 0%, color-mix(in srgb, var(--brand-b) 22%, transparent), transparent 70%),
+    radial-gradient(60% 120% at 100% 100%, color-mix(in srgb, var(--brand-c) 22%, transparent), transparent 70%);
+}
+
+.cta-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.cta p {
+  color: var(--ink-soft);
+  margin-top: 8px;
+}
+
+.cta .actions {
+  margin-top: 0;
 }
 
 /* ── FAQ ── */

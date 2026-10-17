@@ -100,6 +100,10 @@ and Recore uses semantic versioning.
   have, if the reference misses an option or gets a default wrong, or if the
   example run no longer gives the counts the page promises. The long-form pages
   stay as markdown, rendered on GitHub, and MkDocs is gone from the repository.
+  The site opens dark whatever the system setting, with a light toggle the
+  embedded report follows; pointing at a cell of the opening matrix says what
+  happened to it; the policy section shows which of ten found genes each policy
+  puts back; and GitHub is a button in the header, the opening and the end.
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
   Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
   or `held_out_quality` instead of a `corrected...` value, and a strict
