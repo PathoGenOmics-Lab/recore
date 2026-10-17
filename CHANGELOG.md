@@ -9,6 +9,14 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- Large runs are faster and use less memory, with identical outputs.
+  `cluster_synteny_blocks.tsv` held every cluster's blocks before writing the
+  first and was built in one thread: on 200 genomes of 4,000 genes, half the run
+  and 1.2 GB. It is now built in parallel a chunk of clusters at a time and
+  written in the same order, byte for byte. Synteny validation runs per cluster
+  in parallel (a rescue only reads its own cluster's reference contexts), and
+  GFF loading and the internal-stop scan per genome. On that dataset a run went
+  from 16.0 to 7.4 seconds and its peak memory from 3.3 to 0.8 GB.
 - `evolutionary_events.tsv` no longer presents a gain or loss built on gaps
   Recore never searched as an audited call. New columns `absent_not_searched`
   and `not_searched_reason` count those absences and say why; a call none of
@@ -223,6 +231,24 @@ and Recore uses semantic versioning.
 
 ### Added
 
+- `gene_presence_absence_recore.Rtab`, the corrected matrix as 1/0 in Panaroo's
+  Rtab layout, written in the same pass as the CSV so the two cannot disagree.
+- `--write-rescued-fasta` writes `rescued_genes.fna` and `rescued_genes.faa`:
+  every cell the binary matrix gained, read in the gene's direction and
+  translated with the bacterial code from the phase its alignment fixes, under
+  the corrected GFF's feature IDs.
+- Input from PPanGGOLiN (`matrix.csv` and its family FASTA), PanTA and PIRATE
+  (`PIRATE.gene_families.tsv` and `representative_sequences.ffn`), each checked
+  on real output. PIRATE's table is read into Panaroo's layout, its fissions
+  `(a:b)` are understood, and PanTA's `sample-contig-gene` IDs now match the
+  GFF; before, synteny validated nothing on PanTA input and no rescue reached
+  the matrix.
+- `--search-cache DIR` keeps minimap2's results between runs, keyed by genome,
+  query sequence, the search settings and the minimap2 version. A rerun with
+  another policy, coverage, synteny or prevalence setting aligns only what it
+  has not seen, and writes exactly what an uncached run writes.
+- `benchmarks/search_scaling.py` and its table: run time and memory from 100 to
+  800 MTBC-sized genomes.
 - The report can pin two genomes: their rows stay in a band under the column
   header whatever the scroll, and the genome card counts the clusters where
   they differ (noting differences that rest on a gap never searched), lists

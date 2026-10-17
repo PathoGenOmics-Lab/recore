@@ -128,8 +128,51 @@ pub fn check_internal_stops_in_span(
     (n_stops > 0).then_some(n_stops)
 }
 
+/// Translate a coding sequence with the bacterial code (NCBI table 11), from
+/// its first base, one amino acid per whole codon, with `*` for stops and `X`
+/// for a codon with an ambiguous base. A final stop codon is left off. When
+/// `from_start_codon`, the first codon is the gene's start and reads as `M`
+/// whatever table 11 start it is (GTG and TTG included), as a CDS does.
+pub fn translate_bacterial(seq: &[u8], from_start_codon: bool) -> String {
+    const STARTS: [&[u8; 3]; 7] = [b"ATG", b"GTG", b"TTG", b"CTG", b"ATT", b"ATC", b"ATA"];
+    let mut protein = String::with_capacity(seq.len() / 3);
+    for (i, codon) in seq.chunks_exact(3).enumerate() {
+        let upper = [
+            codon[0].to_ascii_uppercase(),
+            codon[1].to_ascii_uppercase(),
+            codon[2].to_ascii_uppercase(),
+        ];
+        if i == 0 && from_start_codon && STARTS.contains(&&upper) {
+            protein.push('M');
+            continue;
+        }
+        protein.push(codon_amino_acid(upper));
+    }
+    if protein.ends_with('*') {
+        protein.pop();
+    }
+    protein
+}
+
+/// The standard genetic code, which table 11 shares outside start codons.
+fn codon_amino_acid(codon: [u8; 3]) -> char {
+    let index = |base: u8| match base {
+        b'T' | b'U' => Some(0),
+        b'C' => Some(1),
+        b'A' => Some(2),
+        b'G' => Some(3),
+        _ => None,
+    };
+    // Codons in TCAG order: first base slowest, third fastest.
+    const TABLE: &[u8; 64] = b"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG";
+    match (index(codon[0]), index(codon[1]), index(codon[2])) {
+        (Some(a), Some(b), Some(c)) => TABLE[a * 16 + b * 4 + c] as char,
+        _ => 'X',
+    }
+}
+
 /// Reverse complement a DNA sequence.
-pub(super) fn reverse_complement(seq: &[u8]) -> Vec<u8> {
+pub(crate) fn reverse_complement(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()
         .map(|&b| match b {

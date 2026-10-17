@@ -129,6 +129,26 @@ For new runs, prefer the integrated report flag:
 recore ... --write-html-report -o recore_output
 ```
 
+## Search scaling benchmark
+
+`search_scaling.py` measures how a run grows with the number of genomes, on
+synthetic MTBC-sized datasets: one 4.9 Mb contig and 4,000 genes per genome,
+and per genome 40 false absences (gene in the assembly, not in the matrix or
+the GFF) and 40 true ones (gene gone). Each size runs three times with the
+release binary and `--synteny`: without a search cache, with a cold one and
+with the warm one.
+
+```bash
+python3 benchmarks/search_scaling.py --genomes 100 200 400 800 --threads 8 \
+  --minimap2 /path/to/minimap2
+```
+
+It writes `benchmarks/search_scaling_metrics.tsv`: wall seconds for each of the
+three runs, seconds per genome, peak memory and the rescue count (which should
+equal the false absences planted). The datasets are generated afresh and
+removed afterwards unless `--keep-workdir` is given. The numbers belong to the
+machine they ran on, which the table records; the shape is what carries over.
+
 ## AMAP performance benchmark
 
 `amap_performance_benchmark.py` profiles Recore on the full local AMAP

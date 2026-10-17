@@ -1,0 +1,5 @@
+genomes	genome_mb	genes_per_genome	gaps_searched	false_absences	rescued	threads	seconds_no_cache	seconds_cold_cache	seconds_warm_cache	seconds_per_genome	peak_rss_mb	recore	minimap2	machine
+100	4.91	4000	8000	4000	3999	8	3.4	3.4	2.4	0.034	461	recore 0.2.0	2.31-r1302	arm64 Darwin 14 cpus
+200	4.91	4000	16000	8000	8000	8	7.1	7.9	6.1	0.035	762	recore 0.2.0	2.31-r1302	arm64 Darwin 14 cpus
+400	4.91	4000	32000	16000	16000	8	18.0	18.5	13.0	0.045	1456	recore 0.2.0	2.31-r1302	arm64 Darwin 14 cpus
+800	4.91	4000	64000	32000	32000	8	48.1	50.1	38.1	0.06	2570	recore 0.2.0	2.31-r1302	arm64 Darwin 14 cpus

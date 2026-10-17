@@ -72,6 +72,20 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub write_corrected_gff: bool,
 
+    /// Write rescued_genes.fna and rescued_genes.faa: the sequence of every cell
+    /// the binary matrix gained, for functional annotation. The IDs are those of
+    /// the features --write-corrected-gff writes.
+    #[arg(long, default_value_t = false)]
+    pub write_rescued_fasta: bool,
+
+    /// Keep minimap2 results in this directory and reuse them on later runs. A
+    /// rerun that changes the matrix policy, coverage, synteny or prevalence
+    /// settings searches only what was not searched before; a changed genome,
+    /// query sequence, preset, --min-identity or minimap2 version is searched
+    /// afresh.
+    #[arg(long, value_name = "DIR")]
+    pub search_cache: Option<PathBuf>,
+
     /// Write a self-contained HTML run report.
     #[arg(long, default_value_t = false)]
     pub write_html_report: bool,

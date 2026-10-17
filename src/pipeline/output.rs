@@ -38,6 +38,18 @@ pub(super) fn write_corrected_csv(
 
     csv_writer.write_record(pa.header())?;
 
+    // The same matrix as 1/0, Panaroo's gene_presence_absence.Rtab layout, which
+    // is what pyseer, Scoary-style scripts and most R code read. Written in the
+    // same pass, so it cannot disagree with the CSV on any cell.
+    let rtab_path = output_dir.join("gene_presence_absence_recore.Rtab");
+    let rtab_file = fs::File::create(&rtab_path)
+        .with_context(|| format!("Cannot create {}", rtab_path.display()))?;
+    let mut rtab = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_writer(BufWriter::with_capacity(256 * 1024, rtab_file));
+    rtab.write_record(std::iter::once("Gene").chain(pa.genome_names().iter().map(String::as_str)))?;
+    let mut rtab_row: Vec<&str> = Vec::with_capacity(pa.n_genomes() + 1);
+
     let genome_idx_set: ahash::HashSet<usize> = pa.genome_col_indices().iter().copied().collect();
     let meta_col_indices: Vec<usize> = (0..pa.header().len())
         .filter(|i| !genome_idx_set.contains(i))
@@ -73,6 +85,8 @@ pub(super) fn write_corrected_csv(
 
         let mut isolate_count = 0usize;
         let mut sequence_count = 0usize;
+        rtab_row.clear();
+        rtab_row.push(pa.cluster_name(ci));
         for (gi_val, &col_idx) in pa.genome_col_indices().iter().enumerate() {
             let gi = GenomeIdx(gi_val);
             if let Some(r) = rescue_map.get(&(ci, gi)) {
@@ -85,6 +99,7 @@ pub(super) fn write_corrected_csv(
                 isolate_count += 1;
                 sequence_count += 1;
                 counts.rescued_cells += 1;
+                rtab_row.push("1");
             } else if nsc_presence.contains(&(ci_val, gi_val)) {
                 // Gene absent in this cluster but present in a merged NSC member
                 row[col_idx].clear();
@@ -92,6 +107,7 @@ pub(super) fn write_corrected_csv(
                 isolate_count += 1;
                 sequence_count += 1;
                 counts.nsc_cells += 1;
+                rtab_row.push("1");
             } else {
                 row[col_idx].clear();
                 let cell = pa.cell(ci, gi);
@@ -99,11 +115,14 @@ pub(super) fn write_corrected_csv(
                 if !cell.trim().is_empty() {
                     isolate_count += 1;
                     sequence_count += cell_sequence_count(cell);
+                    rtab_row.push("1");
                 } else {
                     counts.absent_cells += 1;
+                    rtab_row.push("0");
                 }
             }
         }
+        rtab.write_record(&rtab_row)?;
 
         use std::fmt::Write as FmtWrite;
         if let Some(col) = isolates_col {
@@ -127,6 +146,8 @@ pub(super) fn write_corrected_csv(
         csv_writer.write_record(row.iter().map(|s| s.as_str()))?;
     }
     csv_writer.flush()?;
+    rtab.flush()
+        .with_context(|| format!("Cannot write {}", rtab_path.display()))?;
     Ok(counts)
 }
 
@@ -142,6 +163,8 @@ pub(super) fn clear_optional_outputs(output_dir: &std::path::Path) -> Result<()>
         "cluster_synteny_blocks.tsv",
         "recore_report.html",
         "recore_report.md",
+        "rescued_genes.fna",
+        "rescued_genes.faa",
     ] {
         let path = output_dir.join(filename);
         match fs::remove_file(&path) {
@@ -650,6 +673,133 @@ pub(super) fn write_corrected_gffs(
     Ok(())
 }
 
+/// The sequence of every cell the binary matrix gained, as nucleotides read in
+/// the gene's direction and, where the reading frame is known, as protein.
+///
+/// IDs are the corrected GFF's feature IDs, so a sequence can be traced to its
+/// feature and back; coordinates, strand and phase are the GFF's too. The
+/// protein starts at the phase the alignment fixes and uses the bacterial code
+/// (table 11). A rescue built from several alignments has no single frame and
+/// gets no protein; its nucleotide record says `phase=unknown`.
+pub(super) fn write_rescued_fasta(
+    rescues: &[&RescueEvent],
+    pa: &crate::parser::PresenceAbsence,
+    genome_files: &HashMap<String, PathBuf>,
+    output_dir: &std::path::Path,
+) -> Result<(usize, usize)> {
+    let mut by_genome: std::collections::BTreeMap<GenomeIdx, Vec<&RescueEvent>> =
+        std::collections::BTreeMap::new();
+    for rescue in rescues {
+        by_genome.entry(rescue.genome_idx).or_default().push(rescue);
+    }
+    let fna_path = output_dir.join("rescued_genes.fna");
+    let faa_path = output_dir.join("rescued_genes.faa");
+    let mut fna = BufWriter::new(
+        fs::File::create(&fna_path)
+            .with_context(|| format!("Cannot create {}", fna_path.display()))?,
+    );
+    let mut faa = BufWriter::new(
+        fs::File::create(&faa_path)
+            .with_context(|| format!("Cannot create {}", faa_path.display()))?,
+    );
+    let (mut n_nucleotide, mut n_protein) = (0usize, 0usize);
+    for (gi, mut rows) in by_genome {
+        let genome_name = pa.genome_name(gi);
+        let Some(fasta_path) = genome_files.get(genome_name) else {
+            continue;
+        };
+        let contigs = crate::parser::load_genome_contigs(fasta_path)
+            .with_context(|| format!("Cannot read genome {} for its rescued genes", genome_name))?;
+        rows.sort_by(|a, b| {
+            a.contig
+                .cmp(&b.contig)
+                .then(a.start.cmp(&b.start))
+                .then(a.end.cmp(&b.end))
+                .then(a.cluster_idx.cmp(&b.cluster_idx))
+        });
+        for rescue in rows {
+            let Some(contig) = contigs.get(&rescue.contig) else {
+                anyhow::bail!(
+                    "Rescue on contig {} is not in genome {}",
+                    rescue.contig,
+                    fasta_path.display()
+                );
+            };
+            let (start, end) = (rescue.start as usize, rescue.end as usize);
+            if start >= end || end > contig.len() {
+                anyhow::bail!(
+                    "Rescue {}:{}-{} lies outside contig {} of genome {}",
+                    rescue.contig,
+                    start + 1,
+                    end,
+                    rescue.contig,
+                    genome_name
+                );
+            }
+            let span = &contig[start..end];
+            let oriented = if rescue.strand == '-' {
+                crate::rescue::reverse_complement(span)
+            } else {
+                span.to_ascii_uppercase()
+            };
+            let cluster = pa.cluster_name(rescue.cluster_idx);
+            let id = format!(
+                "recore_{}_{}_{}_{}",
+                safe_id_component(cluster),
+                safe_id_component(&rescue.contig),
+                rescue.start + 1,
+                rescue.end
+            );
+            let phase = rescue.query_start.map(|qs| ((3 - qs % 3) % 3) as usize);
+            let description = format!(
+                "genome={} gene_cluster={} locus={}:{}-{}({}) rescue_type={} phase={}",
+                genome_name,
+                cluster,
+                rescue.contig,
+                rescue.start + 1,
+                rescue.end,
+                rescue.strand,
+                rescue.rescue_type,
+                phase.map_or_else(|| "unknown".to_string(), |p| p.to_string())
+            );
+            writeln!(fna, ">{id} {description}")?;
+            write_wrapped(&mut fna, &oriented)?;
+            n_nucleotide += 1;
+            if let Some(phase) = phase.filter(|&p| p < oriented.len()) {
+                // The representative begins at its start codon, so an alignment
+                // from its first base starts on the gene's own start codon.
+                let protein = crate::rescue::translate_bacterial(
+                    &oriented[phase..],
+                    rescue.query_start == Some(0),
+                );
+                if !protein.is_empty() {
+                    writeln!(faa, ">{id} {description}")?;
+                    write_wrapped(&mut faa, protein.as_bytes())?;
+                    n_protein += 1;
+                }
+            }
+        }
+    }
+    fna.flush()?;
+    faa.flush()?;
+    info!(
+        "Rescued gene sequences: {} nucleotide and {} protein records in {}",
+        n_nucleotide,
+        n_protein,
+        output_dir.display()
+    );
+    Ok((n_nucleotide, n_protein))
+}
+
+/// FASTA sequence lines of 60 characters.
+fn write_wrapped(w: &mut impl Write, seq: &[u8]) -> Result<()> {
+    for chunk in seq.chunks(60) {
+        w.write_all(chunk)?;
+        w.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
 pub(super) fn count_core_after(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
@@ -1036,6 +1186,19 @@ pub(super) fn write_run_manifest(
         w,
         "    \"write_corrected_gff\": {},",
         args.write_corrected_gff
+    )?;
+    writeln!(
+        w,
+        "    \"write_rescued_fasta\": {},",
+        args.write_rescued_fasta
+    )?;
+    writeln!(
+        w,
+        "    \"search_cache\": {},",
+        args.search_cache
+            .as_deref()
+            .map(|dir| json_escape(&dir.display().to_string()))
+            .unwrap_or_else(|| "null".to_string())
     )?;
     writeln!(w, "    \"write_html_report\": {},", args.write_html_report)?;
     if let Some(reference_genome) = args.reference_genome.as_deref() {
@@ -1763,6 +1926,7 @@ fn count_items_html(
 fn output_file_description(name: &str) -> &'static str {
     match name {
         "gene_presence_absence_recore.csv" => "Corrected binary matrix",
+        "gene_presence_absence_recore.Rtab" => "Corrected binary matrix as 1/0, for Rtab readers",
         "gene_presence_absence_recore_states.csv" => {
             "Multistate matrix: input, corrected, NSC, kept-out and not-searched codes"
         }
@@ -1804,6 +1968,7 @@ pub(super) fn output_file_entries(output_dir: &std::path::Path) -> Vec<String> {
     let rank = |name: &str| {
         [
             "gene_presence_absence_recore.csv",
+            "gene_presence_absence_recore.Rtab",
             "orthology_evidence.tsv",
             "gene_presence_absence_recore_states.csv",
             "rescue_report.tsv",

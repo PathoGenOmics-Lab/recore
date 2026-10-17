@@ -2,13 +2,34 @@
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `gene_presence_absence.csv` | yes | Panaroo-style matrix: metadata columns followed by one column per genome |
+| `gene_presence_absence.csv` | yes | Panaroo-style matrix: metadata columns followed by one column per genome. Roary, PPanGGOLiN and PanTA write this layout, and PIRATE's own table is read too (see below) |
 | `pan_genome_reference.fa` | yes | Cluster representative sequences; FASTA IDs must match matrix cluster names |
 | genome FASTAs | yes | One assembly per matrix genome column |
 | GFF annotations | optional, recommended | Enables annotation-aware `SPLIT`, `START_VARIANT`, `PARALOG`, pseudogene and synteny classification |
 | reference genome name | optional | Used by `--reference-genome` to audit whether clusters are absent from a chosen reference |
 | phylogenetic tree | optional | Newick, for `--tree`: parsimony on the corrected state, and the phylogeny pane of the HTML report |
 | mobile-element FASTA | optional | For `--mobile-element-reference`: sequence-based IS support instead of product names |
+
+## Which files each pangenome tool gives you
+
+Pass `-p` the matrix and `-r` the representative sequences, and `-a` the same
+GFF files the tool was run on, so the gene IDs in the matrix cells are the ones
+in the annotations. Each pair was checked on real output of the version shown.
+
+| Tool | `-p` | `-r` |
+|------|------|------|
+| Panaroo | `gene_presence_absence.csv` | `pan_genome_reference.fa` |
+| Roary | `gene_presence_absence.csv` | `pan_genome_reference.fa` |
+| PPanGGOLiN (2.3.2) | `matrix.csv`, from `ppanggolin all` or `ppanggolin write_pangenome --csv` | `all_nucleotide_families.fasta`, from `ppanggolin fasta --gene_families all` |
+| PanTA (1.0.1) | `gene_presence_absence.csv` | `representative_clusters_nucl.fasta` |
+| PIRATE (1.0.5) | `PIRATE.gene_families.tsv` | `representative_sequences.ffn` |
+
+For PIRATE, give recore its own table, not the output of `PIRATE_to_roary.pl`:
+that script names every row `allele__family`, which matches no sequence in
+PIRATE's representative FASTA. The table is read into Panaroo's layout, so the
+corrected files are the same as for a Panaroo run, and a fission written
+`(locus1:locus2)` counts its pieces as one gene. PanTA writes its gene IDs as
+`sample-contig-gene`; recore matches them to the GFF by the gene part.
 
 ## Name matching
 

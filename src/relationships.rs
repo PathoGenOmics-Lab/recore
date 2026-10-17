@@ -14,7 +14,7 @@ use std::path::Path;
 
 use crate::nscluster::NsClusterResult;
 use crate::parser::PresenceAbsence;
-use crate::rescue::{panaroo_gene_id_suffix_variants, RescueEvent, RescueType};
+use crate::rescue::{cell_gene_id_variants, RescueEvent, RescueType};
 use crate::types::ClusterIdx;
 
 #[derive(Debug, Clone)]
@@ -578,7 +578,7 @@ fn build_gene_cluster_map(
                 continue;
             }
             map.insert(gene_id.to_string(), ci_val);
-            for stripped in panaroo_gene_id_suffix_variants(gene_id).into_iter().skip(1) {
+            for stripped in cell_gene_id_variants(gene_id).into_iter().skip(1) {
                 map.entry(stripped.to_string()).or_insert(ci_val);
             }
         }

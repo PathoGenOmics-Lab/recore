@@ -12,10 +12,12 @@ mod types;
 
 pub use self::conflicts::resolve_conflicts;
 pub use self::genes::build_gene_to_cluster_with_gff_aliases;
-pub(crate) use self::genes::panaroo_gene_id_suffix_variants;
+pub(crate) use self::genes::{cell_gene_id_variants, panaroo_gene_id_suffix_variants};
 pub use self::gff::{GffGene, GffIndex};
+pub(crate) use self::orf::reverse_complement;
 pub use self::orf::{
     check_internal_stops_in_cds, check_internal_stops_in_hit, check_internal_stops_in_span,
+    translate_bacterial,
 };
 pub(crate) use self::synteny::{validate_synteny_with_cache, SyntenyReferenceCache};
 pub use self::types::{
@@ -26,8 +28,6 @@ pub use self::types::{
 use self::genes::build_gene_to_cluster;
 #[cfg(test)]
 use self::orf::count_internal_stops;
-#[cfg(test)]
-use self::orf::reverse_complement;
 #[cfg(test)]
 use self::synteny::{
     assess_context_support, compatible_reference_support, has_recurrent_context_support,

@@ -16,8 +16,8 @@ pub fn build_gene_to_cluster(pa: &PresenceAbsence, gi: GenomeIdx) -> HashMap<Str
             let gene_id = gene_id.trim();
             if !gene_id.is_empty() {
                 map.insert(gene_id.to_string(), ci);
-                for stripped in panaroo_gene_id_suffix_variants(gene_id).into_iter().skip(1) {
-                    map.entry(stripped.to_string()).or_insert(ci);
+                for variant in cell_gene_id_variants(gene_id).into_iter().skip(1) {
+                    map.entry(variant.to_string()).or_insert(ci);
                 }
             }
         }
@@ -46,6 +46,35 @@ pub(crate) fn panaroo_gene_id_suffix_variants(gene_id: &str) -> Vec<&str> {
         }
         variants.push(stripped);
         current = stripped;
+    }
+    variants
+}
+
+/// Every name a gene ID from a matrix cell may go by in the GFF, the ID itself
+/// first. Then Panaroo's `_pseudo` and `_dup_N` suffixes stripped; the loci of
+/// a PIRATE fission, which it writes `(locus1:locus2)`; and the parts after
+/// each `-` of a PanTA ID, which is `sample-contig-gene`. The cells keep the
+/// tool's own IDs, and a later variant only answers when the ones before it do
+/// not, so an exact match always wins. Without the PanTA parts no cell gene
+/// matched a GFF, and synteny validated nothing on PanTA input.
+pub(crate) fn cell_gene_id_variants(gene_id: &str) -> Vec<&str> {
+    let mut variants = panaroo_gene_id_suffix_variants(gene_id);
+    if let Some(inner) = gene_id
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        for locus in inner.split(':').map(str::trim) {
+            if !locus.is_empty() && !variants.contains(&locus) {
+                variants.push(locus);
+            }
+        }
+    }
+    let mut rest = gene_id;
+    while let Some((_, tail)) = rest.split_once('-') {
+        if !tail.is_empty() && !variants.contains(&tail) {
+            variants.push(tail);
+        }
+        rest = tail;
     }
     variants
 }

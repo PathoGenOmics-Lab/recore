@@ -1,4 +1,4 @@
-use super::genes::panaroo_gene_id_suffix_variants;
+use super::genes::cell_gene_id_variants;
 use super::gff::GffIndex;
 use super::types::{RescueEvent, SyntenyEvidence};
 use crate::parser::PresenceAbsence;
@@ -79,7 +79,7 @@ fn cluster_reference_located(
                 .filter(|id| !id.is_empty())
                 .any(|id| {
                     ref_gff.get_by_id(id).is_some()
-                        || panaroo_gene_id_suffix_variants(id)
+                        || cell_gene_id_variants(id)
                             .into_iter()
                             .skip(1)
                             .any(|variant| ref_gff.get_by_id(variant).is_some())
@@ -309,7 +309,7 @@ fn reference_contexts_for_cluster<'a>(
                     .filter(|id| !id.is_empty())
                 {
                     let ref_gene = ref_gff.get_by_id(ref_gene_id).or_else(|| {
-                        panaroo_gene_id_suffix_variants(ref_gene_id)
+                        cell_gene_id_variants(ref_gene_id)
                             .into_iter()
                             .skip(1)
                             .find_map(|id| ref_gff.get_by_id(id))

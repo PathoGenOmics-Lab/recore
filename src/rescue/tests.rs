@@ -2626,3 +2626,35 @@ fn pieces_at_both_ends_in_linear_order_are_not_an_origin_wrap() {
         "{rescue:?}"
     );
 }
+
+/// A cell's gene ID reaches the GFF whichever tool wrote it: the ID itself
+/// first, then Panaroo's suffixes stripped, a PIRATE fission's pieces, and the
+/// gene part of a PanTA `sample-contig-gene` ID.
+#[test]
+fn cell_gene_ids_reach_the_gff_from_every_tool() {
+    use crate::rescue::cell_gene_id_variants;
+    assert_eq!(
+        cell_gene_id_variants("X_dup_2_pseudo"),
+        vec!["X_dup_2_pseudo", "X_dup_2", "X"]
+    );
+    assert_eq!(
+        cell_gene_id_variants("(L8_AS00801_00013a:L8_AS00801_00013b)"),
+        vec![
+            "(L8_AS00801_00013a:L8_AS00801_00013b)",
+            "L8_AS00801_00013a",
+            "L8_AS00801_00013b"
+        ]
+    );
+    let panta = cell_gene_id_variants("L1_AS00101-L1_AS00101_contig1-L1_AS00101_00019");
+    assert_eq!(panta[0], "L1_AS00101-L1_AS00101_contig1-L1_AS00101_00019");
+    assert!(panta.contains(&"L1_AS00101_00019"));
+
+    // In a genome's lookup, a PanTA cell answers for the GFF's own ID.
+    let pa = crate::parser::PresenceAbsence::new_for_test(
+        vec!["Rv0019c".into()],
+        vec!["L1_AS00101".into()],
+        vec![vec!["L1_AS00101-L1_AS00101_contig1-L1_AS00101_00019".into()]],
+    );
+    let map = build_gene_to_cluster(&pa, GenomeIdx(0));
+    assert_eq!(map.get("L1_AS00101_00019"), Some(&ClusterIdx(0)));
+}

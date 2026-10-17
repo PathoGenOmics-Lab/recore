@@ -332,6 +332,18 @@ This file can be used directly as input to downstream tools that accept Panaroo'
 
 ---
 
+## gene_presence_absence_recore.Rtab
+
+Written for every run, in the same pass as `gene_presence_absence_recore.csv`,
+so the two agree on every cell. It is the corrected matrix as 1 and 0 in
+Panaroo's `gene_presence_absence.Rtab` layout: a `Gene` column, then one column
+per genome, tab-separated. A cell is 1 when the corrected CSV has anything in
+it (input presence, `RESCUED:...` or `NSC_MERGED`), and clusters merged away by
+NSC are left out, as in the CSV. This is the file pyseer's `--pres`, and most R
+code written for Panaroo, reads.
+
+---
+
 ## gene_presence_absence_recore_states.csv
 
 Written for every run. Same row/column layout as the corrected matrix, but each
@@ -599,6 +611,28 @@ Appended rescue features use source `Recore`, type `CDS`, and include:
 These GFFs are designed as auditable corrected annotations. If a rescue overlaps
 an existing feature, the original feature is preserved and the appended Recore
 feature records the rescue evidence explicitly.
+
+---
+
+## rescued_genes.fna / rescued_genes.faa
+
+Written only when `--write-rescued-fasta` is enabled: the sequence of every
+cell the binary matrix gained, for functional annotation (eggNOG-mapper,
+InterProScan, BLAST). Record IDs are the feature IDs of
+`corrected_gff/*.recore.gff3`, and the description carries the genome, the
+cluster, the locus, the rescue type and the phase:
+
+```
+>recore_Rv0003_L1_AS00101_contig1_3333_4517 genome=L1_AS00101 gene_cluster=Rv0003 locus=L1_AS00101_contig1:3333-4517(+) rescue_type=DROPPED phase=0
+```
+
+`rescued_genes.fna` has the nucleotide span read in the gene's direction
+(reverse-complemented on the minus strand). `rescued_genes.faa` translates it
+from the phase the alignment fixes, with the bacterial code (NCBI table 11); a
+first codon that is the gene's own start reads `M` whichever start it is, and
+the final stop is left off. A rescue built from several alignments has no
+single reading frame, so it is in the `.fna` with `phase=unknown` and not in
+the `.faa`.
 
 ---
 
