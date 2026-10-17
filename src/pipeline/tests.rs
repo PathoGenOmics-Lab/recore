@@ -2408,3 +2408,140 @@ fn report_styles_the_cell_tooltip_and_pairs_legend_keys() {
     let writer = include_str!("output.rs");
     assert!(writer.contains("<span class='key'><i class='sw p'></i>input</span>"));
 }
+
+/// A row the matrix policy or a quality floor kept out was labelled
+/// corrected_but_review_for_publication. Only a corrected cell may carry a
+/// status that says corrected, and a span that is not a whole number of codons
+/// is never publication-ready.
+#[test]
+fn publication_status_follows_the_matrix_action() {
+    let states = [
+        "STRICT_PRESENT",
+        "ALIAS_CLUSTER",
+        "SEQUENCE_ONLY",
+        "PARTIAL_HOMOLOGY",
+        "PSEUDOGENE",
+        "HOMOLOG_PARALOG",
+        "MISSING_CDS_UNVALIDATED",
+    ];
+    let actions = [
+        "correct_presence",
+        "audit_only_policy",
+        "audit_only_quality",
+        "audit_only",
+    ];
+    for state in states {
+        for action in actions {
+            for orf in ["in_frame_span", "out_of_frame_span_review", "disrupted_orf"] {
+                for accepted in [true, false] {
+                    let status = publication_status(accepted, state, action, orf);
+                    assert!(PUBLICATION_STATUSES.contains(&status), "{status}");
+                    if status.starts_with("corrected") || status.starts_with("publication") {
+                        assert!(
+                            accepted && action == "correct_presence",
+                            "{state} {action} {status}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        publication_status(true, "PSEUDOGENE", "audit_only_policy", "disrupted_orf"),
+        "held_out_policy"
+    );
+    assert_eq!(
+        publication_status(
+            true,
+            "STRICT_PRESENT",
+            "correct_presence",
+            "out_of_frame_span_review"
+        ),
+        "corrected_review"
+    );
+    assert_eq!(
+        publication_status(true, "STRICT_PRESENT", "correct_presence", "in_frame_span"),
+        "publication_ready_correction"
+    );
+}
+
+/// outputs.md lists the publication_status values; it listed four the code
+/// never wrote. The documented set and the emitted set must be the same.
+#[test]
+fn documented_publication_statuses_match_the_code() {
+    let docs = include_str!("../../docs/guide/outputs.md");
+    let section = docs
+        .split("`publication_status` takes one of these values:")
+        .nth(1)
+        .expect("the publication_status value table");
+    let documented: Vec<&str> = section
+        .lines()
+        .skip_while(|line| !line.starts_with("| `"))
+        .take_while(|line| line.starts_with("| `"))
+        .map(|line| line.split('`').nth(1).unwrap())
+        .collect();
+    assert_eq!(documented, PUBLICATION_STATUSES.to_vec());
+}
+
+/// Gaps searched with nothing found are what true absences look like. A genome
+/// with no correction must pass, and only a burden far above the cohort's asks
+/// for review.
+#[test]
+fn genome_qc_does_not_review_genomes_without_corrections() {
+    let out = tempfile::tempdir().unwrap();
+    let n = 8;
+    let genomes: Vec<String> = (0..n).map(|i| format!("g{i}")).collect();
+    let clusters: Vec<String> = (0..40).map(|i| format!("c{i}")).collect();
+    let cells = vec![vec![String::new(); n]; clusters.len()];
+    let pa = PresenceAbsence::new_for_test(clusters, genomes.clone(), cells);
+    let genome_files: HashMap<String, PathBuf> = genomes
+        .iter()
+        .map(|g| (g.clone(), PathBuf::from(format!("{g}.fa"))))
+        .collect();
+    // g0 has one correction, g7 has thirty, everyone else none.
+    let mut rescues = Vec::new();
+    for (genome, count) in [(0usize, 1usize), (7, 30)] {
+        for ci in 0..count {
+            let mut r = rescue_with_type(RescueType::Dropped, Some(true));
+            r.cluster_idx = ClusterIdx(ci);
+            r.genome_idx = GenomeIdx(genome);
+            rescues.push(r);
+        }
+    }
+    let matrix: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
+        .iter()
+        .map(|r| ((r.cluster_idx, r.genome_idx), r))
+        .collect();
+    write_genome_qc(GenomeQcInputs {
+        pa: &pa,
+        genome_files: &genome_files,
+        gff_indices: &HashMap::new(),
+        gff_contig_remaps: &[],
+        gaps_passing_filter_by_genome: &[40; 8],
+        rescues: &rescues,
+        synteny_rejected: &[],
+        paralog_rejected: &[],
+        matrix_rescue_map: &matrix,
+        nsc_presence: &ahash::HashSet::default(),
+        output_dir: out.path(),
+    })
+    .unwrap();
+    let text = std::fs::read_to_string(out.path().join("genome_qc.tsv")).unwrap();
+    let status: HashMap<&str, (&str, &str)> = text
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let f: Vec<&str> = line.split('\t').collect();
+            (f[0], (f[10], f[11]))
+        })
+        .collect();
+    for g in ["g1", "g2", "g3", "g4", "g5", "g6"] {
+        assert_eq!(status[g].0, "pass", "{g}: {:?}", status[g]);
+        assert!(status[g]
+            .1
+            .contains("no_rescue_evidence_for_searchable_gaps"));
+    }
+    assert_eq!(status["g0"].0, "pass");
+    assert_eq!(status["g7"].0, "review");
+    assert!(status["g7"].1.contains("correction_burden_above_cohort"));
+}

@@ -406,6 +406,8 @@ const PUBLICATION_TEXT = {
   corrected_but_review_for_publication:"corrected; review before publishing",
   corrected_paralog_review:"corrected; paralog review",
   corrected_review:"corrected; review",
+  held_out_policy:"held out by the matrix policy",
+  held_out_quality:"held out by a quality floor",
   audit_only_not_corrected:"audit only, not corrected",
 };
 function evidenceTypeLabel(row) {

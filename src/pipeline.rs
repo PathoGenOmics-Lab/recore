@@ -1553,11 +1553,41 @@ fn accepted_rescue_evidence_state(
     evidence_state(rescue, true, query_cluster, &annotation_cluster, "")
 }
 
-fn publication_status(accepted: bool, state: &str) -> &'static str {
+/// Every value publication_status can write, in the order the docs list them.
+#[cfg(test)]
+pub(super) const PUBLICATION_STATUSES: [&str; 7] = [
+    "publication_ready_correction",
+    "corrected_review",
+    "corrected_but_review_for_publication",
+    "corrected_paralog_review",
+    "held_out_policy",
+    "held_out_quality",
+    "audit_only_not_corrected",
+];
+
+/// How a row can be used in a paper. It follows what happened to the cell, so
+/// evidence the matrix policy or a quality floor kept out is never labelled a
+/// correction, and a span that is not a whole number of codons is not called
+/// publication-ready.
+fn publication_status(
+    accepted: bool,
+    state: &str,
+    matrix_action: &str,
+    orf_signal: &str,
+) -> &'static str {
     if !accepted {
         return "audit_only_not_corrected";
     }
+    match matrix_action {
+        "correct_presence" => {}
+        "audit_only_policy" => return "held_out_policy",
+        "audit_only_quality" => return "held_out_quality",
+        _ => return "audit_only_not_corrected",
+    }
     match state {
+        "STRICT_PRESENT" | "ALIAS_CLUSTER" if orf_signal == "out_of_frame_span_review" => {
+            "corrected_review"
+        }
         "STRICT_PRESENT" | "ALIAS_CLUSTER" => "publication_ready_correction",
         "SEQUENCE_ONLY" | "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => {
             "corrected_but_review_for_publication"
@@ -1623,6 +1653,14 @@ struct GenomeQcInputs<'a> {
     output_dir: &'a std::path::Path,
 }
 
+fn median_of_sorted(sorted: &[usize]) -> f64 {
+    match sorted.len() {
+        0 => 0.0,
+        n if n % 2 == 1 => sorted[n / 2] as f64,
+        n => (sorted[n / 2 - 1] + sorted[n / 2]) as f64 / 2.0,
+    }
+}
+
 fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
     let GenomeQcInputs {
         pa,
@@ -1674,6 +1712,23 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
         "genome\tfasta_found\tgff_found\tgff_contig_remapped_records\tgaps_passing_filter\taccepted_rescues\tmatrix_corrected_rescues\tnsc_added_presence\tsynteny_rejected\tparalog_rejected\tqc_status\tqc_flags"
     )?;
 
+    // A genome whose corrections sit far above the cohort's is worth a look:
+    // above the median plus three median absolute deviations.
+    let burden_ceiling = {
+        let mut sorted = matrix_corrected_by_genome.clone();
+        sorted.sort_unstable();
+        let median = median_of_sorted(&sorted);
+        let mut deviations: Vec<f64> = sorted.iter().map(|&v| (v as f64 - median).abs()).collect();
+        deviations.sort_by(f64::total_cmp);
+        let mad = if deviations.is_empty() {
+            0.0
+        } else if deviations.len() % 2 == 1 {
+            deviations[deviations.len() / 2]
+        } else {
+            (deviations[deviations.len() / 2 - 1] + deviations[deviations.len() / 2]) / 2.0
+        };
+        median + 3.0 * mad
+    };
     let gff_expected = !gff_indices.is_empty();
     let mut review_count = 0usize;
     let mut fail_count = 0usize;
@@ -1719,10 +1774,23 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
             flags.push("nsc_presence_added");
         }
 
+        if matrix_corrected >= 10 && matrix_corrected as f64 > burden_ceiling {
+            flags.push("correction_burden_above_cohort");
+        }
+
         let fail = flags.contains(&"missing_fasta_for_searchable_gaps");
+        // Searched gaps with no evidence are what true absences look like, and
+        // NSC presence and remapped seqids are bookkeeping: none is a reason to
+        // review a genome. Marking every genome without a correction "review"
+        // while a genome with three corrections passed read backwards.
         let review = flags.iter().any(|flag| {
-            !matches!(*flag, "gff_contig_seqid_remapped")
-                && *flag != "missing_fasta_for_searchable_gaps"
+            !matches!(
+                *flag,
+                "gff_contig_seqid_remapped"
+                    | "missing_fasta_for_searchable_gaps"
+                    | "no_rescue_evidence_for_searchable_gaps"
+                    | "nsc_presence_added"
+            )
         });
         let status = if fail {
             fail_count += 1;
@@ -1800,6 +1868,7 @@ fn build_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Vec<Ortholog
             cluster_prevalences[rescue.cluster_idx.val()],
             cluster_seq_lengths[rescue.cluster_idx.val()],
         );
+        let matrix_action = matrix_action_with_quality(matrix_policy, true, state, &quality);
         rows.push(OrthologyEvidenceRow {
             cluster_idx: rescue.cluster_idx,
             genome_idx: rescue.genome_idx,
@@ -1807,8 +1876,9 @@ fn build_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Vec<Ortholog
                 "accepted".to_string(),
                 status.to_string(),
                 state.to_string(),
-                matrix_action_with_quality(matrix_policy, true, state, &quality).to_string(),
-                publication_status(true, state).to_string(),
+                matrix_action.to_string(),
+                publication_status(true, state, matrix_action, rescue_orf_signal(rescue))
+                    .to_string(),
                 evidence_strength(state).to_string(),
                 recommended_wording(state, true).to_string(),
                 query_cluster.to_string(),
@@ -1891,7 +1961,8 @@ fn build_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Vec<Ortholog
                     status.to_string(),
                     state.to_string(),
                     matrix_action_with_quality(matrix_policy, false, state, &quality).to_string(),
-                    publication_status(false, state).to_string(),
+                    publication_status(false, state, "audit_only", rescue_orf_signal(rescue))
+                        .to_string(),
                     evidence_strength(state).to_string(),
                     recommended_wording(state, false).to_string(),
                     query_cluster.to_string(),

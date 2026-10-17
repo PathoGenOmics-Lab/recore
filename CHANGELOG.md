@@ -9,6 +9,20 @@ and Recore uses semantic versioning.
 
 ### Changed
 
+- `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
+  Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
+  or `held_out_quality` instead of a `corrected...` value, and a strict
+  correction whose span is not a whole number of codons reads `corrected_review`
+  instead of `publication_ready_correction`.
+- `genome_qc.tsv` no longer marks a genome `review` because its searched gaps
+  had no evidence, or because NSC added presence; both stay as informational
+  flags. A new `correction_burden_above_cohort` flag asks for review when a
+  genome's corrections sit above the cohort median plus three median absolute
+  deviations.
+- The HTML report draws cells kept out of the matrix in their own colour, shows
+  each cell's evidence row on click, and colours input presence grey so that
+  corrections stand out. See the report guide for the new palette.
+
 - `--min-identity` and every identity threshold now compare against exact
   identity. It used to read 5 to 10 points low, so more distant copies clear the
   default of 90 than before; raise it for clonal species. The tutorial's paralog

@@ -110,7 +110,7 @@ or paralog candidate.
 | `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
 | `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `MISSING_CDS_UNVALIDATED`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
 | `matrix_action` | `correct_presence` for accepted rescues, `audit_only_quality` for accepted evidence that fails the adaptive guard, `audit_only_policy` for accepted evidence excluded by policy, or `audit_only` for rejected candidates |
-| `publication_status` | Conservative publication-level interpretation: whether the cluster can be justified as `present`, `partial/disrupted`, `possible paralog`, or `not supported` |
+| `publication_status` | How the row can be used in a paper; it follows `matrix_action`, see the values below |
 | `evidence_strength` | `high`, `moderate`, `review`, or `low` |
 | `recommended_wording` | Short text for how to describe the event in downstream tables/manuscripts |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
@@ -121,6 +121,22 @@ or paralog candidate.
 | `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
 | `rejection_reason` | Reason rejected, e.g. `synteny_fail` or `paralog_without_synteny` |
 | `fragment_note` | Fragment interpretation, if applicable |
+
+`publication_status` takes one of these values:
+
+| Value | Meaning |
+|-------|---------|
+| `publication_ready_correction` | Corrected; strict same-locus or cluster-alias evidence over a whole number of codons |
+| `corrected_review` | Corrected; strict evidence whose span is not a whole number of codons, or another state that needs a look |
+| `corrected_but_review_for_publication` | Corrected; sequence-only, partial or pseudogene evidence that a sensitive policy let into the matrix |
+| `corrected_paralog_review` | Corrected; the hit may be a paralog |
+| `held_out_policy` | Accepted evidence the matrix policy kept out of the corrected matrix |
+| `held_out_quality` | Accepted evidence an adaptive quality floor kept out of the corrected matrix |
+| `audit_only_not_corrected` | Rejected by the synteny or paralog guard |
+
+Only the first four describe a corrected cell, so a value starting with
+`corrected` or `publication` always means the cell is present in
+`gene_presence_absence_corrected.csv`.
 
 Use this table as the primary audit trail for why a candidate entered, or did
 not enter, the corrected matrix.
@@ -414,8 +430,18 @@ metrics.
 | `synteny_rejected`, `paralog_rejected` | Rejected evidence by genome |
 | `qc_status`, `qc_flags` | `pass`, `review`, or `fail` plus semicolon-separated flags |
 
-`gff_contig_seqid_remapped` is informational when remapping succeeds; it is
-kept in `qc_flags` but does not by itself trigger `review`.
+Flags and what they do to `qc_status`:
+
+| Flag | Status |
+|------|--------|
+| `missing_fasta_for_searchable_gaps` | `fail`: gaps could not be searched |
+| `missing_gff` | `review` |
+| `rejected_evidence_exceeds_accepted` | `review`: three or more rejected candidates, more than accepted |
+| `high_matrix_correction_burden` | `review`: ten or more corrections, over a quarter of the genome's searched gaps |
+| `correction_burden_above_cohort` | `review`: ten or more corrections, above the cohort median plus three median absolute deviations |
+| `no_rescue_evidence_for_searchable_gaps` | informational: gaps were searched and nothing was found, which is what true absences look like |
+| `nsc_presence_added` | informational |
+| `gff_contig_seqid_remapped` | informational, when remapping succeeds |
 
 ---
 
