@@ -126,11 +126,15 @@ wheel zoom columns, which is also what a trackpad pinch does; ++alt++ and the
 wheel zoom rows. Each notch is a factor of 1.25 and the cell under the pointer
 stays under the pointer. Press ++z++ to fit the data back to the window.
 
-Above 40 columns a prevalence strip appears under the matrix: one bar per pixel
-showing how prevalent the clusters at that position are, with the current
-viewport marked. At 30,000 columns the scrollbar tells you where you are and
-nothing about what is there; the strip tells you what is there, and clicking it
-jumps.
+Press ++z++ to see the whole matrix at once. When that makes cells smaller than
+a pixel, the matrix is drawn as density: each pixel shows the share of present
+cells it covers, between the absent and present colours, and is tinted blue
+where any cell in it was corrected (crimson where evidence was kept out), more
+strongly the larger that share. Zoom in on a region to get back to single cells.
+
+Above 40 columns a strip under the matrix shows the mean prevalence of the
+clusters at each position, with a blue mark where any of them has a changed
+cell, and the current viewport outlined. Clicking it jumps.
 
 ## Synteny
 

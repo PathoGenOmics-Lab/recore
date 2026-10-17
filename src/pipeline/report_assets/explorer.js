@@ -285,9 +285,9 @@ const MIN_INSPECTOR_W = 220;
 const LINEAGE_STRIP_W = 6;
 // Single source for the zoom bounds. The sliders, currentCellSize/currentRowHeight
 // and the wheel handler must agree, or the wheel snaps the value into its own range.
-const MIN_COL_ZOOM = 0.25;
+const MIN_COL_ZOOM = 0.01;
 const MAX_COL_ZOOM = 90;
-const MIN_ROW_ZOOM = 1;
+const MIN_ROW_ZOOM = 0.02;
 const MAX_ROW_ZOOM = 40;
 // Target pixel span used to pick the opening zoom from the run size.
 const FIT_TARGET_H = 560;
@@ -333,7 +333,13 @@ let cellW = 8;
 let virtualW = 1;
 let virtualH = 1;
 // Cells may be fractional, but never thinner than this or they vanish.
-const MIN_CELL_PX = 0.35;
+const MIN_CELL_PX = 0.005;
+// Below these a cell is less than a pixel, and the matrix is drawn as density:
+// each device pixel shows the share of present cells it covers, with any
+// corrected or kept-out cell in it marked. Drawing cells one rect at a time
+// there cost millions of rects and painted neighbours over each other.
+const DENSITY_BELOW_COL = 0.35;
+const DENSITY_BELOW_ROW = 1;
 let renderQueued = false;
 let detailsKey = "";
 let syntenyKey = "";
@@ -2234,6 +2240,126 @@ function viewportSize(element) {
   return {w: Math.max(1, element.clientWidth), h: Math.max(1, element.clientHeight)};
 }
 
+function inDensityMode(cw, ch) {
+  // A hair of slack: the opening fit lands exactly on the threshold, and a
+  // rounding error must not tip it into density.
+  return cw < DENSITY_BELOW_COL - 1e-6 || ch < DENSITY_BELOW_ROW - 1e-6;
+}
+function hexRgb(hex) {
+  const h = String(hex).trim();
+  if (h[0] !== "#" || h.length < 7) return [128, 128, 128];
+  return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+}
+/* The matrix as density, one device pixel at a time, written as ImageData at
+   (dx, dy) device pixels. Columns whose set covers every row (or every row but
+   a few) are added per pixel row in bulk, so the cost follows pixels plus set
+   entries, not cells: the whole 10,000 x 30,000 matrix in one pass. */
+function paintDensity(context, opts) {
+  const {firstCol, lastCol, firstRow, lastRow, left, top, cw, ch, dataW, dataH, scale, dx = 0, dy = 0} = opts;
+  const W = Math.max(1, Math.round(dataW * scale));
+  const H = Math.max(1, Math.round(dataH * scale));
+  const nPix = W * H;
+  const P = new Uint32Array(nPix);
+  const R = new Uint32Array(nPix);
+  const K = new Uint32Array(nPix);
+  const N = new Uint32Array(nPix);
+  const colsAt = new Uint32Array(W);
+  const bulk = new Int32Array(W);
+  // Each visible row covers [y0, y1) device rows.
+  const nRows = Math.max(0, lastRow - firstRow);
+  const y0s = new Int32Array(nRows);
+  const y1s = new Int32Array(nRows);
+  const rowsAt = new Uint32Array(H);
+  for (let i = 0; i < nRows; i += 1) {
+    const r = firstRow + i;
+    const a = Math.max(0, Math.min(H - 1, Math.floor((r * ch - top) * scale)));
+    const b = Math.max(a + 1, Math.min(H, Math.floor(((r + 1) * ch - top) * scale)));
+    y0s[i] = a;
+    y1s[i] = b;
+    for (let y = a; y < b; y += 1) rowsAt[y] += 1;
+  }
+  const addRow = (arr, x0, x1, r, sign) => {
+    const i = r - firstRow;
+    if (i < 0 || i >= nRows) return;
+    for (let y = y0s[i]; y < y1s[i]; y += 1) {
+      const base = y * W;
+      for (let x = x0; x < x1; x += 1) arr[base + x] += sign;
+    }
+  };
+  for (let c = firstCol; c < lastCol; c += 1) {
+    const clusterIdx = originalClusterAtVisibleColumn(c);
+    if (clusterIdx < 0) continue;
+    const x0 = Math.max(0, Math.min(W - 1, Math.floor((c * cw - left) * scale)));
+    const x1 = Math.max(x0 + 1, Math.min(W, Math.floor(((c + 1) * cw - left) * scale)));
+    for (let x = x0; x < x1; x += 1) colsAt[x] += 1;
+    const sets = clusterSets(clusterIdx);
+    const rowsets = clusterRowSets(clusterIdx);
+    const targets = [P, R, N, K];
+    for (let state = 0; state < 4; state += 1) {
+      const set = sets[state];
+      const rows = rowsets[state];
+      const arr = targets[state];
+      if (set.kind === "list") {
+        if (!rows || !rows.length) continue;
+        let i = lowerBound(rows, firstRow);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], 1);
+        continue;
+      }
+      // "all" or "complement": count the column in bulk, then take out the
+      // excluded rows. Only input presence is ever that dense.
+      if (arr !== P) {
+        for (let r = firstRow; r < lastRow; r += 1) addRow(arr, x0, x1, r, 1);
+        if (set.kind === "complement" && rows) {
+          let i = lowerBound(rows, firstRow);
+          for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+        }
+        continue;
+      }
+      for (let x = x0; x < x1; x += 1) bulk[x] += 1;
+      if (set.kind === "complement" && rows) {
+        let i = lowerBound(rows, firstRow);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+      }
+    }
+  }
+  const absent = hexRgb(colors.A);
+  const present = hexRgb(colors.P);
+  const nsc = hexRgb(colors.N);
+  const rescue = hexRgb(colors.R);
+  const kept = hexRgb(colors.K);
+  const panel = hexRgb(panelBg);
+  const image = context.createImageData(W, H);
+  const out = image.data;
+  for (let y = 0; y < H; y += 1) {
+    const rowsHere = rowsAt[y];
+    for (let x = 0; x < W; x += 1) {
+      const idx = y * W + x;
+      const cells = colsAt[x] * rowsHere;
+      let rgb = panel;
+      if (cells > 0) {
+        const p = Math.max(0, P[idx] + bulk[x] * rowsHere) / cells;
+        const n = N[idx] / cells;
+        const a = Math.max(0, 1 - p - n);
+        rgb = [0, 1, 2].map(k => absent[k] * a + present[k] * p + nsc[k] * n);
+        // Any finding in the pixel tints it, and the tint deepens with the
+        // finding's share: one corrected cell among 500 is a hint, a pixel
+        // where a twentieth of the cells were corrected is full colour.
+        const finding = R[idx] ? rescue : K[idx] ? kept : null;
+        if (finding) {
+          const share = (R[idx] || K[idx]) / cells;
+          const w = 0.3 + 0.7 * Math.min(1, share / 0.05);
+          rgb = [0, 1, 2].map(k => rgb[k] * (1 - w) + finding[k] * w);
+        }
+      }
+      const o = idx * 4;
+      out[o] = rgb[0];
+      out[o + 1] = rgb[1];
+      out[o + 2] = rgb[2];
+      out[o + 3] = 255;
+    }
+  }
+  context.putImageData(image, dx, dy);
+}
 /* Paints the cells of columns [firstCol, lastCol) and rows [firstRow, lastRow),
    with the matrix origin at (left, top) and cw x ch cells. The screen and the
    exported figure both draw through here, so they cannot disagree. */
@@ -2352,7 +2478,9 @@ function renderMatrix(scrollToSelected) {
   const [firstCol, lastCol] = visibleColumnRange(view.w);
   const [firstRow, lastRow] = visibleRowRange(view.h);
   if (rows && cols && dataW > 0 && dataH > 0) {
-    paintCells(ctx, {firstCol, lastCol, firstRow, lastRow, left, top, cw: cellW, ch: cellH, dataW, dataH});
+    const opts = {firstCol, lastCol, firstRow, lastRow, left, top, cw: cellW, ch: cellH, dataW, dataH};
+    if (inDensityMode(cellW, cellH)) paintDensity(ctx, {...opts, scale});
+    else paintCells(ctx, opts);
   }
   if (rows === 0 || cols === 0) {
     ctx.fillStyle = labelInk;
@@ -2934,7 +3062,10 @@ refreshVisibleClusters();
 // Open at a zoom that suits the run. A 16-genome, 12-cluster matrix at the old
 // fixed sliders was a thumbnail in a half-empty pane; a 3000-tip tree needed the
 // opposite. Column width is fitted to the space the matrix pane actually has.
-function fitZoomToData() {
+/* `whole` fits every row and column, as density when cells fall below a pixel.
+   Without it (the opening view) cells stay at least the density threshold, so
+   the first paint draws cells, not a raster of the whole run. */
+function fitZoomToData(whole = false) {
   const tips = Math.max(1, leafOrder.length);
   const cols = Math.max(1, visibleClusters.length);
   const bodyW = viewerBody ? viewerBody.clientWidth : 0;
@@ -2943,13 +3074,20 @@ function fitZoomToData() {
     : FIT_TARGET_W;
   const viewH = matrixViewport ? matrixViewport.clientHeight : 0;
   const targetH = viewH > 120 ? viewH - 4 : FIT_TARGET_H;
-  const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(targetH / tips)));
+  // Whole pixels when the rows fit at one or more; otherwise exactly the share
+  // that fits, so Z always shows every row (as density below a pixel).
+  const rowFit = targetH / tips >= 1
+    ? Math.max(1, Math.min(MAX_ROW_ZOOM, Math.floor(targetH / tips)))
+    : whole ? Math.max(MIN_ROW_ZOOM, targetH / tips) : DENSITY_BELOW_ROW;
   // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
   // Round down to the slider step (0.25), not to whole units: 1,118 columns in
   // 788px want 0.86, and flooring that to 0 sent the fit to the 0.25 minimum,
   // leaving half the pane empty after Z.
   const colStep = 0.25;
-  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW - 2) / cols / 0.82 / colStep) * colStep));
+  const exactCol = (matrixW - 2) / cols / 0.82;
+  const colFit = exactCol >= colStep
+    ? Math.max(colStep, Math.min(MAX_COL_ZOOM, Math.floor(exactCol / colStep) * colStep))
+    : whole ? Math.max(MIN_COL_ZOOM, exactCol) : Math.max(exactCol, DENSITY_BELOW_COL / 0.82);
   writeZoom(rowHeightControl, rowFit, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
   writeZoom(sizeControl, colFit, MIN_COL_ZOOM, MAX_COL_ZOOM);
 }
@@ -3177,7 +3315,7 @@ function applyMechanismFilters() {
   resetMatrixCache();
   syncMenuIndicators();
   // A filter changes how many columns there are; fit them to the pane again.
-  fitZoomToData();
+  fitZoomToData(true);
   if (matrixPane) matrixPane.scrollLeft = 0;
   render(true);
 }
@@ -3737,7 +3875,12 @@ function drawFigure() {
   // Matrix and column names.
   f.save();
   f.translate(matrixLeft, bodyTop);
-  paintCells(f, {firstCol: c0, lastCol: c1, firstRow: r0, lastRow: r1, left: c0 * cw, top: r0 * ch, cw, ch, dataW: matrixW, dataH: matrixH});
+  const figureCells = {firstCol: c0, lastCol: c1, firstRow: r0, lastRow: r1, left: c0 * cw, top: r0 * ch, cw, ch, dataW: matrixW, dataH: matrixH};
+  if (inDensityMode(cw, ch)) {
+    paintDensity(f, {...figureCells, scale, dx: Math.round(matrixLeft * scale), dy: Math.round(bodyTop * scale)});
+  } else {
+    paintCells(f, figureCells);
+  }
   f.restore();
   if (band) {
     f.save();
@@ -4379,7 +4522,7 @@ document.addEventListener("keydown", event => {
       }
       break;
     case "z":
-      fitZoomToData();
+      fitZoomToData(true);
       resetMatrixCache();
       render(true);
       status.textContent = "Zoom fitted to the data.";
@@ -4451,21 +4594,30 @@ function renderOverview() {
     const n = visibleClusters.length;
     const genomes = Math.max(1, data.genomes.length);
     if (n) {
-      // One bar per device column: with more clusters than pixels, take the
-      // strongest cluster in each bucket so a single high-prevalence column in
-      // a crowd of empty ones is still visible.
-      octx.fillStyle = colors.P;
-      octx.globalAlpha = 0.45;
+      // One bar per device column: the mean prevalence of the clusters in it
+      // (the maximum filled every column at 30,000 clusters and said nothing),
+      // and a mark on top where any of them has evidence behind a change.
       for (let x = 0; x < width; x += 1) {
         const from = Math.floor(x / width * n);
         const to = Math.max(from + 1, Math.floor((x + 1) / width * n));
-        let best = 0;
+        let sum = 0;
+        let count = 0;
+        let changed = 0;
         for (let i = from; i < to && i < n; i += 1) {
-          const present = data.clusters[visibleClusters[i]]?.present || 0;
-          if (present > best) best = present;
+          const idx = visibleClusters[i];
+          sum += data.clusters[idx]?.present || 0;
+          count += 1;
+          if (evidenceCount(idx)) changed += 1;
         }
-        const h = Math.max(1, Math.round(best / genomes * (height - 4)));
+        const h = Math.max(1, Math.round(sum / Math.max(1, count) / genomes * (height - 6)));
+        octx.globalAlpha = 0.55;
+        octx.fillStyle = colors.P;
         octx.fillRect(x, height - 2 - h, 1, h);
+        if (changed) {
+          octx.globalAlpha = 0.35 + 0.65 * Math.min(1, changed / Math.max(1, count) * 4);
+          octx.fillStyle = colors.R;
+          octx.fillRect(x, 0, 1, 3);
+        }
       }
       octx.globalAlpha = 1;
       const at = visibleClusters.indexOf(selected);

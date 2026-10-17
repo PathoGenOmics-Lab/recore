@@ -452,9 +452,10 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
-    // Zoom sliders are logarithmic: their range is ln(0.25)..ln(90) and ln(1)..ln(40).
-    assert!(text.contains("id='cellSize' type='range' min='-1.3863' max='4.4998' step='any'"));
-    assert!(text.contains("id='rowHeight' type='range' min='0.0000' max='3.6889' step='any'"));
+    // Zoom sliders are logarithmic, down to the zooms that fit a whole run as
+    // density: ln(0.01)..ln(90) and ln(0.02)..ln(40).
+    assert!(text.contains("id='cellSize' type='range' min='-4.6052' max='4.4998' step='any'"));
+    assert!(text.contains("id='rowHeight' type='range' min='-3.9120' max='3.6889' step='any'"));
     assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));
     assert!(text.contains("matrixColorMode"));

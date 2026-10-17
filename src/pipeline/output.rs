@@ -2744,7 +2744,7 @@ fn explorer_workspace_html(
     html.push_str("<section class='pane tree-pane' id='treePane' aria-label='Phylogeny'>");
     write!(
         html,
-        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='0.0000' max='3.6889' step='any' value='2.0794' aria-label='Row zoom' data-tip='Row height (Alt and the wheel)'></span><button id='treeMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Tree display: shape, root, labels and colour' aria-label='Tree display' aria-haspopup='dialog' aria-expanded='false' aria-controls='treeMenu'>{}</button></header>",
+        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Phylogeny</span><small id='topTreeMeta'></small><span class='head-zoom'><input id='rowHeight' type='range' min='-3.9120' max='3.6889' step='any' value='2.0794' aria-label='Row zoom' data-tip='Row height (Alt and the wheel)'></span><button id='treeMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Tree display: shape, root, labels and colour' aria-label='Tree display' aria-haspopup='dialog' aria-expanded='false' aria-controls='treeMenu'>{}</button></header>",
         icon("sliders")
     )
     .expect("write to String is infallible");
@@ -2772,7 +2772,7 @@ fn explorer_workspace_html(
     html.push_str("<section class='pane matrix-region' aria-label='Corrected matrix'>");
     write!(
         html,
-        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Corrected matrix</span><small id='topMatrixMeta'></small><span id='cellLegend' class='legend' aria-label='Cell legend'><span class='key'><i class='sw p'></i>input</span><span class='key'><i class='sw r'></i>corrected</span><span class='key'><i class='sw a'></i>absent</span></span><span class='head-zoom'><input id='cellSize' type='range' min='-1.3863' max='4.4998' step='any' value='2.0794' aria-label='Column zoom' data-tip='Column width (Ctrl or Cmd and the wheel)'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
+        "<header class='pane-head'><span class='pane-name' role='heading' aria-level='2'>Corrected matrix</span><small id='topMatrixMeta'></small><span id='cellLegend' class='legend' aria-label='Cell legend'><span class='key'><i class='sw p'></i>input</span><span class='key'><i class='sw r'></i>corrected</span><span class='key'><i class='sw a'></i>absent</span></span><span class='head-zoom'><input id='cellSize' type='range' min='-4.6052' max='4.4998' step='any' value='2.0794' aria-label='Column zoom' data-tip='Column width (Ctrl or Cmd and the wheel)'></span><button id='matrixMenuBtn' type='button' class='icon-btn ghost-icon' data-tip='Matrix display: cell colour, column order and filters' aria-label='Matrix display' aria-haspopup='dialog' aria-expanded='false' aria-controls='matrixMenu'>{}</button></header>",
         icon("sliders")
     )
     .expect("write to String is infallible");
