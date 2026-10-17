@@ -494,6 +494,13 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("id='clusterOmnibox'"));
     assert!(text.contains("id='paletteList'"));
     assert!(text.contains("id='shortcutSheet'"));
+    // The find field is a combobox, the one-letter shortcuts can be switched
+    // off, gaps outside the search can be filtered away, and P pins a genome.
+    assert!(text.contains("id='clusterSearch' type='search' role='combobox'"));
+    assert!(text.contains("id='singleKeys' type='checkbox'"));
+    assert!(text.contains("id='searchedOnly' type='checkbox'"));
+    assert!(text.contains("Pin or unpin the open genome, to compare two"));
+    assert!(text.contains("function togglePin"));
     assert!(text.contains("id='treeMenu'"));
     assert!(text.contains("id='matrixMenu'"));
     assert!(text.contains("id='genomeDetails'"));

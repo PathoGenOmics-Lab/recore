@@ -150,6 +150,26 @@ Above 40 columns a strip under the matrix shows the mean prevalence of the
 clusters at each position, with a blue mark where any of them has a changed
 cell, and the current viewport outlined. Clicking it jumps.
 
+The open genome's row stays outlined in the tree and the matrix after the
+pointer moves on, so a genome found from the find field is still easy to spot.
+
+## Comparing two genomes
+
+Two genomes far apart in the tree are far apart in the matrix. **Pin to
+compare** in the genome card, or ++p++, keeps a genome's row in a band under the
+column header, aligned with every column whatever the scroll; its name sits
+level with it in the tree pane's header, marked **A** or **B**, and its tip gets
+a blue ring. Pinning a third genome unpins the oldest. Hover a cell of the band
+for its state; click it to open that cell.
+
+With two genomes pinned, the genome card compares them over every cluster of the
+corrected matrix: how many are in both, only in A, only in B and in neither,
+and the clusters that differ, each one a click away. When a difference rests on
+a gap that was never searched, the card says so, because then the input matrix,
+not Recore, says the gene is missing. **Show only the clusters that differ**
+filters the matrix to them and refits the columns; a chip beside the matrix
+count takes the filter off again.
+
 ## Synteny
 
 Press ++s++ or use the layers button to show the synteny band. It draws the top
@@ -214,7 +234,10 @@ every candidate. The live panes are swapped for the figure only while printing.
 
 ## Keyboard shortcuts
 
-Press ++question++ for this list in the report itself.
+Press ++question++ for this list in the report itself. A switch at its top turns
+the one-letter shortcuts off, for example when they fire by accident with speech
+input; ++cmd+k++ and the arrows keep working, and the choice is remembered in
+that browser.
 
 | Keys | Action |
 |------|--------|
@@ -229,6 +252,7 @@ Press ++question++ for this list in the report itself.
 | ++c++ | phylogram or cladogram |
 | ++r++ | reroot at the midpoint |
 | ++z++ | fit the matrix to the window |
+| ++p++ | pin or unpin the open genome, to compare two |
 | ++cmd++ / ++ctrl++ + wheel, or pinch | zoom columns under the pointer |
 | ++alt++ + wheel | zoom rows under the pointer |
 | ++shift++ + wheel | scroll sideways |

@@ -3281,7 +3281,7 @@ pub(super) fn write_html_report(
         html.push_str("<div class='palette-box' role='dialog' aria-modal='true' aria-label='Find a cluster or genome'>");
         write!(
         html,
-        "<div class='palette-input'>{}<input id='clusterSearch' type='search' autocomplete='off' spellcheck='false' placeholder='Search clusters and genomes' aria-label='Search clusters and genomes' aria-controls='paletteList'><kbd>esc</kbd></div>",
+        "<div class='palette-input'>{}<input id='clusterSearch' type='search' role='combobox' aria-expanded='false' aria-autocomplete='list' aria-haspopup='listbox' autocomplete='off' spellcheck='false' placeholder='Search clusters and genomes' aria-label='Search clusters and genomes' aria-controls='paletteList'><kbd>esc</kbd></div>",
         icon("search")
     )
     .expect("write to String is infallible");
@@ -3295,7 +3295,7 @@ pub(super) fn write_html_report(
         // ---- Shortcut sheet.
         write!(
         html,
-        "<div id='shortcutSheet' class='sheet' hidden><div class='sheet-scrim' id='sheetScrim'></div><div class='sheet-box' role='dialog' aria-modal='true' aria-labelledby='sheetTitle'><div class='sheet-head'><h2 id='sheetTitle'>Keyboard shortcuts</h2><button id='closeShortcuts' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close shortcuts'>{}</button></div><div class='sheet-grid'>",
+        "<div id='shortcutSheet' class='sheet' hidden><div class='sheet-scrim' id='sheetScrim'></div><div class='sheet-box' role='dialog' aria-modal='true' aria-labelledby='sheetTitle'><div class='sheet-head'><h2 id='sheetTitle'>Keyboard shortcuts</h2><button id='closeShortcuts' type='button' class='icon-btn' data-tip='Close (Esc)' aria-label='Close shortcuts'>{}</button></div><div class='sheet-toggle'><label for='singleKeys'>Single-key shortcuts</label><input id='singleKeys' type='checkbox' class='switch' checked data-tip='Turn off the one-letter shortcuts below if they fire by accident, for example with speech input'></div><div class='sheet-grid'>",
         icon("close")
     )
     .expect("write to String is infallible");
@@ -3312,6 +3312,7 @@ pub(super) fn write_html_report(
             ("C", "Phylogram or cladogram"),
             ("R", "Reroot at the midpoint"),
             ("Z", "Fit the matrix to the window"),
+            ("P", "Pin or unpin the open genome, to compare two"),
             ("\u{2318} wheel", "Zoom columns, under the pointer"),
             ("\u{2325} wheel", "Zoom rows, under the pointer"),
             ("\u{21e7} wheel", "Scroll sideways"),

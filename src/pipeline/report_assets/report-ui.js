@@ -74,6 +74,10 @@
       else hide();
     });
     document.addEventListener("pointerdown", hide);
+    // Dismissable without moving the pointer or focus (WCAG 1.4.13).
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") hide();
+    });
     // Keyboard users get it too.
     document.addEventListener("focusin", event => {
       const target = event.target.closest("[data-tip]");
@@ -110,6 +114,23 @@
     open.addEventListener("click", () => setOpen(!drawer.classList.contains("open")));
     if (close) close.addEventListener("click", () => setOpen(false));
     if (scrim) scrim.addEventListener("click", () => setOpen(false));
+    // The drawer covers the workspace behind a scrim, so it behaves as a modal:
+    // Tab and Shift+Tab cycle through its own controls.
+    drawer.addEventListener("keydown", event => {
+      if (event.key !== "Tab" || !drawer.classList.contains("open")) return;
+      const items = [...drawer.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+        .filter(el => !el.disabled && el.getClientRects().length);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
     document.addEventListener("keydown", event => {
       if (event.key === "Escape" && drawer.classList.contains("open")) setOpen(false);
       // The viewer owns the shortcuts when it runs; when it could not start,
