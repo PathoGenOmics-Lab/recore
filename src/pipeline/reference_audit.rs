@@ -223,17 +223,17 @@ pub(super) fn best_overlap_gene_id(gff: &GffIndex, hit: &Hit) -> Option<String> 
                 return None;
             }
             let reciprocal = (overlap / hit_len).min(overlap / gene_len);
-            (reciprocal > 0.5).then(|| (gene.gene_id.clone(), reciprocal))
+            (reciprocal > 0.5).then_some((gene.gene_id, reciprocal))
         })
         .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(gene_id, _)| gene_id)
+        .map(|(gene_id, _)| gene_id.to_string())
 }
 
 pub(super) fn reference_hit_shadow_candidates(
     hits: &HashMap<(GenomeIdx, ClusterIdx), Vec<Hit>>,
     pa: &crate::parser::PresenceAbsence,
     gff_indices: &HashMap<GenomeIdx, GffIndex>,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
 ) -> Vec<RescueEvent> {
     let mut candidates = Vec::new();
     for (&(gi, ci), cluster_hits) in hits {
@@ -247,7 +247,7 @@ pub(super) fn reference_hit_shadow_candidates(
             let annotation_cluster = annotation_match
                 .as_deref()
                 .and_then(|gene_id| g2c.and_then(|map| map.get(gene_id)))
-                .map(|other_ci| pa.cluster_name(*other_ci).to_string());
+                .map(|other_ci| pa.cluster_name(other_ci).to_string());
             let query_cluster = pa.cluster_name(ci);
             let rescue_type = if let Some(other_cluster) = annotation_cluster {
                 if other_cluster != query_cluster {
@@ -699,7 +699,7 @@ pub(super) fn reference_event_score(event: &ReferenceClusterEvent) -> f64 {
 pub(super) struct ReferenceEventRow<'a> {
     reference_name: &'a str,
     rescue: &'a RescueEvent,
-    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &'a HashMap<GenomeIdx, GeneClusters<'a>>,
     cluster_prevalences: &'a [f64],
     cluster_seq_lengths: &'a [usize],
     matrix_policy: MatrixPolicy,
@@ -716,7 +716,7 @@ pub(super) struct ReferenceAuditInputs<'a> {
     pub(super) reference_candidates: &'a [RescueEvent],
     pub(super) reference_cluster_events: &'a [ReferenceClusterEvent],
     pub(super) pa: &'a crate::parser::PresenceAbsence,
-    pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, GeneClusters<'a>>,
     pub(super) cluster_prevalences: &'a [f64],
     pub(super) cluster_seq_lengths: &'a [usize],
     pub(super) matrix_policy: MatrixPolicy,

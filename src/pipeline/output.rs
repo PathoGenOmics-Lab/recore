@@ -275,7 +275,7 @@ pub(super) struct MultistateMatrixInputs<'a> {
     pub(super) nsc_rescue_map: &'a HashMap<(ClusterIdx, GenomeIdx), &'a RescueEvent>,
     pub(super) synteny_rejected: &'a [RescueEvent],
     pub(super) paralog_rejected: &'a [RescueEvent],
-    pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    pub(super) gene_to_cluster_maps: &'a HashMap<GenomeIdx, GeneClusters<'a>>,
     pub(super) output_dir: &'a std::path::Path,
     pub(super) nsc_result: &'a Option<nscluster::NsClusterResult>,
     pub(super) coverage: &'a SearchCoverage,

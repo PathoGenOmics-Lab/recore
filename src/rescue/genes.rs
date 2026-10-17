@@ -1,4 +1,4 @@
-use super::gff::GffIndex;
+use super::gff::{GeneClusters, GffIndex};
 use crate::parser::PresenceAbsence;
 use crate::types::{ClusterIdx, GenomeIdx};
 use ahash::{HashMap, HashMapExt};
@@ -98,6 +98,19 @@ fn insert_gene_cluster_alias(map: &mut HashMap<String, ClusterIdx>, gene_id: &st
     }
 }
 
+/// The cluster of every name of one genome's annotation, read off the map
+/// below, which is built for the moment and dropped; see GeneClusters.
+pub fn build_gene_clusters<'a>(
+    pa: &PresenceAbsence,
+    gi: GenomeIdx,
+    gff: &'a GffIndex,
+) -> GeneClusters<'a> {
+    GeneClusters::from_map(
+        gff,
+        &build_gene_to_cluster_with_gff_aliases(pa, gi, Some(gff)),
+    )
+}
+
 /// Build a gene_id to ClusterIdx lookup and conservatively add GFF aliases.
 ///
 /// Panaroo cells can contain a gene name while the GFF uses a locus_tag (or the
@@ -114,8 +127,8 @@ pub fn build_gene_to_cluster_with_gff_aliases(
         return map;
     };
 
-    for gene in &gff.genes {
-        let labels = gff.aliases_for_gene(gene);
+    for gene in gff.genes() {
+        let labels = gff.aliases_for_gene(&gene);
         let mut candidates: Vec<ClusterIdx> = labels
             .iter()
             .filter_map(|label| lookup_gene_cluster_alias(&map, label))

@@ -8,6 +8,39 @@ use crate::types::{ClusterIdx, GenomeIdx};
 
 // ── Presence/absence matrix (encapsulated) ──
 
+/// One cluster's cells, back to back in one string. A String per cell cost 24
+/// bytes plus an allocation, which with gene IDs a dozen characters long was
+/// most of what the matrix held for each genome.
+struct CellRow {
+    text: Box<str>,
+    /// Where each genome's cell ends in `text`; each starts where the one
+    /// before ends.
+    ends: Box<[u32]>,
+}
+
+impl CellRow {
+    fn new<'a>(cells: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut text = String::new();
+        let mut ends = Vec::new();
+        for cell in cells {
+            text.push_str(cell);
+            ends.push(u32::try_from(text.len()).expect("a matrix row under 4 GB"));
+        }
+        CellRow {
+            text: text.into_boxed_str(),
+            ends: ends.into_boxed_slice(),
+        }
+    }
+
+    fn get(&self, gi: usize) -> &str {
+        let start = match gi {
+            0 => 0,
+            _ => self.ends[gi - 1] as usize,
+        };
+        &self.text[start..self.ends[gi] as usize]
+    }
+}
+
 /// Presence/absence matrix from Panaroo/Roary output.
 ///
 /// Fields are private to enforce consistent access and prevent
@@ -17,7 +50,7 @@ pub struct PresenceAbsence {
     genomes: Vec<String>,
     present_genomes: Vec<Vec<GenomeIdx>>,
     present_bits: Vec<Vec<bool>>,
-    cell_values: Vec<Vec<String>>,
+    cell_values: Vec<CellRow>,
     header: Vec<String>,
     metadata: Vec<Vec<String>>,
     genome_col_indices: Vec<usize>,
@@ -80,7 +113,7 @@ impl PresenceAbsence {
 
     #[inline]
     pub fn cell(&self, ci: ClusterIdx, gi: GenomeIdx) -> &str {
-        &self.cell_values[ci.val()][gi.val()]
+        self.cell_values[ci.val()].get(gi.val())
     }
 
     // ── CSV structure (for output reconstruction) ──
@@ -162,6 +195,10 @@ impl PresenceAbsence {
         let genome_col_indices: Vec<usize> = (0..n_ge).collect();
         let mut header = vec!["Gene".to_string()];
         header.extend(genomes.iter().cloned());
+        let cell_values = cell_values
+            .iter()
+            .map(|row| CellRow::new(row.iter().map(String::as_str)))
+            .collect();
         PresenceAbsence {
             clusters,
             genomes,
@@ -271,16 +308,14 @@ pub fn parse_presence_absence(path: &Path) -> Result<PresenceAbsence> {
 
         let mut present_row = Vec::new();
         let mut bit_row = vec![false; genomes.len()];
-        let mut row_values = Vec::with_capacity(genomes.len());
-
-        for (gi, &col_idx) in genome_indices.iter().enumerate() {
-            let val = record.get(col_idx).unwrap_or("").trim().to_string();
+        let row_values = CellRow::new(genome_indices.iter().enumerate().map(|(gi, &col_idx)| {
+            let val = record.get(col_idx).unwrap_or("").trim();
             if !val.is_empty() {
                 present_row.push(GenomeIdx(gi));
                 bit_row[gi] = true;
             }
-            row_values.push(val);
-        }
+            val
+        }));
 
         let meta_values: Vec<String> = meta_col_indices
             .iter()
@@ -394,15 +429,14 @@ fn parse_pirate_gene_families(path: &Path) -> Result<PresenceAbsence> {
         let field = |col: Option<usize>| col.and_then(|i| record.get(i)).unwrap_or("").to_string();
         let mut present_row = Vec::new();
         let mut bit_row = vec![false; genomes.len()];
-        let mut row_values = Vec::with_capacity(genomes.len());
-        for (gi, &col) in genome_cols.iter().enumerate() {
-            let value = record.get(col).unwrap_or("").trim().to_string();
+        let row_values = CellRow::new(genome_cols.iter().enumerate().map(|(gi, &col)| {
+            let value = record.get(col).unwrap_or("").trim();
             if !value.is_empty() {
                 present_row.push(GenomeIdx(gi));
                 bit_row[gi] = true;
             }
-            row_values.push(value);
-        }
+            value
+        }));
         metadata.push(vec![
             field(Some(family_col)),
             field(gene_name_col),
@@ -1373,13 +1407,30 @@ mod tests {
             Accessory Order,QC,Min group size nuc,Max group size nuc,\
             Avg group size nuc,g1,g2,g3\n\
             gA,gA,prod,3,3,1.0,0,0,0,,100,100,100,id1,id2,id3\n\
-            gB,gB,prod,2,2,1.0,0,0,0,,200,200,200,id4,,id5\n",
+            gB,gB,prod,2,2,1.0,0,0,0,,200,200,200,id4,,id5\n\
+            gC,gC,prod,1,2,2.0,0,0,0,,300,300,300,, id6;id7 ,\n",
         );
         let pa = parse_presence_absence(csv.path()).unwrap();
-        assert_eq!(pa.n_clusters(), 2);
+        assert_eq!(pa.n_clusters(), 3);
         assert_eq!(pa.n_genomes(), 3);
         assert_eq!(pa.core_size(), 1);
-        assert_eq!(pa.gaps().len(), 1);
+        assert_eq!(pa.gaps().len(), 3);
+        // Every cell comes back as written, trimmed, empty ones included.
+        let cells: Vec<Vec<&str>> = (0..3)
+            .map(|ci| {
+                (0..3)
+                    .map(|gi| pa.cell(ClusterIdx(ci), GenomeIdx(gi)))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            cells,
+            vec![
+                vec!["id1", "id2", "id3"],
+                vec!["id4", "", "id5"],
+                vec!["", "id6;id7", ""],
+            ]
+        );
     }
 
     #[test]

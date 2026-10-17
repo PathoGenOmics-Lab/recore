@@ -15,10 +15,11 @@ use crate::parser::{
 };
 use crate::relationships::{write_cluster_components, write_cluster_relationships};
 use crate::rescue::{
-    build_gene_to_cluster_with_gff_aliases, cell_gene_id_variants, check_internal_stops_in_cds,
+    build_gene_clusters, cell_gene_id_variants, check_internal_stops_in_cds,
     check_internal_stops_in_hit, check_internal_stops_in_span, classify_hits,
-    panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GffGene,
-    GffIndex, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
+    panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GeneClusters,
+    GffGene, GffIndex, GffRecord, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence,
+    SyntenyReferenceCache,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -393,23 +394,25 @@ pub fn run(args: &Args) -> Result<()> {
         HashMap::new()
     };
 
-    // ── 5. Build gene_to_cluster maps ONCE ──
-    let gene_to_cluster_maps: HashMap<GenomeIdx, HashMap<String, ClusterIdx>> = {
-        let mut maps = HashMap::new();
-        for (gi, _) in &searchable_genomes {
-            maps.entry(*gi).or_insert_with(|| {
-                build_gene_to_cluster_with_gff_aliases(&pa, *gi, gff_indices.get(gi))
-            });
-        }
-        if args.synteny || !gff_indices.is_empty() {
-            for &gi in gff_indices.keys() {
-                maps.entry(gi).or_insert_with(|| {
-                    build_gene_to_cluster_with_gff_aliases(&pa, gi, gff_indices.get(&gi))
-                });
-            }
-        }
-        maps
-    };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(args.threads)
+        .build()
+        .context("Failed to build rayon thread pool")?;
+
+    // ── 5. Build the gene-to-cluster lookups ONCE ──
+    // Every lookup is for a name a genome's annotation uses, so a genome
+    // without one needs none. Each genome's map of names is built in
+    // parallel, read into its index's names and dropped; see GeneClusters.
+    let mut gene_to_cluster_maps: HashMap<GenomeIdx, GeneClusters> = pool.install(|| {
+        use rayon::prelude::*;
+        let genomes: Vec<(&GenomeIdx, &GffIndex)> = gff_indices.iter().collect();
+        genomes
+            .into_par_iter()
+            .map(|(&gi, gff)| (gi, build_gene_clusters(&pa, gi, gff)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect()
+    });
 
     // ── 6. Search each gap genome for its absent clusters ──
     //
@@ -502,17 +505,12 @@ pub fn run(args: &Args) -> Result<()> {
     };
 
     // ── 7. Classify hits (parallel) ──
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(args.threads)
-        .build()
-        .context("Failed to build rayon thread pool")?;
-
     let classify_inputs: Vec<(ClusterIdx, GenomeIdx, &[crate::search::Hit])> = hits_map
         .iter()
         .map(|((gi, ci), hits)| (*ci, *gi, hits.as_slice()))
         .collect();
 
-    let empty_map: HashMap<String, ClusterIdx> = HashMap::new();
+    let no_clusters = GeneClusters::none();
 
     let rescues: Vec<RescueEvent> = pool.install(|| {
         use rayon::prelude::*;
@@ -520,7 +518,7 @@ pub fn run(args: &Args) -> Result<()> {
             .par_iter()
             .filter_map(|&(ci, gi, hits)| {
                 let gff_index = gff_indices.get(&gi);
-                let g2c = gene_to_cluster_maps.get(&gi).unwrap_or(&empty_map);
+                let g2c = gene_to_cluster_maps.get(&gi).unwrap_or(&no_clusters);
                 classify_hits(hits, ci, gi, &pa, gff_index, g2c, args.min_coverage)
             })
             .collect()
@@ -921,27 +919,54 @@ pub fn run(args: &Args) -> Result<()> {
             write_reference_cluster_events(&reference_cluster_events, &pa, &args.output)?;
         }
     }
+    write_multistate_matrix(MultistateMatrixInputs {
+        pa: &pa,
+        accepted_rescue_map: &all_rescue_map,
+        nsc_rescue_map: &matrix_rescue_map,
+        synteny_rejected: &synteny_rejected,
+        paralog_rejected: &paralog_rejected,
+        gene_to_cluster_maps: &gene_to_cluster_maps,
+        output_dir: &args.output,
+        nsc_result: &nsc_result,
+        coverage: &coverage,
+    })?;
     // Contexts and synteny blocks are read off the corrected matrix: a CDS this
     // run rescued belongs to its cluster like any other neighbour. Read off the
     // input matrix, the falsely absent gene was a CDS with no cluster, it was
     // skipped, and the window slid along by one. Every single-copy neighbour of
     // a false absence then had two contexts and was reported as a duplication
     // or paralog expansion: 12 of the tutorial's 24 clusters, DnaA included.
-    let mut corrected_gene_to_cluster_maps = gene_to_cluster_maps.clone();
-    for rescue in matrix_rescue_map.values() {
-        if let Some(gene_id) = rescue.annotation_match.as_deref() {
-            corrected_gene_to_cluster_maps
-                .entry(rescue.genome_idx)
-                .or_default()
-                .entry(gene_id.to_string())
-                .or_insert(rescue.cluster_idx);
+    //
+    // The lookups are corrected in place, so this comes after everything that
+    // reads the input matrix's clusters (the multistate matrix last). The
+    // corrections used to go into a copy of every map, filled in the order of a
+    // hash map; they are taken in cluster order, so when two corrections name
+    // one gene ID the same one wins from run to run.
+    let mut corrections: Vec<(GenomeIdx, ClusterIdx, &str)> = matrix_rescue_map
+        .values()
+        .filter_map(|rescue| {
+            rescue
+                .annotation_match
+                .as_deref()
+                .map(|gene_id| (rescue.genome_idx, rescue.cluster_idx, gene_id))
+        })
+        .collect();
+    corrections.sort_unstable();
+    for genome_corrections in corrections.chunk_by(|a, b| a.0 == b.0) {
+        if let Some(g2c) = gene_to_cluster_maps.get_mut(&genome_corrections[0].0) {
+            let names: Vec<(&str, ClusterIdx)> = genome_corrections
+                .iter()
+                .map(|&(_, ci, gene_id)| (gene_id, ci))
+                .collect();
+            g2c.fill(&names);
         }
     }
     let context_summaries = if !gff_indices.is_empty() {
         let (context_rows, summaries) = write_cluster_locus_contexts(
             &pa,
             &gff_indices,
-            &corrected_gene_to_cluster_maps,
+            &gene_to_cluster_maps,
+            args.threads,
             &args.output,
         )?;
         let synteny_reference_gi = args
@@ -951,7 +976,7 @@ pub fn run(args: &Args) -> Result<()> {
         let block_rows = write_cluster_synteny_blocks(
             &pa,
             &gff_indices,
-            &corrected_gene_to_cluster_maps,
+            &gene_to_cluster_maps,
             synteny_reference_gi,
             args.threads,
             &args.output,
@@ -967,17 +992,6 @@ pub fn run(args: &Args) -> Result<()> {
         Vec::new()
     };
     let corrected_counts = write_corrected_csv(&pa, &matrix_rescue_map, &args.output, &nsc_result)?;
-    write_multistate_matrix(MultistateMatrixInputs {
-        pa: &pa,
-        accepted_rescue_map: &all_rescue_map,
-        nsc_rescue_map: &matrix_rescue_map,
-        synteny_rejected: &synteny_rejected,
-        paralog_rejected: &paralog_rejected,
-        gene_to_cluster_maps: &gene_to_cluster_maps,
-        output_dir: &args.output,
-        nsc_result: &nsc_result,
-        coverage: &coverage,
-    })?;
     let n_relationships = write_cluster_relationships(&pa, &rescues, &nsc_result, &args.output)?;
     if n_relationships > 0 {
         info!("Cluster relationships: {} rows", n_relationships);
@@ -1335,7 +1349,7 @@ fn clean_tsv_field(value: &str) -> String {
         .collect()
 }
 
-fn write_tsv_fields(w: &mut BufWriter<fs::File>, fields: &[String]) -> Result<()> {
+fn write_tsv_fields(w: &mut impl Write, fields: &[String]) -> Result<()> {
     let cleaned: Vec<String> = fields.iter().map(|field| clean_tsv_field(field)).collect();
     writeln!(w, "{}", cleaned.join("\t"))?;
     Ok(())
@@ -1425,7 +1439,7 @@ fn scan_genome_for_internal_stops(
                     && rescue.start < gene.end
             });
         let stops = if let Some(gene) = annotated_cds {
-            check_internal_stops_in_cds(&gene.contig, gene.start, gene.end, gene.strand, &contigs)
+            check_internal_stops_in_cds(gene.contig, gene.start, gene.end, gene.strand, &contigs)
         } else if let Some(query_start) = rescue.query_start {
             // No annotation, but one alignment: its start on the representative
             // fixes the reading frame.
@@ -1530,11 +1544,11 @@ fn load_genome_gff(
             )));
         }
     }
-    let genes: Vec<(GffGene, Vec<String>, Vec<String>)> = raw_genes
+    let genes: Vec<(GffRecord, Vec<String>, Vec<String>)> = raw_genes
         .into_iter()
         .map(|(contig, start, end, strand, gene_id, aliases, labels)| {
             (
-                GffGene {
+                GffRecord {
                     contig,
                     start,
                     end,
@@ -1553,13 +1567,13 @@ fn load_genome_gff(
     })
 }
 
-fn gff_gene_for_id<'a>(gff: &'a GffIndex, gene_id: &str) -> Option<&'a GffGene> {
+fn gff_gene_for_id<'a>(gff: &'a GffIndex, gene_id: &str) -> Option<GffGene<'a>> {
     cell_gene_id_variants(gene_id)
         .into_iter()
         .find_map(|id| gff.get_by_id(id))
 }
 
-fn gff_gene_for_cell<'a>(gff: &'a GffIndex, cell: &str) -> Option<&'a GffGene> {
+fn gff_gene_for_cell<'a>(gff: &'a GffIndex, cell: &str) -> Option<GffGene<'a>> {
     cell.split(';')
         .map(str::trim)
         .filter(|id| !id.is_empty())
@@ -1569,7 +1583,7 @@ fn gff_gene_for_cell<'a>(gff: &'a GffIndex, cell: &str) -> Option<&'a GffGene> {
 fn annotation_cluster_name(
     rescue: &RescueEvent,
     pa: &crate::parser::PresenceAbsence,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
 ) -> String {
     let Some(annotation_match) = rescue.annotation_match.as_deref() else {
         return String::new();
@@ -1578,7 +1592,7 @@ fn annotation_cluster_name(
         return String::new();
     };
     g2c.get(annotation_match)
-        .map(|ci| pa.cluster_name(*ci).to_string())
+        .map(|ci| pa.cluster_name(ci).to_string())
         .unwrap_or_default()
 }
 
@@ -1711,7 +1725,7 @@ fn matrix_action_with_quality(
 fn accepted_rescue_evidence_state(
     rescue: &RescueEvent,
     pa: &crate::parser::PresenceAbsence,
-    gene_to_cluster_maps: &HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &HashMap<GenomeIdx, GeneClusters>,
 ) -> &'static str {
     let query_cluster = pa.cluster_name(rescue.cluster_idx);
     let annotation_cluster = annotation_cluster_name(rescue, pa, gene_to_cluster_maps);
@@ -2001,7 +2015,7 @@ struct OrthologyEvidenceInputs<'a> {
     synteny_rejected: &'a [RescueEvent],
     paralog_rejected: &'a [RescueEvent],
     pa: &'a crate::parser::PresenceAbsence,
-    gene_to_cluster_maps: &'a HashMap<GenomeIdx, HashMap<String, ClusterIdx>>,
+    gene_to_cluster_maps: &'a HashMap<GenomeIdx, GeneClusters<'a>>,
     cluster_prevalences: &'a [f64],
     cluster_seq_lengths: &'a [usize],
     matrix_policy: MatrixPolicy,

@@ -117,21 +117,21 @@ fn test_merged_coverage_same_length_different_alleles() {
 #[test]
 fn test_gff_index_overlap() {
     let genes = vec![
-        GffGene {
+        GffRecord {
             contig: "chr1".into(),
             start: 100,
             end: 500,
             strand: '+',
             gene_id: "g1".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr1".into(),
             start: 600,
             end: 900,
             strand: '-',
             gene_id: "g2".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr2".into(),
             start: 50,
             end: 200,
@@ -150,21 +150,21 @@ fn test_gff_index_overlap() {
 #[test]
 fn test_gff_flanking() {
     let genes = vec![
-        GffGene {
+        GffRecord {
             contig: "c".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "g1".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "c".into(),
             start: 300,
             end: 400,
             strand: '+',
             gene_id: "g2".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "c".into(),
             start: 500,
             end: 600,
@@ -204,35 +204,35 @@ fn test_synteny_context_handles_overlapping_boundary_genes() {
     );
 
     let target_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 0,
             end: 100,
             strand: '+',
             gene_id: "target_outer_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "target_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 197,
             end: 260,
             strand: '+',
             gene_id: "target_center".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 257,
             end: 320,
             strand: '+',
             gene_id: "target_down".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 320,
             end: 400,
@@ -241,35 +241,35 @@ fn test_synteny_context_handles_overlapping_boundary_genes() {
         },
     ]);
     let ref_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 0,
             end: 100,
             strand: '+',
             gene_id: "ref_outer_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "ref_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 197,
             end: 260,
             strand: '+',
             gene_id: "ref_center".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 257,
             end: 320,
             strand: '+',
             gene_id: "ref_down".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 320,
             end: 400,
@@ -283,8 +283,20 @@ fn test_synteny_context_handles_overlapping_boundary_genes() {
     gff_indices.insert(GenomeIdx(1), ref_gff);
 
     let mut g2c = HashMap::new();
-    g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
-    g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+    g2c.insert(
+        GenomeIdx(0),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(0)],
+            &build_gene_to_cluster(&pa, GenomeIdx(0)),
+        ),
+    );
+    g2c.insert(
+        GenomeIdx(1),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(1)],
+            &build_gene_to_cluster(&pa, GenomeIdx(1)),
+        ),
+    );
 
     let mut rescue = RescueEvent {
         cluster_idx: ClusterIdx(0),
@@ -325,21 +337,21 @@ fn test_synteny_context_rejects_different_locus_paralog() {
     );
 
     let target_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "target_up_gene".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "target_center".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -348,21 +360,21 @@ fn test_synteny_context_rejects_different_locus_paralog() {
         },
     ]);
     let ref_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "ref_up_other".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "ref_center".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -376,8 +388,20 @@ fn test_synteny_context_rejects_different_locus_paralog() {
     gff_indices.insert(GenomeIdx(1), ref_gff);
 
     let mut g2c = HashMap::new();
-    g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
-    g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+    g2c.insert(
+        GenomeIdx(0),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(0)],
+            &build_gene_to_cluster(&pa, GenomeIdx(0)),
+        ),
+    );
+    g2c.insert(
+        GenomeIdx(1),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(1)],
+            &build_gene_to_cluster(&pa, GenomeIdx(1)),
+        ),
+    );
 
     let mut rescue = RescueEvent {
         cluster_idx: ClusterIdx(0),
@@ -422,21 +446,21 @@ fn test_synteny_without_any_reference_annotation_is_not_assessed() {
     );
 
     let target_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "target_up_gene".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "target_center".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -445,21 +469,21 @@ fn test_synteny_without_any_reference_annotation_is_not_assessed() {
         },
     ]);
     let ref_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "ref_up_other".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "ref_center".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -472,9 +496,15 @@ fn test_synteny_without_any_reference_annotation_is_not_assessed() {
     gff_indices.insert(GenomeIdx(0), target_gff);
     drop(ref_gff);
 
+    // Genome 1 has no annotation, so it has no lookups either.
     let mut g2c = HashMap::new();
-    g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
-    g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+    g2c.insert(
+        GenomeIdx(0),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(0)],
+            &build_gene_to_cluster(&pa, GenomeIdx(0)),
+        ),
+    );
 
     let mut rescue = RescueEvent {
         cluster_idx: ClusterIdx(0),
@@ -576,21 +606,21 @@ fn test_synteny_uses_all_present_genomes_deterministically() {
 
     fn genes(up: &str, center: &str, down: &str) -> GffIndex {
         GffIndex::build(vec![
-            GffGene {
+            GffRecord {
                 contig: "chr".into(),
                 start: 100,
                 end: 200,
                 strand: '+',
                 gene_id: up.into(),
             },
-            GffGene {
+            GffRecord {
                 contig: "chr".into(),
                 start: 200,
                 end: 300,
                 strand: '+',
                 gene_id: center.into(),
             },
-            GffGene {
+            GffRecord {
                 contig: "chr".into(),
                 start: 300,
                 end: 400,
@@ -617,7 +647,13 @@ fn test_synteny_uses_all_present_genomes_deterministically() {
 
     let mut g2c = HashMap::new();
     for gi in 0..8 {
-        g2c.insert(GenomeIdx(gi), build_gene_to_cluster(&pa, GenomeIdx(gi)));
+        g2c.insert(
+            GenomeIdx(gi),
+            GeneClusters::from_map(
+                &gff_indices[&GenomeIdx(gi)],
+                &build_gene_to_cluster(&pa, GenomeIdx(gi)),
+            ),
+        );
     }
 
     let mut rescue = RescueEvent {
@@ -663,21 +699,21 @@ fn test_synteny_uses_all_gene_ids_in_multicopy_reference_cell() {
     );
 
     let target_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "target_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "candidate".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -686,42 +722,42 @@ fn test_synteny_uses_all_gene_ids_in_multicopy_reference_cell() {
         },
     ]);
     let ref_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "ref_bad_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "ref_bad".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
             strand: '+',
             gene_id: "ref_bad_down".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 1000,
             end: 1100,
             strand: '+',
             gene_id: "ref_good_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 1100,
             end: 1200,
             strand: '+',
             gene_id: "ref_good".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 1200,
             end: 1300,
@@ -735,8 +771,20 @@ fn test_synteny_uses_all_gene_ids_in_multicopy_reference_cell() {
     gff_indices.insert(GenomeIdx(1), ref_gff);
 
     let mut g2c = HashMap::new();
-    g2c.insert(GenomeIdx(0), build_gene_to_cluster(&pa, GenomeIdx(0)));
-    g2c.insert(GenomeIdx(1), build_gene_to_cluster(&pa, GenomeIdx(1)));
+    g2c.insert(
+        GenomeIdx(0),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(0)],
+            &build_gene_to_cluster(&pa, GenomeIdx(0)),
+        ),
+    );
+    g2c.insert(
+        GenomeIdx(1),
+        GeneClusters::from_map(
+            &gff_indices[&GenomeIdx(1)],
+            &build_gene_to_cluster(&pa, GenomeIdx(1)),
+        ),
+    );
 
     let mut rescue = RescueEvent {
         cluster_idx: ClusterIdx(0),
@@ -780,21 +828,21 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
     );
 
     let target_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "target_up".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
             strand: '+',
             gene_id: "target_down".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 1000,
             end: 1100,
@@ -803,21 +851,21 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
         },
     ]);
     let ref1_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "ref_up1".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "ref_center1".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -826,21 +874,21 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
         },
     ]);
     let ref2_gff = GffIndex::build(vec![
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 100,
             end: 200,
             strand: '+',
             gene_id: "ref_up2".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 200,
             end: 300,
             strand: '+',
             gene_id: "ref_center2".into(),
         },
-        GffGene {
+        GffRecord {
             contig: "chr".into(),
             start: 300,
             end: 400,
@@ -856,7 +904,13 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
 
     let mut g2c = HashMap::new();
     for gi in 0..3 {
-        g2c.insert(GenomeIdx(gi), build_gene_to_cluster(&pa, GenomeIdx(gi)));
+        g2c.insert(
+            GenomeIdx(gi),
+            GeneClusters::from_map(
+                &gff_indices[&GenomeIdx(gi)],
+                &build_gene_to_cluster(&pa, GenomeIdx(gi)),
+            ),
+        );
     }
 
     let annotated_paralog = Hit {
@@ -1043,7 +1097,7 @@ fn test_synteny_recurrence_requires_multiple_genomes_for_large_reference_sets() 
 
 #[test]
 fn test_detect_start_variant_with_gff() {
-    let genes = vec![GffGene {
+    let genes = vec![GffRecord {
         contig: "c".into(),
         start: 0,
         end: 1100,
@@ -1076,7 +1130,7 @@ fn test_detect_start_variant_with_gff() {
 /// start variant. The old rule compared lengths and called this +50bp.
 #[test]
 fn test_detect_start_variant_projects_unaligned_query_ends() {
-    let genes = vec![GffGene {
+    let genes = vec![GffRecord {
         contig: "c".into(),
         start: 0,
         end: 1050,
@@ -1109,7 +1163,7 @@ fn test_detect_start_variant_projects_unaligned_query_ends() {
 /// that reads through its stop used to be reported this way.
 #[test]
 fn test_detect_start_variant_ignores_stop_side_differences() {
-    let idx = GffIndex::build(vec![GffGene {
+    let idx = GffIndex::build(vec![GffRecord {
         contig: "c".into(),
         start: 0,
         end: 1100,
@@ -1123,7 +1177,7 @@ fn test_detect_start_variant_ignores_stop_side_differences() {
 /// On the minus strand the start is the high coordinate.
 #[test]
 fn test_detect_start_variant_minus_strand_start_is_the_high_end() {
-    let idx = GffIndex::build(vec![GffGene {
+    let idx = GffIndex::build(vec![GffRecord {
         contig: "c".into(),
         start: 0,
         end: 1100,
@@ -1311,7 +1365,6 @@ fn test_fragmented_span() {
         vec!["genome1".into()],
         vec![vec!["".into()]],
     );
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
 
     let result = classify_hits(
         &[h1, h2],
@@ -1319,7 +1372,7 @@ fn test_fragmented_span() {
         GenomeIdx(0),
         &pa,
         None,
-        &g2c,
+        &GeneClusters::none(),
         80.0,
     );
     assert!(result.is_some());
@@ -1366,7 +1419,7 @@ fn test_best_fragment_chain_tie_breaks_by_locus() {
 fn test_classify_split_vs_paralog() {
     // Setup: cluster "target_cluster" absent in genome, hit lands on a gene
     // assigned to "other_cluster". Identity determines SPLIT vs PARALOG.
-    let gff_genes = vec![GffGene {
+    let gff_genes = vec![GffRecord {
         contig: "c".into(),
         start: 0,
         end: 1000,
@@ -1406,7 +1459,7 @@ fn test_classify_split_vs_paralog() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     );
     let r = result.unwrap();
@@ -1437,7 +1490,7 @@ fn test_classify_split_vs_paralog() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     );
     let r = result.unwrap();
@@ -1471,8 +1524,15 @@ fn test_classify_dropped_no_gff() {
         vec!["genome1".into()],
         vec![vec!["".into()]],
     );
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
-    let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+    let result = classify_hits(
+        &[hit],
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        None,
+        &GeneClusters::none(),
+        80.0,
+    );
     let r = result.unwrap();
     assert!(matches!(r.rescue_type, RescueType::Dropped));
     assert!(r.confidence > 0.9);
@@ -1515,14 +1575,13 @@ fn test_classify_prefers_best_evidence_over_longest_allele() {
         vec!["genome1".into()],
         vec![vec!["".into()]],
     );
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
     let result = classify_hits(
         &[long_lower_score, short_better_score],
         ClusterIdx(0),
         GenomeIdx(0),
         &pa,
         None,
-        &g2c,
+        &GeneClusters::none(),
         80.0,
     )
     .unwrap();
@@ -1535,7 +1594,7 @@ fn test_classify_prefers_best_evidence_over_longest_allele() {
 #[test]
 fn test_classify_missing_cds_no_overlapping_genes() {
     // Full-coverage hit, GFF exists but no gene overlaps the hit region → MISSING_CDS
-    let gff_genes = vec![GffGene {
+    let gff_genes = vec![GffRecord {
         contig: "c".into(),
         start: 5000,
         end: 6000,
@@ -1570,7 +1629,7 @@ fn test_classify_missing_cds_no_overlapping_genes() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     );
     let r = result.unwrap();
@@ -1580,7 +1639,7 @@ fn test_classify_missing_cds_no_overlapping_genes() {
 #[test]
 fn test_classify_start_variant_with_gff() {
     // Hit with high identity overlapping a similar-length GFF gene → START_VARIANT
-    let gff_genes = vec![GffGene {
+    let gff_genes = vec![GffRecord {
         contig: "c".into(),
         start: 0,
         end: 1100,
@@ -1617,7 +1676,7 @@ fn test_classify_start_variant_with_gff() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     );
     let r = result.unwrap();
@@ -1632,8 +1691,15 @@ fn test_classify_start_variant_with_gff() {
 fn test_classify_returns_none_for_empty_hits() {
     let pa =
         PresenceAbsence::new_for_test(vec!["c1".into()], vec!["g1".into()], vec![vec!["".into()]]);
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
-    let result = classify_hits(&[], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+    let result = classify_hits(
+        &[],
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        None,
+        &GeneClusters::none(),
+        80.0,
+    );
     assert!(result.is_none());
 }
 
@@ -1657,8 +1723,15 @@ fn test_classify_returns_none_below_coverage() {
     };
     let pa =
         PresenceAbsence::new_for_test(vec!["c1".into()], vec!["g1".into()], vec![vec!["".into()]]);
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
-    let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+    let result = classify_hits(
+        &[hit],
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        None,
+        &GeneClusters::none(),
+        80.0,
+    );
     assert!(result.is_none());
 }
 
@@ -1709,7 +1782,7 @@ fn test_build_gene_to_cluster_adds_unambiguous_gff_aliases() {
         vec![vec!["commonName".into()]],
     );
     let gff = GffIndex::build_with_aliases(vec![(
-        GffGene {
+        GffRecord {
             contig: "ctg".into(),
             start: 0,
             end: 100,
@@ -1734,7 +1807,7 @@ fn test_descriptive_gff_labels_do_not_create_cluster_aliases() {
     );
     let gff = GffIndex::build_with_aliases_and_labels(vec![
         (
-            GffGene {
+            GffRecord {
                 contig: "ctg".into(),
                 start: 0,
                 end: 100,
@@ -1745,7 +1818,7 @@ fn test_descriptive_gff_labels_do_not_create_cluster_aliases() {
             vec!["commonName".into(), "hypothetical%20protein".into()],
         ),
         (
-            GffGene {
+            GffRecord {
                 contig: "ctg".into(),
                 start: 200,
                 end: 300,
@@ -1771,7 +1844,7 @@ fn test_classify_hit_uses_gff_alias_for_split_cluster() {
         vec![vec!["".into()], vec!["commonName".into()]],
     );
     let gff = GffIndex::build_with_aliases(vec![(
-        GffGene {
+        GffRecord {
             contig: "ctg".into(),
             start: 100,
             end: 1100,
@@ -1803,7 +1876,7 @@ fn test_classify_hit_uses_gff_alias_for_split_cluster() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     )
     .unwrap();
@@ -2047,9 +2120,16 @@ fn test_classify_partial_deletion_pseudogene() {
     };
     let pa =
         PresenceAbsence::new_for_test(vec!["c1".into()], vec!["g1".into()], vec![vec!["".into()]]);
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
     // min_coverage = 80% so 70% coverage won't pass Path 1
-    let result = classify_hits(&[hit], ClusterIdx(0), GenomeIdx(0), &pa, None, &g2c, 80.0);
+    let result = classify_hits(
+        &[hit],
+        ClusterIdx(0),
+        GenomeIdx(0),
+        &pa,
+        None,
+        &GeneClusters::none(),
+        80.0,
+    );
     let r = result.unwrap();
     match &r.rescue_type {
         RescueType::Pseudogene {
@@ -2098,14 +2178,13 @@ fn test_alignment_split_for_small_colinear_gaps() {
         vec!["genome1".into()],
         vec![vec!["".into()]],
     );
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
     let result = classify_hits(
         &[h1, h2],
         ClusterIdx(0),
         GenomeIdx(0),
         &pa,
         None,
-        &g2c,
+        &GeneClusters::none(),
         80.0,
     )
     .unwrap();
@@ -2152,7 +2231,7 @@ fn test_fragment_chain_inside_same_cds_is_not_fragmented() {
         alignment_length: 400,
         mapq: 60,
     };
-    let gff = GffIndex::build(vec![GffGene {
+    let gff = GffIndex::build(vec![GffRecord {
         contig: "c".into(),
         start: 100,
         end: 1100,
@@ -2171,7 +2250,7 @@ fn test_fragment_chain_inside_same_cds_is_not_fragmented() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     )
     .unwrap();
@@ -2217,14 +2296,13 @@ fn test_non_colinear_fragments_are_not_rescued() {
         vec!["genome1".into()],
         vec![vec!["".into()]],
     );
-    let g2c: HashMap<String, ClusterIdx> = HashMap::new();
     let result = classify_hits(
         &[h1, h2],
         ClusterIdx(0),
         GenomeIdx(0),
         &pa,
         None,
-        &g2c,
+        &GeneClusters::none(),
         80.0,
     );
     assert!(result.is_none());
@@ -2234,7 +2312,7 @@ fn test_non_colinear_fragments_are_not_rescued() {
 /// contains another. The binary search on ends skipped the containing CDS.
 #[test]
 fn test_gff_index_finds_a_cds_that_contains_a_nested_one() {
-    let gene = |start, end, id: &str| GffGene {
+    let gene = |start, end, id: &str| GffRecord {
         contig: "c".into(),
         start,
         end,
@@ -2249,17 +2327,17 @@ fn test_gff_index_finds_a_cds_that_contains_a_nested_one() {
     let ids: Vec<&str> = idx
         .overlapping("c", 3000, 4000)
         .iter()
-        .map(|g| g.gene_id.as_str())
+        .map(|g| g.gene_id)
         .collect();
     assert_eq!(ids, vec!["A"]);
 
     let (up, down) = idx.flanking("c", 5040, 5090);
     assert_eq!(
-        up.map(|g| g.gene_id.as_str()),
+        up.map(|g| g.gene_id),
         Some("A"),
         "nearest end is A's, not B's"
     );
-    assert_eq!(down.map(|g| g.gene_id.as_str()), Some("C"));
+    assert_eq!(down.map(|g| g.gene_id), Some("C"));
 }
 
 /// The two halves of a gene broken by an insertion abut exactly on the query
@@ -2311,7 +2389,7 @@ fn test_gene_split_across_contigs_is_fragmented() {
         GenomeIdx(0),
         &pa,
         None,
-        &HashMap::new(),
+        &GeneClusters::none(),
         80.0,
     )
     .unwrap();
@@ -2335,7 +2413,7 @@ fn test_unclaimed_annotated_cds_beats_an_unannotated_copy() {
         vec!["g".into(), "r".into()],
         vec![vec!["".into(), "r1".into()]],
     );
-    let gff = GffIndex::build(vec![GffGene {
+    let gff = GffIndex::build(vec![GffRecord {
         contig: "chr".into(),
         start: 1000,
         end: 2000,
@@ -2362,7 +2440,7 @@ fn test_unclaimed_annotated_cds_beats_an_unannotated_copy() {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &HashMap::new(),
+        &GeneClusters::from_map(&gff, &HashMap::new()),
         80.0,
     )
     .unwrap();
@@ -2542,7 +2620,7 @@ fn piece(
 
 fn classify_pieces(hits: &[Hit]) -> Option<RescueEvent> {
     // An annotation exists but nothing in it overlaps either piece.
-    let gff = GffIndex::build(vec![GffGene {
+    let gff = GffIndex::build(vec![GffRecord {
         contig: "chr".into(),
         start: 9000,
         end: 9900,
@@ -2561,7 +2639,7 @@ fn classify_pieces(hits: &[Hit]) -> Option<RescueEvent> {
         GenomeIdx(0),
         &pa,
         Some(&gff),
-        &g2c,
+        &GeneClusters::from_map(&gff, &g2c),
         80.0,
     )
 }
