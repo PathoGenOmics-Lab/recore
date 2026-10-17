@@ -68,11 +68,9 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@v7
-      # Stable, not the 1.70 in `rust-version`. This job asks which logic the
-      # tests pin down, not which compiler the crate still supports. The MSRV
-      # would belong to a job that checks the MSRV, and this repository does not
-      # have one: nothing in CI currently builds against 1.70, so `rust-version`
-      # in Cargo.toml is a claim rather than a verified fact.
+      # Stable, not the MSRV in `rust-version`. This job asks which logic the
+      # tests pin down, not which compiler the crate still supports; the msrv
+      # job in ci.yml checks that.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-mutants

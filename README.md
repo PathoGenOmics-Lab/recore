@@ -11,7 +11,7 @@
 
 <a href="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml"><img src="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
-<img src="https://img.shields.io/badge/Rust-1.70%2B-orange.svg" alt="Rust 1.70+">
+<img src="https://img.shields.io/badge/Rust-1.85%2B-orange.svg" alt="Rust 1.85+">
 
 </div>
 
@@ -37,7 +37,7 @@ becoming presence calls.
 
 ## Installation
 
-Needs [Rust 1.70+](https://www.rust-lang.org/tools/install) to build and
+Needs [Rust 1.85+](https://www.rust-lang.org/tools/install) to build and
 [minimap2](https://github.com/lh3/minimap2) on `PATH` to run.
 
 ```bash

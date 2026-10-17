@@ -895,9 +895,10 @@ pub(super) fn nearest_mobile_element_for_rescue(
             identity: Some(hit.identity),
             coverage: Some(hit.coverage),
         };
-        if best.as_ref().map_or(true, |current| {
-            mobile_evidence_is_better(&candidate, current)
-        }) {
+        if best
+            .as_ref()
+            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
+        {
             best = Some(candidate);
         }
     }
@@ -926,9 +927,10 @@ pub(super) fn nearest_mobile_element_for_rescue(
             identity: None,
             coverage: None,
         };
-        if best.as_ref().map_or(true, |current| {
-            mobile_evidence_is_better(&candidate, current)
-        }) {
+        if best
+            .as_ref()
+            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
+        {
             best = Some(candidate);
         }
     }
@@ -2229,7 +2231,7 @@ pub(super) fn write_cluster_locus_contexts(
             .map(|(key, _)| key.clone());
         let compatible: usize = context_counts
             .iter()
-            .filter(|(key, _)| dominant.as_ref().map_or(true, |d| shares_neighbour(d, key)))
+            .filter(|(key, _)| dominant.as_ref().is_none_or(|d| shares_neighbour(d, key)))
             .map(|(_, count)| *count)
             .sum();
         let compatible_fraction = if n_mapped > 0 {

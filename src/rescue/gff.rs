@@ -200,7 +200,7 @@ impl GffIndex {
                     break;
                 }
             }
-            if g.end <= start && upstream.map_or(true, |best| g.end > best.end) {
+            if g.end <= start && upstream.is_none_or(|best| g.end > best.end) {
                 upstream = Some(g);
             }
         }

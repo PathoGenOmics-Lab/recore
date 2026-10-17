@@ -557,7 +557,7 @@ pub fn extract_as_id(name: &str) -> Option<&str> {
         if bytes[i] == b'A'
             && bytes[i + 1] == b'S'
             && bytes[i + 2..i + 7].iter().all(u8::is_ascii_digit)
-            && bytes.get(i + 7).map_or(true, |ch| !ch.is_ascii_digit())
+            && bytes.get(i + 7).is_none_or(|ch| !ch.is_ascii_digit())
         {
             return Some(&name[i..i + 7]);
         }

@@ -4,7 +4,7 @@
 
 | Requirement | Version | Why |
 |-------------|---------|-----|
-| [Rust](https://www.rust-lang.org/tools/install) | 1.70 or newer | building from source |
+| [Rust](https://www.rust-lang.org/tools/install) | 1.85 or newer | building from source |
 | [minimap2](https://github.com/lh3/minimap2) | any recent release, on `PATH` | every sequence search |
 | [MMseqs2](https://github.com/soedinglab/MMseqs2) | optional | alignment-based nucleotide similarity clustering with `--nsc-engine mmseqs2` |
 

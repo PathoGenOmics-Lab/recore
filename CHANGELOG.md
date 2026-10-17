@@ -30,6 +30,10 @@ and Recore uses semantic versioning.
   phylogenetic reliability and blink, instead of `moderate`.
 - `cluster_locus_summary.tsv` writes an empty `dominant_context_fraction` when
   no context could be mapped, instead of 0.000.
+- The minimum supported Rust is 1.85, what the dependencies need; it was
+  declared as 1.70, which no longer built. CI now builds on it.
+- The benchmark scripts only delete a `--workdir` they created, instead of
+  removing whatever path they were given.
 
 ### Changed
 

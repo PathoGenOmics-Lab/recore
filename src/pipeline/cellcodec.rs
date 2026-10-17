@@ -88,7 +88,7 @@ fn encode_set(out: &mut Vec<u8>, indices: &[u32], n_genomes: usize) {
             .collect()
     };
 
-    let bitset_len = (n_genomes + 7) / 8;
+    let bitset_len = n_genomes.div_ceil(8);
     let sparse = sparse_len(indices);
     let complement_cost = sparse_len(&complement);
 
@@ -131,7 +131,7 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 /// Standard base64 with padding. The payload travels inside a JSON string, so it
 /// has to survive the HTML and JSON layers without escaping.
 pub(super) fn base64(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
@@ -209,7 +209,7 @@ mod tests {
                     }
                 }
                 MODE_BITSET => {
-                    let len = (n_genomes + 7) / 8;
+                    let len = n_genomes.div_ceil(8);
                     for (idx, slot) in states.iter_mut().enumerate() {
                         if bytes[pos + idx / 8] & (1 << (idx % 8)) != 0 {
                             *slot = state;

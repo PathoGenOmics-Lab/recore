@@ -44,10 +44,10 @@ updates:
   # one ever does, the fix is an `ignore` entry here for that one crate's
   # semver-minor updates, not turning the group off.
   #
-  # The other thing a green run does not tell you: Cargo.toml declares
-  # rust-version 1.70, and a dependency raising its own minimum compiler is an
-  # ordinary minor release. A build on stable will not notice, and the first
-  # report will come from someone on an older toolchain.
+  # A dependency raising its own minimum compiler is an ordinary minor release.
+  # The msrv job in ci.yml builds on the rust-version Cargo.toml declares
+  # (1.85), so such an update fails its pull request instead of reaching
+  # someone on an older toolchain.
   - package-ecosystem: cargo
     directory: "/"
     schedule:
@@ -103,7 +103,7 @@ updates:
   # makes it true: Dependabot rewrites the ref after the `@`. A branch name such
   # as `dtolnay/rust-toolchain@stable` stays where it is. A ref that looks like a
   # version does not. Pinning the crate's minimum supported Rust as
-  # `dtolnay/rust-toolchain@1.70` would be "updated" here to whatever the next
+  # `dtolnay/rust-toolchain@1.85` would be "updated" here to whatever the next
   # release is called, and a job whose whole purpose is to prove that recore
   # still builds on its declared minimum would go on passing while proving it
   # about some other compiler. Nobody would see it: the diff says the toolchain
