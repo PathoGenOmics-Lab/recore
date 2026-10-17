@@ -264,7 +264,17 @@ fn html_report_summarizes_run_outputs() {
         remaining_gaps: 0,
     };
 
-    write_html_report(&args, &pa, &stats, &HashMap::new(), &None, None, out.path()).unwrap();
+    write_html_report(
+        &args,
+        &pa,
+        &stats,
+        &HashMap::new(),
+        &None,
+        None,
+        &[],
+        out.path(),
+    )
+    .unwrap();
 
     let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
     assert!(text.contains("<title>Recore run report</title>"));
@@ -408,6 +418,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         &HashMap::new(),
         &None,
         Some(&tree),
+        &[],
         out.path(),
     )
     .unwrap();
@@ -493,9 +504,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     // Cells are the compact per-cluster encoding, not one character per genome.
     // Two genomes fall inside a single byte, so both clusters use bitset mode:
     // group_1 is present in genome 0 and group_2 in genome 1.
-    assert!(text.contains("\"cellEncoding\":\"recore.cells.v1\""));
-    assert!(text.contains("\"cells\":[\"AgEAAAAA\",\"AgIAAAAA\"]"));
-    assert!(text.contains("\"genomeStats\":[[1,0,0,1],[1,0,0,1]]"));
+    assert!(text.contains("\"cellEncoding\":\"recore.cells.v2\""));
+    assert!(text.contains("\"cells\":[\"AgEAAAAAAAA=\",\"AgIAAAAAAAA=\"]"));
+    assert!(text.contains("\"genomeStats\":[[1,0,0,0,1],[1,0,0,0,1]]"));
     assert!(text.contains("matrixCanvas"));
     // Canvases must be allocated at the device ratio, and wide columns must be named.
     assert!(text.contains("devicePixelRatio"));
@@ -1305,6 +1316,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         &rescue_map,
         &Some(nsc),
         Some(&tree),
+        &[],
         out.path(),
     )
     .unwrap();

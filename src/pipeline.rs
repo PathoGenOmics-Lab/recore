@@ -908,7 +908,7 @@ pub fn run(args: &Args) -> Result<()> {
             "paralog_rejected_report.tsv",
         )?;
     }
-    write_orthology_evidence(OrthologyEvidenceInputs {
+    let evidence_rows = build_orthology_evidence(OrthologyEvidenceInputs {
         rescues: &rescues,
         synteny_rejected: &synteny_rejected,
         paralog_rejected: &paralog_rejected,
@@ -917,8 +917,8 @@ pub fn run(args: &Args) -> Result<()> {
         cluster_prevalences: &cluster_prevalence_by_idx,
         cluster_seq_lengths: &cluster_seq_lengths,
         matrix_policy: args.matrix_policy,
-        output_dir: &args.output,
-    })?;
+    });
+    write_orthology_evidence(&evidence_rows, &args.output)?;
     if let Some(reference_genome) = args.reference_genome.as_deref() {
         write_reference_genome_audit(ReferenceAuditInputs {
             requested_reference: reference_genome,
@@ -1095,6 +1095,7 @@ pub fn run(args: &Args) -> Result<()> {
             &matrix_rescue_map,
             &nsc_result,
             phylo_tree.as_ref(),
+            &evidence_rows,
             &args.output,
         )?;
     }
@@ -1771,10 +1772,9 @@ struct OrthologyEvidenceInputs<'a> {
     cluster_prevalences: &'a [f64],
     cluster_seq_lengths: &'a [usize],
     matrix_policy: MatrixPolicy,
-    output_dir: &'a std::path::Path,
 }
 
-fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
+fn build_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Vec<OrthologyEvidenceRow> {
     let OrthologyEvidenceInputs {
         rescues,
         synteny_rejected,
@@ -1784,15 +1784,9 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
         cluster_prevalences,
         cluster_seq_lengths,
         matrix_policy,
-        output_dir,
     } = inputs;
-    let path = output_dir.join("orthology_evidence.tsv");
-    let file = fs::File::create(&path)?;
-    let mut w = BufWriter::new(file);
-    writeln!(
-        w,
-        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tadaptive_identity_floor\tadaptive_coverage_floor\tadaptive_sequence_pass\torthology_confidence_score\torthology_confidence_tier\trisk_flags\tsynteny\tsynteny_score\tsynteny_support_n\tsynteny_reference_contexts\tsynteny_neighbors\tsynteny_upstream_matches\tsynteny_downstream_matches\torf_integrity_signal\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
-    )?;
+    let mut rows =
+        Vec::with_capacity(rescues.len() + synteny_rejected.len() + paralog_rejected.len());
 
     for rescue in rescues {
         let query_cluster = pa.cluster_name(rescue.cluster_idx);
@@ -1806,9 +1800,10 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
             cluster_prevalences[rescue.cluster_idx.val()],
             cluster_seq_lengths[rescue.cluster_idx.val()],
         );
-        write_tsv_fields(
-            &mut w,
-            &[
+        rows.push(OrthologyEvidenceRow {
+            cluster_idx: rescue.cluster_idx,
+            genome_idx: rescue.genome_idx,
+            fields: vec![
                 "accepted".to_string(),
                 status.to_string(),
                 state.to_string(),
@@ -1862,7 +1857,7 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
                     .unwrap_or("")
                     .to_string(),
             ],
-        )?;
+        });
     }
 
     for (rejected, status, reason) in [
@@ -1888,9 +1883,10 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
                 cluster_prevalences[rescue.cluster_idx.val()],
                 cluster_seq_lengths[rescue.cluster_idx.val()],
             );
-            write_tsv_fields(
-                &mut w,
-                &[
+            rows.push(OrthologyEvidenceRow {
+                cluster_idx: rescue.cluster_idx,
+                genome_idx: rescue.genome_idx,
+                fields: vec![
                     "rejected".to_string(),
                     status.to_string(),
                     state.to_string(),
@@ -1944,8 +1940,82 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
                         .unwrap_or("")
                         .to_string(),
                 ],
-            )?;
+            });
         }
+    }
+    rows
+}
+
+/// The columns of orthology_evidence.tsv, in order.
+pub(super) const ORTHOLOGY_EVIDENCE_COLUMNS: [&str; 35] = [
+    "decision",
+    "orthology_status",
+    "evidence_state",
+    "matrix_action",
+    "publication_status",
+    "evidence_strength",
+    "recommended_wording",
+    "gene_cluster",
+    "genome",
+    "rescue_type",
+    "identity",
+    "coverage",
+    "contig",
+    "start",
+    "end",
+    "strand",
+    "confidence",
+    "adaptive_identity_floor",
+    "adaptive_coverage_floor",
+    "adaptive_sequence_pass",
+    "orthology_confidence_score",
+    "orthology_confidence_tier",
+    "risk_flags",
+    "synteny",
+    "synteny_score",
+    "synteny_support_n",
+    "synteny_reference_contexts",
+    "synteny_neighbors",
+    "synteny_upstream_matches",
+    "synteny_downstream_matches",
+    "orf_integrity_signal",
+    "annotation_match",
+    "annotation_cluster",
+    "rejection_reason",
+    "fragment_note",
+];
+
+/// One row of orthology_evidence.tsv, formatted once. The TSV writes these
+/// fields as they are and the HTML report reads its per-cell evidence out of
+/// the same rows, so the page and the file cannot say different things.
+pub(super) struct OrthologyEvidenceRow {
+    pub(super) cluster_idx: ClusterIdx,
+    pub(super) genome_idx: GenomeIdx,
+    pub(super) fields: Vec<String>,
+}
+
+impl OrthologyEvidenceRow {
+    /// The field under `column`; empty if there is no such column.
+    pub(super) fn field(&self, column: &str) -> &str {
+        ORTHOLOGY_EVIDENCE_COLUMNS
+            .iter()
+            .position(|c| *c == column)
+            .and_then(|i| self.fields.get(i))
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+}
+
+fn write_orthology_evidence(
+    rows: &[OrthologyEvidenceRow],
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let path = output_dir.join("orthology_evidence.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(w, "{}", ORTHOLOGY_EVIDENCE_COLUMNS.join("\t"))?;
+    for row in rows {
+        write_tsv_fields(&mut w, &row.fields)?;
     }
     w.flush()?;
     Ok(())

@@ -9,6 +9,7 @@ function refreshThemeColors() {
   colors.P = readVar("--present", "#155eef");
   colors.R = readVar("--rescue", "#12b76a");
   colors.N = readVar("--nsc", "#7a5af8");
+  colors.K = readVar("--kept", "#dc6803");
   colors.A = readVar("--absent", "#ffffff");
   strokes.P = colors.P;
   strokes.R = colors.R;
@@ -23,7 +24,7 @@ function refreshThemeColors() {
   labelInk = readVar("--subtle", "#475467");
 }
 const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
-const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", A:"#ffffff"};
+const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", K:"#dc6803", A:"#ffffff"};
 const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
 let panelBg = "#ffffff";
 let headerBg = "#f8fafc";
@@ -266,7 +267,10 @@ let treeRoot = data.tree;
      {kind:"list", idx}           sorted genome indices
      {kind:"complement", idx}     every genome except these, drawn as a filled
                                   rect with the exclusions punched back out */
-const STATE_CODES = ["P", "R", "N", "A"];
+// The cell states, in the order the writer stores their sets. K is evidence
+// the run found that did not reach the binary matrix.
+const STATE_CODES = ["P", "R", "N", "K", "A"];
+const STORED_STATES = 4;
 const EMPTY_SET = {kind: "list", idx: new Int32Array(0)};
 const decodedRows = new Map();
 
@@ -277,7 +281,7 @@ function decodeBase64(text) {
   return bytes;
 }
 function decodeClusterSets(encoded, nGenomes) {
-  const sets = [EMPTY_SET, EMPTY_SET, EMPTY_SET];
+  const sets = [EMPTY_SET, EMPTY_SET, EMPTY_SET, EMPTY_SET];
   if (!encoded) return sets;
   const bytes = decodeBase64(encoded);
   let pos = 0;
@@ -302,7 +306,7 @@ function decodeClusterSets(encoded, nGenomes) {
     }
     return idx;
   };
-  for (let state = 0; state < 3; state += 1) {
+  for (let state = 0; state < STORED_STATES; state += 1) {
     const mode = bytes[pos];
     pos += 1;
     if (mode === 0) {
@@ -366,7 +370,7 @@ function setContains(set, value) {
 function stateAt(clusterIdx, genomeIdx) {
   const sets = clusterSets(clusterIdx);
   // Later states win, matching the writer's ordering.
-  for (let state = 2; state >= 0; state -= 1) {
+  for (let state = STORED_STATES - 1; state >= 0; state -= 1) {
     if (setContains(sets[state], genomeIdx)) return STATE_CODES[state];
   }
   return "A";
@@ -378,9 +382,10 @@ function countsForCluster(clusterIdx) {
     P: setSize(sets[0], n),
     R: setSize(sets[1], n),
     N: setSize(sets[2], n),
+    K: setSize(sets[3], n),
     A: 0,
   };
-  counts.A = Math.max(0, n - counts.P - counts.R - counts.N);
+  counts.A = Math.max(0, n - counts.P - counts.R - counts.N - counts.K);
   return counts;
 }
 function passesActiveFilters(idx, includeMechanism = true) {
@@ -474,8 +479,8 @@ function computeGenomeStats() {
   // Totals come precomputed from the writer: deriving them here would mean
   // decoding every cluster before the first paint.
   genomeStats = data.genomes.map((_, gi) => {
-    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0];
-    return {P: totals[0], R: totals[1], N: totals[2], A: totals[3]};
+    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0];
+    return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4]};
   });
   maxGenomeStats = genomeStats.reduce((acc, s) => ({
     R: Math.max(acc.R, s.R),
@@ -1744,11 +1749,24 @@ function renderMatrix(scrollToSelected) {
         ctx.fillRect(x, spanTop, drawW, spanHeight);
       }
     };
-    for (let state = 0; state < 3; state += 1) {
+    for (let state = 0; state < STORED_STATES; state += 1) {
       const set = sets[state];
       ctx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
       if (set.kind === "all") {
         fillWholeColumn();
+        continue;
+      }
+      if (set.kind === "complement" && state > 0) {
+        // Punching the excluded rows out with the background is only right
+        // for the first state, which has nothing under it. For a later state
+        // it erased the cells of the earlier ones: present cells drew as
+        // absent whenever a rescued or NSC set came in complement form.
+        for (let r = firstRow; r < lastRow; r += 1) {
+          const genome = leafOrder[r];
+          if (genome >= 0 && setContains(set, genome)) {
+            ctx.fillRect(x, r * cellH - top, drawW, drawH);
+          }
+        }
         continue;
       }
       if (set.kind === "complement") {

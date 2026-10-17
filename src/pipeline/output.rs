@@ -1725,12 +1725,20 @@ fn metadata_column_index(pa: &crate::parser::PresenceAbsence, name: &str) -> Opt
     None
 }
 
+/// The state a cell shows in the explorer.
+///
+/// `K` is an absent cell for which the run found evidence that did not reach
+/// the binary matrix: a pseudogene balanced keeps out, sequence-only evidence
+/// under strict, a candidate rejected for its context. These used to be drawn
+/// as plain absences, so the evidence Recore exists to surface was invisible on
+/// the page while gene_presence_absence_recore_states.csv recorded it.
 fn explorer_state_char(
     pa: &crate::parser::PresenceAbsence,
     ci: ClusterIdx,
     gi: GenomeIdx,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     nsc_presence: &ahash::HashSet<(usize, usize)>,
+    kept_out: &ahash::HashSet<(usize, usize)>,
 ) -> char {
     if pa.is_present(ci, gi) {
         'P'
@@ -1738,11 +1746,105 @@ fn explorer_state_char(
         'R'
     } else if nsc_presence.contains(&(ci.val(), gi.val())) {
         'N'
+    } else if kept_out.contains(&(ci.val(), gi.val())) {
+        'K'
     } else {
         'A'
     }
 }
 
+/// The text columns of orthology_evidence.tsv the explorer shows per cell.
+const EXPLORER_EVIDENCE_TEXT: [&str; 17] = [
+    "decision",
+    "evidence_state",
+    "matrix_action",
+    "publication_status",
+    "recommended_wording",
+    "rescue_type",
+    "contig",
+    "strand",
+    "synteny",
+    "synteny_score",
+    "orf_integrity_signal",
+    "annotation_match",
+    "annotation_cluster",
+    "rejection_reason",
+    "fragment_note",
+    "orthology_confidence_tier",
+    "risk_flags",
+];
+/// The numeric columns, kept as numbers.
+const EXPLORER_EVIDENCE_NUMBERS: [&str; 4] = ["identity", "coverage", "start", "end"];
+
+/// Every evidence row, accepted or rejected, for the cells the explorer draws.
+///
+/// One row per (cluster, genome, evidence), read from the same rows that
+/// orthology_evidence.tsv is written from, so a cell's explanation on the page
+/// is word for word what the file says. Text is stored once in a string table
+/// and referred to by index, and the size follows the number of evidence rows,
+/// not the size of the matrix.
+fn explorer_evidence_json(
+    evidence: &[OrthologyEvidenceRow],
+    rendered_index: &HashMap<usize, usize>,
+) -> String {
+    use std::fmt::Write as _;
+    let mut strings: Vec<String> = Vec::new();
+    let mut string_index: HashMap<String, usize> = HashMap::new();
+    let mut intern = |value: &str| -> usize {
+        if let Some(&idx) = string_index.get(value) {
+            return idx;
+        }
+        let idx = strings.len();
+        strings.push(value.to_string());
+        string_index.insert(value.to_string(), idx);
+        idx
+    };
+    let mut rows = String::new();
+    let mut first = true;
+    for row in evidence {
+        let Some(&cluster) = rendered_index.get(&row.cluster_idx.val()) else {
+            continue;
+        };
+        if !first {
+            rows.push(',');
+        }
+        first = false;
+        write!(rows, "[{},{}", cluster, row.genome_idx.val()).expect("write to String");
+        for column in EXPLORER_EVIDENCE_TEXT {
+            write!(rows, ",{}", intern(row.field(column))).expect("write to String");
+        }
+        for column in EXPLORER_EVIDENCE_NUMBERS {
+            match row.field(column).parse::<f64>() {
+                Ok(value) if value.is_finite() => {
+                    write!(rows, ",{}", value).expect("write to String")
+                }
+                _ => rows.push_str(",null"),
+            }
+        }
+        rows.push(']');
+    }
+    let mut out = String::from("{\"text\":");
+    out.push_str(&json_string_array(
+        &EXPLORER_EVIDENCE_TEXT.map(str::to_string),
+    ));
+    out.push_str(",\"numbers\":");
+    out.push_str(&json_string_array(
+        &EXPLORER_EVIDENCE_NUMBERS.map(str::to_string),
+    ));
+    out.push_str(",\"strings\":[");
+    for (idx, value) in strings.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&json_script_escape(value));
+    }
+    out.push_str("],\"rows\":[");
+    out.push_str(&rows);
+    out.push_str("]}");
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_explorer_data_json(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
@@ -1751,11 +1853,22 @@ fn build_explorer_data_json(
     reference_gi: Option<GenomeIdx>,
     evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
+    evidence: &[OrthologyEvidenceRow],
 ) -> Option<String> {
     use std::fmt::Write as _;
 
     let tree_json = pruned_phylo_json(&tree.root)?;
     let nsc_presence = nsc_presence_updates(pa, nsc_result, rescue_map);
+    let kept_out: ahash::HashSet<(usize, usize)> = evidence
+        .iter()
+        .map(|row| (row.cluster_idx, row.genome_idx))
+        .filter(|&(ci, gi)| {
+            !pa.is_present(ci, gi)
+                && !rescue_map.contains_key(&(ci, gi))
+                && !nsc_presence.contains(&(ci.val(), gi.val()))
+        })
+        .map(|(ci, gi)| (ci.val(), gi.val()))
+        .collect();
     let clusters_to_skip: ahash::HashSet<usize> = nsc_result
         .as_ref()
         .map(|r| r.merge_map.keys().map(|ci| ci.val()).collect())
@@ -1796,7 +1909,9 @@ fn build_explorer_data_json(
     // Per-genome state totals, used for the tip-burden colour modes. Counting
     // them here costs one pass we are already making; in the browser it would
     // mean decoding every cluster before the first paint.
-    let mut genome_totals = vec![[0usize; 4]; pa.n_genomes()];
+    // [present, rescued, NSC, kept out, absent]
+    let mut genome_totals = vec![[0usize; 5]; pa.n_genomes()];
+    let mut rendered_index: HashMap<usize, usize> = HashMap::new();
     for ci_val in 0..pa.n_clusters() {
         if clusters_to_skip.contains(&ci_val) {
             continue;
@@ -1810,7 +1925,7 @@ fn build_explorer_data_json(
         let mut reference_state = None;
         for (gi_val, totals) in genome_totals.iter_mut().enumerate() {
             let gi = GenomeIdx(gi_val);
-            let state = explorer_state_char(pa, ci, gi, rescue_map, &nsc_presence);
+            let state = explorer_state_char(pa, ci, gi, rescue_map, &nsc_presence, &kept_out);
             if Some(gi) == reference_gi {
                 reference_state = Some(state);
             }
@@ -1818,14 +1933,18 @@ fn build_explorer_data_json(
                 'P' => Some(0),
                 'R' => Some(1),
                 'N' => Some(2),
+                'K' => Some(3),
                 _ => None,
             };
             if let Some(slot) = slot {
                 sets[slot].push(gi_val as u32);
-                present_after += 1;
                 totals[slot] += 1;
+                // Kept-out evidence is evidence, not presence.
+                if slot < 3 {
+                    present_after += 1;
+                }
             } else {
-                totals[3] += 1;
+                totals[4] += 1;
             }
         }
         if !first_cluster {
@@ -1892,10 +2011,11 @@ fn build_explorer_data_json(
             &sets,
             pa.n_genomes(),
         )));
+        rendered_index.insert(ci_val, rendered_cluster_names.len());
         rendered_cluster_names.push(cluster_name.to_string());
     }
 
-    out.push_str("],\"cellEncoding\":\"recore.cells.v1\",\"cells\":[");
+    out.push_str("],\"cellEncoding\":\"recore.cells.v2\",\"cells\":[");
     for (idx, row) in states.iter().enumerate() {
         if idx > 0 {
             out.push(',');
@@ -1909,12 +2029,14 @@ fn build_explorer_data_json(
         }
         write!(
             out,
-            "[{},{},{},{}]",
-            totals[0], totals[1], totals[2], totals[3]
+            "[{},{},{},{},{}]",
+            totals[0], totals[1], totals[2], totals[3], totals[4]
         )
         .expect("write to String is infallible");
     }
-    out.push_str("],\"tree\":");
+    out.push_str("],\"evidence\":");
+    out.push_str(&explorer_evidence_json(evidence, &rendered_index));
+    out.push_str(",\"tree\":");
     out.push_str(&tree_json);
     out.push_str(",\"synteny\":{");
     let mut first_synteny_cluster = true;
@@ -2017,6 +2139,7 @@ fn icon(name: &str) -> String {
 
 /// The workspace is the report: phylogeny, matrix and synteny fill the viewport
 /// and everything else lives in the run-details drawer.
+#[allow(clippy::too_many_arguments)]
 fn explorer_workspace_html(
     pa: &crate::parser::PresenceAbsence,
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
@@ -2025,6 +2148,7 @@ fn explorer_workspace_html(
     reference_gi: Option<GenomeIdx>,
     evolution_rows: &HashMap<String, ExplorerEvolutionRow>,
     synteny_blocks: &HashMap<String, Vec<ExplorerSyntenyBlock>>,
+    evidence: &[OrthologyEvidenceRow],
 ) -> ExplorerWorkspace {
     use std::fmt::Write as _;
 
@@ -2075,6 +2199,7 @@ fn explorer_workspace_html(
         reference_gi,
         evolution_rows,
         synteny_blocks,
+        evidence,
     ) else {
         return unavailable(
             "The tree could not be converted into a matched-tip browser workspace.",
@@ -2183,6 +2308,7 @@ fn explorer_workspace_html(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn write_html_report(
     args: &Args,
     pa: &crate::parser::PresenceAbsence,
@@ -2190,6 +2316,7 @@ pub(super) fn write_html_report(
     rescue_map: &HashMap<(ClusterIdx, GenomeIdx), &RescueEvent>,
     nsc_result: &Option<nscluster::NsClusterResult>,
     phylo_tree: Option<&PhyloTree>,
+    evidence: &[OrthologyEvidenceRow],
     output_dir: &std::path::Path,
 ) -> Result<()> {
     use std::fmt::Write as _;
@@ -2274,6 +2401,7 @@ pub(super) fn write_html_report(
         reference_gi,
         &explorer_evolution,
         &explorer_synteny,
+        evidence,
     );
     let has_viewer = workspace.embedded;
 

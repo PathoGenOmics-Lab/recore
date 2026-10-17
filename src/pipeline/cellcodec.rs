@@ -22,8 +22,9 @@ const MODE_SPARSE: u8 = 0;
 const MODE_COMPLEMENT: u8 = 1;
 const MODE_BITSET: u8 = 2;
 
-/// Number of state sets stored per cluster (present, rescued, NSC).
-pub(super) const STATE_SETS: usize = 3;
+/// Number of state sets stored per cluster: present, rescued, NSC, and
+/// evidence kept out of the binary matrix.
+pub(super) const STATE_SETS: usize = 4;
 
 fn push_varint(out: &mut Vec<u8>, mut value: u64) {
     loop {
@@ -155,6 +156,7 @@ mod tests {
         PresentInput,
         Rescued,
         NscMerged,
+        KeptOut,
         Absent,
     }
 
@@ -165,6 +167,7 @@ mod tests {
             CellState::PresentInput,
             CellState::Rescued,
             CellState::NscMerged,
+            CellState::KeptOut,
         ];
         let mut pos = 0usize;
         for state in order {
@@ -230,7 +233,7 @@ mod tests {
     }
 
     fn round_trip(present: &[u32], rescued: &[u32], nsc: &[u32], n: usize) -> Vec<CellState> {
-        let sets = [present.to_vec(), rescued.to_vec(), nsc.to_vec()];
+        let sets = [present.to_vec(), rescued.to_vec(), nsc.to_vec(), Vec::new()];
         let encoded = encode_cluster(&sets, n);
         decode_cluster(&encoded, n)
     }
@@ -244,7 +247,7 @@ mod tests {
     #[test]
     fn core_cluster_round_trips_through_complement_mode() {
         let all: Vec<u32> = (0..1000).collect();
-        let sets = [all.clone(), Vec::new(), Vec::new()];
+        let sets = [all.clone(), Vec::new(), Vec::new(), Vec::new()];
         let encoded = encode_cluster(&sets, 1000);
         // A set covering every genome must not cost a byte per genome.
         assert!(
@@ -270,7 +273,7 @@ mod tests {
     #[test]
     fn alternating_cluster_falls_back_to_bitset() {
         let half: Vec<u32> = (0..2000).filter(|i| i % 2 == 0).collect();
-        let sets = [half.clone(), Vec::new(), Vec::new()];
+        let sets = [half.clone(), Vec::new(), Vec::new(), Vec::new()];
         let encoded = encode_cluster(&sets, 2000);
         // 1000 sparse indices would cost ~1000 bytes; the bitset is 250.
         assert!(
@@ -317,7 +320,11 @@ mod tests {
         let mut total = 0usize;
         for _ in 0..3_000 {
             let all: Vec<u32> = (0..n as u32).collect();
-            total += base64(&encode_cluster(&[all, Vec::new(), Vec::new()], n)).len();
+            total += base64(&encode_cluster(
+                &[all, Vec::new(), Vec::new(), Vec::new()],
+                n,
+            ))
+            .len();
         }
         for cluster in 0..27_000u32 {
             let present: Vec<u32> = (0..40)
@@ -325,7 +332,11 @@ mod tests {
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect();
-            total += base64(&encode_cluster(&[present, Vec::new(), Vec::new()], n)).len();
+            total += base64(&encode_cluster(
+                &[present, Vec::new(), Vec::new(), Vec::new()],
+                n,
+            ))
+            .len();
         }
         assert!(
             total < 12_000_000,
