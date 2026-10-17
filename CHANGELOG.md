@@ -116,7 +116,11 @@ and Recore uses semantic versioning.
   same opening, the same numbered steps, an animated preview of How it works
   and a link into each part of the site. `tools/check_site.py` checks its
   links, the options of its commands, and that its Try-it block and counts
-  are the website's.
+  are the website's. The README names the authors, Paula Ruiz-Rodriguez and
+  Mireia Coscolla, and the contributors; the citation reads "Ruiz-Rodriguez P,
+  Coscolla M." in the README, on the website and in its BibTeX, and
+  `Cargo.toml` lists both authors. `tools/check_site.py` fails if a page of the
+  website cites differently from the README.
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
   Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
   or `held_out_quality` instead of a `corrected...` value, and a strict

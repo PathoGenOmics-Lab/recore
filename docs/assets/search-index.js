@@ -982,7 +982,7 @@ window.RECORE_DOCS_INDEX = [
 "page": "Citation",
 "section": "",
 "url": "about/citation.html",
-"text": "If you use Recore, please cite: Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue and quality control of pangenome presence/absence matrices. In preparation. Please also cite the tools Recore depends on for the run you report: minimap2, for every sequence search: Li H. (2018). Minimap2: pairwise alignment for nucleotide sequences. Bioinformatics 34(18):3094-3100. MMseqs2, if you used --nsc-engine mmseqs2: Steinegger M, Soeding J. (2017). MMseqs2 enables sensitive protein sequence searching for the analysis of massive data sets. Nature Biotechnology 35:1026-1028. the pangenome tool that "
+"text": "If you use Recore, please cite: Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality control of pangenome presence/absence matrices. In preparation. Please also cite the tools Recore depends on for the run you report: minimap2, for every sequence search: Li H. (2018). Minimap2: pairwise alignment for nucleotide sequences. Bioinformatics 34(18):3094-3100. MMseqs2, if you used --nsc-engine mmseqs2: Steinegger M, Soeding J. (2017). MMseqs2 enables sensitive protein sequence searching for the analysis of massive data sets. Nature Biotechnology 35:1026-1028. the pangenome tool "
 },
 {
 "page": "Citation",

@@ -426,7 +426,7 @@ def header(root: str, current: str) -> str:
 def footer(root: str) -> str:
     return (
         '<footer class="foot">\n  <div class="wrap">\n    <div>\n      <h3>Cite</h3>\n'
-        "      <blockquote>Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue and quality control of pangenome "
+        "      <blockquote>Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality control of pangenome "
         "presence/absence matrices. <i>In preparation.</i></blockquote>\n    </div>\n"
         "    <div>\n      <h3>Learn more</h3>\n      <ul>\n"
         f'        <li><a href="{root}index.html">Get started</a></li>\n'

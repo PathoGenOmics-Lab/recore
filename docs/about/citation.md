@@ -2,12 +2,12 @@
 
 If you use Recore, please cite:
 
-> Ruiz-Rodriguez P, et al. (2026). Recore: post-hoc rescue and quality control
-> of pangenome presence/absence matrices. *In preparation.*
+> Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality
+> control of pangenome presence/absence matrices. *In preparation.*
 
 ```bibtex
 @misc{recore,
-  author       = {Ruiz-Rodriguez, Paula and others},
+  author       = {Ruiz-Rodriguez, Paula and Coscolla, Mireia},
   title        = {Recore: post-hoc rescue and quality control of pangenome
                   presence/absence matrices},
   year         = {2026},

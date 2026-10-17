@@ -18,7 +18,8 @@ fails when it drifts. This does, in four parts:
            columns of src/pipeline.rs;
   readme   README.md's links land, in the repository and on the website with
            their anchors, its recore commands use options that exist, and its
-           Try-it block and counts are the website's;
+           Try-it block and counts are the website's, and every page of the
+           website cites Recore the way the README does;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -33,6 +34,7 @@ Exits 1 and lists every problem it found.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import shutil
@@ -361,6 +363,17 @@ def check_readme(pages: dict[str, Page], recore: str) -> list[str]:
         named.update(LONG_FLAG.findall(snippet), SHORT_FLAG.findall(snippet))
     for flag in sorted(named - longs - shorts):
         problems.append(f"README.md: mentions {flag}, which recore --help does not have")
+
+    # One citation: the README's, on every page of the website.
+    cite = re.search(r"^## Cite\n+((?:>.*\n?)+)", text, flags=re.M)
+    readme_cite = " ".join(re.sub(r"^>\s?", "", cite.group(1), flags=re.M).replace("*", "").split()) if cite else ""
+    if not readme_cite:
+        problems.append("README.md: no citation under ## Cite")
+    for path in sorted(SITE.rglob("*.html")):
+        for quote in re.findall(r"<blockquote>(.*?)</blockquote>", path.read_text(encoding="utf-8"), flags=re.S):
+            cited = " ".join(html.unescape(re.sub(r"<[^>]+>", "", quote)).split())
+            if cited.startswith("Ruiz-Rodriguez") and cited != readme_cite:
+                problems.append(f"{path.relative_to(SITE).as_posix()}: cites {cited!r}, the README {readme_cite!r}")
 
     # The Try-it block runs in check_tutorial from the website; the README's
     # has to be the same commands promising the same counts.
