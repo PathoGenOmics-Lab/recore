@@ -1314,6 +1314,23 @@ function plural(count, noun) {
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
 }
+/** Cut from the middle, keeping both ends: contig names differ at the end. */
+function clipMiddle(text, maxLen) {
+  const value = String(text || "");
+  if (value.length <= maxLen) return value;
+  const keep = Math.max(2, maxLen - 1);
+  const head = Math.ceil(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - (keep - head))}`;
+}
+/** A gene in no cluster: Panaroo writes NA for it. */
+function isUnclustered(gene) {
+  return !gene.gap && (!gene.cluster || gene.cluster === "NA");
+}
+function referenceContextName() {
+  return data.referenceGenome && data.referenceGenome.name
+    ? `${data.referenceGenome.name} context`
+    : "Reference context";
+}
 function clipText(text, maxLen) {
   const value = String(text || "");
   return value.length > maxLen ? `${value.slice(0, Math.max(1, maxLen - 3))}...` : value;
@@ -1391,10 +1408,11 @@ function referenceGenesForBlock(block, clusterName) {
   if (Array.isArray(block.referenceGenes) && block.referenceGenes.length) {
     return block.referenceGenes.map(gene => normalizeSyntenyGene(gene, clusterName, true));
   }
-  return [{name:"__GAP__", cluster:"__GAP__", geneId:"H37Rv context not resolved", strand:".", contig:"", start:"", end:"", length:"", target:false, reference:true, gap:true}];
+  return [{name:"__GAP__", cluster:"__GAP__", geneId:"reference context not resolved", strand:".", contig:"", start:"", end:"", length:"", target:false, reference:true, gap:true}];
 }
 function syntenyDisplayLabel(gene) {
-  if (gene.gap) return gene.geneId || "H37Rv gap";
+  if (gene.gap) return gene.geneId || "context gap";
+  if (isUnclustered(gene)) return "unclustered";
   const direct = gene.geneId ? displayReferenceLocus(gene.geneId) : "";
   if (direct && /^Rv\d{4}c?$/.test(direct)) return direct;
   if (gene.reference && direct) return direct;
@@ -1619,7 +1637,11 @@ function renderSyntenyPanel() {
     ? " Reference row inferred from shared neighbours."
     : "";
   const pxPerBp = syntenyPxPerBp(lengthScale);
-  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tip${selectedCount === 1 ? "" : "s"}.${referenceSummary}`;
+  // Blocks come from annotated loci, so a corrected cell (a gene the input's
+  // annotation missed) has no block of its own: say so where the count is.
+  const corrected = countsForCluster(selected).R;
+  const correctedNote = corrected ? ` ${plural(corrected, "corrected genome")} ${corrected === 1 ? "has" : "have"} no annotated locus and no block; click their cells for the locus.` : "";
+  syntenySummary.textContent = `${cluster.name}: ${plural(blocks.length, "unique 5-neighbour block")}; selected ${selectedLabel} marks ${plural(selectedCount, "tip")}.${referenceSummary}${correctedNote}`;
 
   // Collect per-row positions BEFORE drawing so we can draw connection lines on
   // a single layer that sits above row backgrounds but below the arrows.
@@ -1698,7 +1720,7 @@ function renderSyntenyPanel() {
     // Meta column
     if (row.kind === "reference") {
       parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 18}" class="synteny-rank">REF</text>`);
-      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">H37Rv context</text>`);
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">${escapeHtml(clipText(referenceContextName(), 26))}</text>`);
       parts.push(
         `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub">inferred from shared neighbours</text>`
       );
@@ -1709,19 +1731,25 @@ function renderSyntenyPanel() {
       const fraction = block.fraction === null || block.fraction === undefined || block.fraction === "NA"
         ? ""
         : ` · ${Math.round(Number(block.fraction) * 100)}%`;
+      // The share is of genomes with an annotated locus, not of every carrier:
+      // say so, or 7 of 9 printed as 78% next to a card that says 100%.
+      const frac = Number(block.fraction);
+      const annotated = frac > 0 && Number(block.nGenomes) > 0 ? Math.round(Number(block.nGenomes) / frac) : null;
       parts.push(
-        `<text x="${PADDING_X + 12 + 26}" y="${rowY + 18}" class="synteny-meta-rank-sub">n=${block.nGenomes ?? "?"}${fraction}</text>`
+        `<text x="${PADDING_X + 12 + 26}" y="${rowY + 18}" class="synteny-meta-rank-sub">n=${block.nGenomes ?? "?"}${annotated ? ` of ${annotated} annotated` : fraction}</text>`
       );
       const titleText = block.representativeGenome
         ? `${block.representativeGenome}`
         : (firstExampleLocus(block) || cluster.name);
       parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">${escapeHtml(clipText(titleText, 22))}</text>`);
-      const coordText = block.representativeContig && block.representativeStart && block.representativeEnd
-        ? `${block.representativeContig}:${formatCoord(block.representativeStart)}-${formatCoord(block.representativeEnd)}`
-        : firstExampleLocus(block) || "";
-      const lenSuffix = block.representativeLength ? ` · ${block.representativeLength} bp` : "";
+      // Coordinates are never cut; a long contig name gives way in the middle.
+      let coordText = firstExampleLocus(block) || "";
+      if (block.representativeContig && block.representativeStart && block.representativeEnd) {
+        const span = `:${formatCoord(block.representativeStart)}-${formatCoord(block.representativeEnd)}`;
+        coordText = `${clipMiddle(block.representativeContig, Math.max(6, 30 - span.length))}${span}`;
+      }
       parts.push(
-        `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub">${escapeHtml(clipText(coordText + lenSuffix, 30))}</text>`
+        `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub"><title>${escapeHtml(`${block.representativeContig || ""}:${block.representativeStart || ""}-${block.representativeEnd || ""}${block.representativeLength ? ` (${block.representativeLength} bp)` : ""}`)}</title>${escapeHtml(coordText)}</text>`
       );
       const interp = (block.interpretation || "").replace(/_/g, " ");
       const selectedTag = isSelected ? "selected" : (interp || "click to mark tips");
@@ -1745,18 +1773,23 @@ function renderSyntenyPanel() {
       else cls.push("synteny-neighbor");
       const label = syntenyDisplayLabel(gene);
       const coord = syntenyCoordLabel(gene);
-      const title = [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
+      const title = isUnclustered(gene)
+        ? ["Unclustered: this gene is in no cluster of the input matrix", gene.geneId, coord].filter(Boolean).join(" | ")
+        : [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
       const geneAttrs = gene.gap || !gene.cluster || gene.cluster === "NA"
         ? ""
         : ` data-gene-cluster="${escapeHtml(gene.cluster)}"`;
       parts.push(
         `<path d="${arrowPath(x, baseY, geneW, GENE_H, gene.strand)}" class="${cls.join(" ")}"${geneAttrs}><title>${escapeHtml(title)}</title></path>`
       );
-      const labelClass = gene.target ? "synteny-target-label" : "synteny-arrow-label";
+      const labelClass = gene.target
+        ? "synteny-target-label"
+        : isUnclustered(gene) ? "synteny-arrow-label synteny-unclustered" : "synteny-arrow-label";
       parts.push(
         `<text x="${x + geneW / 2}" y="${baseY + 14}" text-anchor="middle" class="${labelClass}">${escapeHtml(clipText(label, 11))}</text>`
       );
-      const subLabel = clipText(syntenySecondaryLabel(gene), 12);
+      // Narrow arrows keep only the name; the annotation is in the title.
+      const subLabel = geneW >= 90 && !isUnclustered(gene) ? clipText(syntenySecondaryLabel(gene), 12) : "";
       if (subLabel) {
         parts.push(
           `<text x="${x + geneW / 2}" y="${baseY + GENE_H + 12}" text-anchor="middle" class="synteny-sub-label">${escapeHtml(subLabel)}</text>`

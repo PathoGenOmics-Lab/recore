@@ -2919,6 +2919,11 @@ details.parameters dd {
   pointer-events: none;
 }
 
+.synteny-unclustered {
+  fill: var(--faint) !important;
+  font-style: italic;
+}
+
 /* Held for the instant an export reads light-theme styles off the page. */
 .theme-frozen,
 .theme-frozen * {

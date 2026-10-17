@@ -448,7 +448,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("syntenyCarrierIndices"));
     assert!(text.contains("referenceGenes"));
     assert!(text.contains("representativeLength"));
-    assert!(text.contains("H37Rv context"));
+    assert!(text.contains("function referenceContextName"));
     assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
