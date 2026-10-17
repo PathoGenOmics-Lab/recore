@@ -14,7 +14,9 @@ pub use self::conflicts::resolve_conflicts;
 pub use self::genes::build_gene_to_cluster_with_gff_aliases;
 pub(crate) use self::genes::panaroo_gene_id_suffix_variants;
 pub use self::gff::{GffGene, GffIndex};
-pub use self::orf::{check_internal_stops_in_cds, check_internal_stops_in_hit};
+pub use self::orf::{
+    check_internal_stops_in_cds, check_internal_stops_in_hit, check_internal_stops_in_span,
+};
 pub(crate) use self::synteny::{validate_synteny_with_cache, SyntenyReferenceCache};
 pub use self::types::{
     FragmentEvidence, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence,
@@ -621,6 +623,7 @@ pub fn classify_hits(
                 note: Some("missing_cds_no_substantial_gff_overlap".to_string()),
                 ..FragmentEvidence::default()
             },
+            query_start: Some(missing_cds_hit.query_start),
         });
     }
 
@@ -661,6 +664,7 @@ pub fn classify_hits(
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: Some(best.query_start),
         });
     }
 
@@ -693,6 +697,7 @@ pub fn classify_hits(
                     synteny_ok: None,
                     synteny_evidence: SyntenyEvidence::default(),
                     fragment_evidence: chain.evidence,
+                    query_start: None,
                 });
             }
 
@@ -758,6 +763,7 @@ pub fn classify_hits(
                     synteny_ok: None,
                     synteny_evidence: SyntenyEvidence::default(),
                     fragment_evidence: chain.evidence,
+                    query_start: None,
                 });
             }
 
@@ -817,6 +823,7 @@ pub fn classify_hits(
                 synteny_ok: None,
                 synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: chain.evidence,
+                query_start: None,
             });
         }
     }
@@ -872,6 +879,7 @@ pub fn classify_hits(
                 synteny_ok: None,
                 synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence,
+                query_start: None,
             });
         }
     }

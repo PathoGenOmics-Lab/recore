@@ -219,6 +219,7 @@ mod tests {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         }
     }
 

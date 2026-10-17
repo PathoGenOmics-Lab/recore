@@ -16,9 +16,9 @@ use crate::parser::{
 use crate::relationships::{write_cluster_components, write_cluster_relationships};
 use crate::rescue::{
     build_gene_to_cluster_with_gff_aliases, check_internal_stops_in_cds,
-    check_internal_stops_in_hit, classify_hits, panaroo_gene_id_suffix_variants, resolve_conflicts,
-    validate_synteny_with_cache, GffGene, GffIndex, PseudogeneReason, RescueEvent, RescueType,
-    SyntenyEvidence, SyntenyReferenceCache,
+    check_internal_stops_in_hit, check_internal_stops_in_span, classify_hits,
+    panaroo_gene_id_suffix_variants, resolve_conflicts, validate_synteny_with_cache, GffGene,
+    GffIndex, PseudogeneReason, RescueEvent, RescueType, SyntenyEvidence, SyntenyReferenceCache,
 };
 use crate::search::{batch_search, Hit};
 use crate::types::{ClusterIdx, GenomeIdx};
@@ -603,6 +603,17 @@ pub fn run(args: &Args) -> Result<()> {
                             gene.start,
                             gene.end,
                             gene.strand,
+                            &contigs,
+                        )
+                    } else if let Some(query_start) = rescue.query_start {
+                        // No annotation, but one alignment: its start on the
+                        // representative fixes the reading frame.
+                        check_internal_stops_in_span(
+                            &rescue.contig,
+                            rescue.start,
+                            rescue.end,
+                            rescue.strand,
+                            query_start,
                             &contigs,
                         )
                     } else {

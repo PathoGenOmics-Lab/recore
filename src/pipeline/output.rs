@@ -543,13 +543,19 @@ pub(super) fn write_corrected_gffs(
                 .get(&(genome_name, rescue.contig.as_str()))
                 .copied()
                 .unwrap_or(rescue.contig.as_str());
+            // GFF3 phase: bases to drop from the feature's 5' end (start on +,
+            // end on -) to reach a codon. The alignment's start on the
+            // representative CDS gives it; it was always written as 0, which
+            // is wrong for any span that does not begin on a codon boundary.
+            let phase = rescue.query_start.map_or(0, |qs| (3 - qs % 3) % 3);
             writeln!(
                 w,
-                "{}\tRecore\tCDS\t{}\t{}\t.\t{}\t0\t{}",
+                "{}\tRecore\tCDS\t{}\t{}\t.\t{}\t{}\t{}",
                 seqid,
                 rescue.start + 1,
                 rescue.end,
                 rescue.strand,
+                phase,
                 attrs.join(";")
             )?;
         }

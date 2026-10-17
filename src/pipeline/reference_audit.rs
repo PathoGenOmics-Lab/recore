@@ -287,6 +287,7 @@ pub(super) fn reference_hit_shadow_candidates(
                     note: Some("reference_shadow_hit".to_string()),
                     ..crate::rescue::FragmentEvidence::default()
                 },
+                query_start: None,
             });
         }
     }

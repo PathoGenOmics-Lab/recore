@@ -50,6 +50,7 @@ fn rescue_with_type(rescue_type: RescueType, synteny_ok: Option<bool>) -> Rescue
         synteny_ok,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        query_start: None,
     }
 }
 
@@ -798,6 +799,7 @@ fn rich_sample_report_renders_full_explorer() {
                 matched_downstream: 5,
             },
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
+            query_start: None,
         }
     };
 
@@ -1427,6 +1429,41 @@ fn corrected_gff_writes_rescues_on_the_gff_seqid_after_a_remap() {
     assert!(!text.contains("g1_contig1\tRecore"));
 }
 
+/// The CDS phase of a rescue feature comes from where its alignment starts on
+/// the representative: it was always written as 0.
+#[test]
+fn corrected_gff_phase_follows_the_alignment_start() {
+    let out = tempfile::tempdir().unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["clA".into(), "clB".into(), "clC".into()],
+        vec!["g1".into()],
+        vec![vec!["".into()], vec!["".into()], vec!["".into()]],
+    );
+    let mk = |cluster: usize, start: u64, query_start: Option<u64>| RescueEvent {
+        cluster_idx: ClusterIdx(cluster),
+        genome_idx: GenomeIdx(0),
+        contig: "ctg".into(),
+        start,
+        end: start + 300,
+        query_start,
+        ..rescue_with_type(RescueType::MissingCds, Some(true))
+    };
+    let rescues = vec![mk(0, 100, Some(0)), mk(1, 1000, Some(2)), mk(2, 2000, None)];
+    write_corrected_gffs(&rescues, &pa, &HashMap::new(), &[], out.path()).unwrap();
+    let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
+    let phase_at = |start: u64| -> String {
+        text.lines()
+            .find(|l| l.contains(&format!("\tCDS\t{}\t", start + 1)))
+            .and_then(|l| l.split('\t').nth(7))
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(phase_at(100), "0");
+    // Two query bases unaligned: drop one more to reach the next codon.
+    assert_eq!(phase_at(1000), "1");
+    assert_eq!(phase_at(2000), "0", "unknown frame keeps the old default");
+}
+
 #[test]
 fn gff_copy_helper_splits_fasta_tail() {
     let mut input = tempfile::NamedTempFile::new().unwrap();
@@ -1909,6 +1946,7 @@ fn mobile_element_detection_uses_gff_aliases() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        query_start: None,
     };
 
     let mobile = nearest_mobile_element_for_rescue(&rescue, &pa, &gff_indices, &[], 1_000).unwrap();
@@ -1957,6 +1995,7 @@ fn mobile_element_sequence_hits_are_name_agnostic_and_prioritized() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: crate::rescue::FragmentEvidence::default(),
+        query_start: None,
     };
     let mobile_hits = vec![MobileElementHit {
         genome_idx: GenomeIdx(0),

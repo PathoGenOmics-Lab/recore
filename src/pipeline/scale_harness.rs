@@ -547,6 +547,7 @@ fn scale_report() {
                 matched_downstream: 4,
             },
             fragment_evidence: crate::rescue::FragmentEvidence::default(),
+            query_start: None,
         }
     };
     for (ci, draft) in drafts.iter().enumerate() {

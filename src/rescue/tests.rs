@@ -301,6 +301,7 @@ fn test_synteny_context_handles_overlapping_boundary_genes() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: FragmentEvidence::default(),
+        query_start: None,
     };
 
     validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
@@ -395,6 +396,7 @@ fn test_synteny_context_rejects_different_locus_paralog() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: FragmentEvidence::default(),
+        query_start: None,
     };
 
     validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
@@ -491,6 +493,7 @@ fn test_synteny_without_any_reference_annotation_is_not_assessed() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: FragmentEvidence::default(),
+        query_start: None,
     };
 
     validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
@@ -632,6 +635,7 @@ fn test_synteny_uses_all_present_genomes_deterministically() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: FragmentEvidence::default(),
+        query_start: None,
     };
 
     validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
@@ -749,6 +753,7 @@ fn test_synteny_uses_all_gene_ids_in_multicopy_reference_cell() {
         synteny_ok: None,
         synteny_evidence: SyntenyEvidence::default(),
         fragment_evidence: FragmentEvidence::default(),
+        query_start: None,
     };
 
     validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
@@ -899,6 +904,8 @@ fn test_missing_cds_preferred_over_annotated_paralog_and_validated_by_synteny() 
     assert!(matches!(rescue.rescue_type, RescueType::MissingCds));
     assert_eq!(rescue.start, 198);
     assert_eq!(rescue.annotation_match, None);
+    // The rescue keeps where its one alignment starts on the representative.
+    assert_eq!(rescue.query_start, Some(0));
 
     validate_synteny(&mut rescue, &pa, &gff_indices, &g2c, false);
     assert_eq!(rescue.synteny_ok, Some(true));
@@ -1157,6 +1164,7 @@ fn test_conflict_resolution() {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         },
         RescueEvent {
             cluster_idx: ClusterIdx(1),
@@ -1173,6 +1181,7 @@ fn test_conflict_resolution() {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         },
     ];
     resolve_conflicts(&mut rescues);
@@ -1198,6 +1207,7 @@ fn test_conflict_resolution_no_overlap() {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         },
         RescueEvent {
             cluster_idx: ClusterIdx(1),
@@ -1214,6 +1224,7 @@ fn test_conflict_resolution_no_overlap() {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         },
     ];
     resolve_conflicts(&mut rescues);
@@ -1238,6 +1249,7 @@ fn test_conflict_resolution_keeps_minor_overlaps() {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         },
         RescueEvent {
             cluster_idx: ClusterIdx(1),
@@ -1254,6 +1266,7 @@ fn test_conflict_resolution_keeps_minor_overlaps() {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         },
     ];
     resolve_conflicts(&mut rescues);
@@ -2400,6 +2413,7 @@ fn a_rescue_that_loses_does_not_remove_an_innocent_one() {
         synteny_ok: None,
         synteny_evidence: Default::default(),
         fragment_evidence: Default::default(),
+        query_start: None,
     };
     let mut rescues = vec![
         mk(0, 1000, 2000, 0.8),
@@ -2409,4 +2423,95 @@ fn a_rescue_that_loses_does_not_remove_an_innocent_one() {
     resolve_conflicts(&mut rescues);
     let kept: Vec<usize> = rescues.iter().map(|r| r.cluster_idx.val()).collect();
     assert_eq!(kept, vec![1, 2]);
+}
+
+/// A gene of G/C-ending codons with no T in a middle position, so its two
+/// off frames hold no stop codon at all, and a premature TAA planted in the
+/// coding frame. The minimum over frames read it as an intact ORF.
+fn gc3_gene(premature_stop: bool) -> Vec<u8> {
+    let codons: [&[u8; 3]; 10] = [
+        b"GCC", b"GGC", b"CGC", b"GCG", b"CCG", b"AGC", b"ACC", b"CAG", b"GAG", b"AAG",
+    ];
+    let mut seq = b"ATG".to_vec();
+    for (i, codon) in codons.iter().cycle().take(40).enumerate() {
+        if premature_stop && i == 16 {
+            seq.extend_from_slice(b"TAA");
+        }
+        seq.extend_from_slice(*codon);
+    }
+    seq.extend_from_slice(b"TAA");
+    seq
+}
+
+/// Unannotated rescues are scanned in the frame their alignment fixes, on
+/// either strand and when the alignment starts part-way into a codon.
+#[test]
+fn unannotated_spans_are_scanned_in_the_alignment_frame() {
+    let gene = gc3_gene(true);
+    assert_eq!(
+        orf::count_internal_stops(&gene),
+        0,
+        "the minimum over frames hides it"
+    );
+    assert_eq!(orf::count_stops_in_frame(&gene), 1);
+
+    let pad = b"CCCCCCCCCC".to_vec();
+    let n = gene.len() as u64;
+    let mut contigs = HashMap::new();
+    contigs.insert(
+        "plus".to_string(),
+        [pad.clone(), gene.clone(), pad.clone()].concat(),
+    );
+    contigs.insert(
+        "minus".to_string(),
+        [pad.clone(), orf::reverse_complement(&gene), pad.clone()].concat(),
+    );
+
+    // The whole gene aligned from query base 0.
+    assert_eq!(
+        check_internal_stops_in_span("plus", 10, 10 + n, '+', 0, &contigs),
+        Some(1)
+    );
+    assert_eq!(
+        check_internal_stops_in_span("minus", 10, 10 + n, '-', 0, &contigs),
+        Some(1)
+    );
+    // The alignment misses the first two query bases. On the minus strand the
+    // gene's 5' end is the span's right end.
+    assert_eq!(
+        check_internal_stops_in_span("plus", 12, 10 + n, '+', 2, &contigs),
+        Some(1)
+    );
+    assert_eq!(
+        check_internal_stops_in_span("minus", 10, 8 + n, '-', 2, &contigs),
+        Some(1)
+    );
+
+    // The same gene without the planted stop is clean in every case.
+    let clean = gc3_gene(false);
+    let m = clean.len() as u64;
+    contigs.insert(
+        "plus".to_string(),
+        [pad.clone(), clean.clone(), pad.clone()].concat(),
+    );
+    contigs.insert(
+        "minus".to_string(),
+        [pad.clone(), orf::reverse_complement(&clean), pad.clone()].concat(),
+    );
+    assert_eq!(
+        check_internal_stops_in_span("plus", 10, 10 + m, '+', 0, &contigs),
+        None
+    );
+    assert_eq!(
+        check_internal_stops_in_span("minus", 10, 10 + m, '-', 0, &contigs),
+        None
+    );
+    assert_eq!(
+        check_internal_stops_in_span("plus", 12, 10 + m, '+', 2, &contigs),
+        None
+    );
+    assert_eq!(
+        check_internal_stops_in_span("minus", 10, 8 + m, '-', 2, &contigs),
+        None
+    );
 }

@@ -9,6 +9,11 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- Unannotated rescues are scanned for internal stops in the reading frame
+  their alignment fixes, instead of the cleanest of three frames, so a
+  premature stop in a gene of G/C-ending codons is caught and the pseudogene
+  stays out of the matrix. Corrected GFF3 files write the matching CDS phase
+  instead of always 0.
 - `--write-html-report` no longer fails, and no longer drops a cluster's
   mechanism and wording, when a genome or cluster name starts with a double
   quote: recore's TSVs are read back without CSV quoting.

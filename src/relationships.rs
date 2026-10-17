@@ -618,6 +618,7 @@ mod tests {
             synteny_ok: Some(true),
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         }];
         let dir = tempdir().unwrap();
         let n = write_cluster_relationships(&pa, &rescues, &None, dir.path()).unwrap();
@@ -649,6 +650,7 @@ mod tests {
             synteny_ok: None,
             synteny_evidence: SyntenyEvidence::default(),
             fragment_evidence: FragmentEvidence::default(),
+            query_start: None,
         }];
         let dir = tempdir().unwrap();
         let n = write_cluster_relationships(&pa, &rescues, &None, dir.path()).unwrap();
@@ -687,6 +689,7 @@ mod tests {
                 synteny_ok: Some(true),
                 synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
+                query_start: None,
             },
             RescueEvent {
                 cluster_idx: ClusterIdx(2),
@@ -703,6 +706,7 @@ mod tests {
                 synteny_ok: Some(true),
                 synteny_evidence: SyntenyEvidence::default(),
                 fragment_evidence: FragmentEvidence::default(),
+                query_start: None,
             },
         ];
         let dir = tempdir().unwrap();
