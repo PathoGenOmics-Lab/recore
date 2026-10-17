@@ -187,6 +187,7 @@ fn search_one_genome(
 ) -> Result<Vec<(ClusterIdx, Hit)>> {
     let mut query_file = NamedTempFile::new().context("Cannot create temp query file")?;
     let mut query_to_cluster_idx: HashMap<String, ClusterIdx> = HashMap::default();
+    let mut query_seqs: HashMap<String, &[u8]> = HashMap::default();
     {
         let mut writer = BufWriter::new(&mut query_file);
         for &ci in clusters {
@@ -203,6 +204,7 @@ fn search_one_genome(
                 writeln!(writer, ">{}", query_name)?;
                 writer.write_all(seq)?;
                 writeln!(writer)?;
+                query_seqs.insert(query_name.clone(), seq.as_slice());
                 query_to_cluster_idx.insert(query_name, ci);
             }
         }
@@ -223,24 +225,129 @@ fn search_one_genome(
             .context("Cannot write the temporary search target")?;
     }
 
-    let mut args: Vec<&str> = vec!["-x", preset, "-t", "1"];
+    let mut base_args: Vec<&str> = vec!["-x", preset, "-t", "1"];
     if exact_base_alignment {
-        args.extend(["-c", "-s", MIN_PEAK_SCORE, "--end-bonus", END_BONUS]);
+        base_args.extend(["-c", "-s", MIN_PEAK_SCORE, "--end-bonus", END_BONUS]);
     }
+    base_args.extend(["--secondary=yes", "-N", max_secondary, "-p", "0.5"]);
     let target_path = target_file.path().to_string_lossy().to_string();
-    let query_path = query_file.path().to_string_lossy().to_string();
-    args.extend([
-        "--secondary=yes",
-        "-N",
-        max_secondary,
-        "-p",
-        "0.5",
-        &target_path,
-        &query_path,
-    ]);
 
+    let paf = run_minimap2(&base_args, &target_path, query_file.path(), fasta_path)?;
+    let mut hits = Vec::new();
+    for line in paf.lines() {
+        let Some(fields) = paf_required_fields(line) else {
+            continue;
+        };
+        let Some(&ci) = query_to_cluster_idx.get(fields[0]) else {
+            continue;
+        };
+        let Some(hit) =
+            hit_from_paf_fields(&fields, fields[0], &cluster_names[ci.val()], fields[5])
+        else {
+            continue;
+        };
+        if hit.identity() >= min_identity {
+            hits.push((ci, hit));
+        }
+    }
+
+    // Realign what a partial hit left uncovered. minimap2 chains the two
+    // halves of a gene broken by a short insertion into one chain; base-level
+    // alignment then stops at the insertion and drops the rest of the chain,
+    // so only one half was reported and the gene could not be seen as
+    // FRAGMENTED. Aligned on its own, the missing stretch finds its half.
+    if exact_base_alignment {
+        let mut remainder_file =
+            NamedTempFile::new().context("Cannot create temp remainder query file")?;
+        let mut remainders: HashMap<String, (String, ClusterIdx, u64, u64)> = HashMap::default();
+        {
+            let mut writer = BufWriter::new(&mut remainder_file);
+            // Sorted, so the remainder queries and minimap2's output come in
+            // the same order on every run.
+            let mut ordered: Vec<(&String, &&[u8])> = query_seqs.iter().collect();
+            ordered.sort_unstable_by(|a, b| a.0.cmp(b.0));
+            for (query_name, seq) in ordered {
+                let intervals: Vec<(u64, u64)> = hits
+                    .iter()
+                    .filter(|(_, h)| h.query == *query_name)
+                    .map(|(_, h)| (h.query_start, h.query_end))
+                    .collect();
+                if intervals.is_empty() {
+                    continue;
+                }
+                let full_len = seq.len() as u64;
+                for (from, to) in uncovered_stretches(intervals, full_len) {
+                    if to - from < REMAINDER_MIN_BP {
+                        continue;
+                    }
+                    let name = format!("{}~~~REM~{}", query_name, from);
+                    writeln!(writer, ">{}", name)?;
+                    writer.write_all(&seq[from as usize..to as usize])?;
+                    writeln!(writer)?;
+                    let ci = query_to_cluster_idx[query_name];
+                    remainders.insert(name, (query_name.clone(), ci, from, full_len));
+                }
+            }
+            writer.flush()?;
+        }
+        if !remainders.is_empty() {
+            let paf = run_minimap2(&base_args, &target_path, remainder_file.path(), fasta_path)?;
+            for line in paf.lines() {
+                let Some(fields) = paf_required_fields(line) else {
+                    continue;
+                };
+                let Some((original, ci, offset, full_len)) = remainders.get(fields[0]) else {
+                    continue;
+                };
+                let Some(mut hit) =
+                    hit_from_paf_fields(&fields, original, &cluster_names[ci.val()], fields[5])
+                else {
+                    continue;
+                };
+                hit.query_start += offset;
+                hit.query_end += offset;
+                hit.query_length = *full_len;
+                if hit.identity() >= min_identity {
+                    hits.push((*ci, hit));
+                }
+            }
+        }
+    }
+    Ok(hits)
+}
+
+/// A stretch of a query this short is not worth a second alignment: it is an
+/// end trimmed by alignment, not a missing half.
+const REMAINDER_MIN_BP: u64 = 100;
+
+/// The parts of `[0, len)` that no interval covers.
+fn uncovered_stretches(mut intervals: Vec<(u64, u64)>, len: u64) -> Vec<(u64, u64)> {
+    intervals.sort_unstable();
+    let mut gaps = Vec::new();
+    let mut reach = 0u64;
+    for (start, end) in intervals {
+        if start > reach {
+            gaps.push((reach, start.min(len)));
+        }
+        reach = reach.max(end);
+    }
+    if reach < len {
+        gaps.push((reach, len));
+    }
+    gaps
+}
+
+fn run_minimap2(
+    base_args: &[&str],
+    target_path: &str,
+    query_path: &std::path::Path,
+    fasta_path: &std::path::Path,
+) -> Result<String> {
+    let query_path = query_path.to_string_lossy().to_string();
     let output = Command::new("minimap2")
-        .args(&args)
+        .args(base_args)
+        .arg(target_path)
+        .arg(&query_path)
         .stdin(Stdio::null())
         .output()
         .context("Failed to run minimap2: is it installed and on PATH?")?;
@@ -258,30 +365,9 @@ fn search_one_genome(
             context.join("\n")
         );
     }
-
-    // Target names are the contig tokens written above, so they are UTF-8
-    // and contain no whitespace. Query names are recore's own.
-    let stdout =
-        std::str::from_utf8(&output.stdout).context("minimap2 printed output that is not UTF-8")?;
-    let mut hits = Vec::new();
-    for line in stdout.lines() {
-        let Some(fields) = paf_required_fields(line) else {
-            continue;
-        };
-        let Some(&ci) = query_to_cluster_idx.get(fields[0]) else {
-            continue;
-        };
-        let Some(hit) =
-            hit_from_paf_fields(&fields, fields[0], &cluster_names[ci.val()], fields[5])
-        else {
-            continue;
-        };
-        if hit.identity() < min_identity {
-            continue;
-        }
-        hits.push((ci, hit));
-    }
-    Ok(hits)
+    // Target names are the contig tokens recore wrote, so they are UTF-8 and
+    // contain no whitespace. Query names are recore's own.
+    String::from_utf8(output.stdout).context("minimap2 printed output that is not UTF-8")
 }
 
 /// Copy a genome FASTA into the plain, normalised form minimap2 is given.
@@ -587,6 +673,17 @@ mod tests {
         let n2c = make_name_to_cluster();
         let line = "clA\t1000\t900\t100\t+\tcontig\t5000000\t100\t1100\t990\t1000\t60";
         assert!(parse_paf_line(line, &n2c).is_none());
+    }
+
+    #[test]
+    fn test_uncovered_stretches() {
+        assert_eq!(uncovered_stretches(vec![(0, 516)], 1035), vec![(516, 1035)]);
+        assert_eq!(uncovered_stretches(vec![(605, 1215)], 1215), vec![(0, 605)]);
+        assert_eq!(
+            uncovered_stretches(vec![(100, 400), (300, 600)], 1000),
+            vec![(0, 100), (600, 1000)]
+        );
+        assert!(uncovered_stretches(vec![(0, 1000)], 1000).is_empty());
     }
 
     // ── Search target writer ──

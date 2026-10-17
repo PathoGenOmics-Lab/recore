@@ -218,6 +218,10 @@ and Recore uses semantic versioning.
 
 ### Fixed
 
+- Genes broken by an insertion are FRAGMENTED. With base-level alignment the
+  two halves meet exactly on the gene and were merged into one piece; and when
+  minimap2 chained them across a short insertion it aligned only the first
+  half. What a partial hit leaves uncovered is now realigned on its own.
 - Rescues are no longer lost on large pangenomes. Every genome was searched in
   one shared minimap2 target, so once more than about fifty genomes carried a
   gene their copies used up the secondary budget and the gap genomes' hits were

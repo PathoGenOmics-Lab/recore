@@ -2059,3 +2059,19 @@ fn test_non_colinear_fragments_are_not_rescued() {
     );
     assert!(result.is_none());
 }
+
+/// The two halves of a gene broken by an insertion abut exactly on the query
+/// and sit far apart on the contig. They are two fragments, not one segment.
+#[test]
+fn test_fragment_chain_keeps_query_adjacent_pieces_apart_on_the_target() {
+    let left = make_hit(0, 588, 1176);
+    let right = Hit {
+        target_start: 5588,
+        target_end: 6176,
+        ..make_hit(588, 1176, 1176)
+    };
+    let chain = build_fragment_chain(&[&left, &right]).unwrap();
+    assert_eq!(chain.n_fragments, 2);
+    assert!((chain.coverage - 100.0).abs() < 1e-9);
+    assert_eq!(chain.evidence.max_target_gap_bp, 5000);
+}

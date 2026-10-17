@@ -125,7 +125,16 @@ fn build_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
     let mut segments: Vec<ChainSegment> = Vec::new();
     for hit in &sorted {
         if let Some(last) = segments.last_mut() {
-            if hit.query_start <= last.query_end {
+            // One segment only when the hits are the same stretch of the gene
+            // AND the same stretch of the contig. Touching on the query alone
+            // is not enough: the two halves of a gene broken by an insertion
+            // abut exactly on the query once alignment is base-level, and sit
+            // kilobases apart on the contig. Merging them on the query alone
+            // turned a FRAGMENTED gene into one segment and no rescue at all.
+            let query_joins = hit.query_start <= last.query_end;
+            let target_joins =
+                hit.target_start <= last.target_end && last.target_start <= hit.target_end;
+            if query_joins && target_joins {
                 last.query_end = last.query_end.max(hit.query_end);
                 last.target_start = last.target_start.min(hit.target_start);
                 last.target_end = last.target_end.max(hit.target_end);
@@ -140,7 +149,17 @@ fn build_fragment_chain(hits: &[&Hit]) -> Option<FragmentChain> {
         });
     }
 
-    let covered: u64 = segments.iter().map(|s| s.query_end - s.query_start).sum();
+    // Union of the query intervals: separate segments may now overlap by a few
+    // bases on the query, and summing their lengths would count that twice.
+    let mut covered = 0u64;
+    let mut reach = 0u64;
+    for segment in &segments {
+        let from = segment.query_start.max(reach);
+        if segment.query_end > from {
+            covered += segment.query_end - from;
+        }
+        reach = reach.max(segment.query_end);
+    }
     let coverage = (covered as f64 / first.query_length as f64) * 100.0;
     let n_fragments = segments.len();
 
