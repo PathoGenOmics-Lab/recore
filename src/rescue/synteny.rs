@@ -56,6 +56,36 @@ pub(super) struct ReferenceSyntenyContext {
 #[derive(Debug, Default)]
 pub(crate) struct SyntenyReferenceCache {
     contexts: HashMap<(ClusterIdx, usize), Vec<ReferenceSyntenyContext>>,
+    /// Whether any genome carrying the cluster has one of its genes in a GFF.
+    located: HashMap<ClusterIdx, bool>,
+}
+
+/// True when at least one genome carrying the cluster has a GFF in which one of
+/// the cluster's genes can be found, so its neighbourhood could be read.
+fn cluster_reference_located(
+    cache: &mut SyntenyReferenceCache,
+    ci: ClusterIdx,
+    pa: &PresenceAbsence,
+    gff_indices: &HashMap<GenomeIdx, GffIndex>,
+) -> bool {
+    *cache.located.entry(ci).or_insert_with(|| {
+        pa.present_genomes(ci).iter().any(|&ref_gi| {
+            let Some(ref_gff) = gff_indices.get(&ref_gi) else {
+                return false;
+            };
+            pa.cell(ci, ref_gi)
+                .split(';')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .any(|id| {
+                    ref_gff.get_by_id(id).is_some()
+                        || panaroo_gene_id_suffix_variants(id)
+                            .into_iter()
+                            .skip(1)
+                            .any(|variant| ref_gff.get_by_id(variant).is_some())
+                })
+        })
+    })
 }
 
 pub(super) fn weighted_side_score(target: &[ClusterIdx], reference: &[ClusterIdx]) -> (f64, usize) {
@@ -397,7 +427,12 @@ pub(crate) fn validate_synteny_with_cache(
 
     let assessment = if let Some(assessment) = best_assessment {
         assessment
-    } else if saw_target_context && !saw_reference_context {
+    } else if saw_target_context
+        && !saw_reference_context
+        && cluster_reference_located(cache, ci, pa, gff_indices)
+    {
+        // The reference copies were found, but none sits next to a clustered
+        // gene: their neighbourhood shares nothing with the target's.
         SyntenyAssessment {
             passes: false,
             score: 0.0,
@@ -407,6 +442,19 @@ pub(crate) fn validate_synteny_with_cache(
             matched_upstream: 0,
             matched_downstream: 0,
         }
+    } else if saw_target_context && !saw_reference_context {
+        // No genome carrying the cluster has it in a GFF, so there is nothing
+        // to compare the target's context with. That is not an incompatible
+        // context: it used to be a FAIL with score 0.000 whenever the other
+        // genomes simply had no annotation.
+        if verbose {
+            log::debug!(
+                "Synteny not assessed: no reference context for cluster={} genome={}",
+                ci.val(),
+                gi.val()
+            );
+        }
+        return;
     } else {
         if verbose {
             log::debug!(

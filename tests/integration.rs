@@ -221,7 +221,9 @@ gC,gC,product_C,2,2,1.0,0,0,0,,80,80,80,gC_s1,gC_s2,
     assert!(summary.contains("Rescued:"));
     assert!(summary.contains("Core genome"));
     let manifest = fs::read_to_string(output_dir.join("run_manifest.json")).unwrap();
-    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v6\""));
+    assert!(manifest.contains("\"schema_version\": \"recore.outputs.v7\""));
+    assert!(manifest.contains("\"created_utc\": \"20"));
+    assert!(manifest.contains("\"command_line\": "));
     assert!(manifest.contains("\"matrix_policy\": \"Balanced\""));
     assert!(manifest.contains("\"write_html_report\": true"));
     assert!(manifest.contains("\"matrix_corrected_total\""));

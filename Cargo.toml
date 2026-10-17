@@ -2,7 +2,7 @@
 name = "recore"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.85"
 authors = ["Paula Ruiz-Rodriguez <paula.ruiz.rodriguez@csic.es>"]
 description = "Post-hoc rescue of falsely absent genes in pangenome matrices"
 license = "GPL-3.0-only"

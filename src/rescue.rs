@@ -142,7 +142,7 @@ fn cross_contig_chain(hits: &[&Hit]) -> Option<FragmentChain> {
             };
             if best
                 .as_ref()
-                .map_or(true, |current| chain.coverage > current.coverage)
+                .is_none_or(|current| chain.coverage > current.coverage)
             {
                 best = Some(chain);
             }
@@ -945,7 +945,7 @@ fn classify_single_hit(
             0.0
         };
 
-        if recip > 0.5 && best_gene.map_or(true, |(_, prev)| recip > prev) {
+        if recip > 0.5 && best_gene.is_none_or(|(_, prev)| recip > prev) {
             best_gene = Some((gene, recip));
         }
     }

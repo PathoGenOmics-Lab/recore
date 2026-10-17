@@ -69,3 +69,21 @@ jobs:
           # returns early and the suite goes green having never run it, which is
           # how it sat unexecuted for a long time.
           RECORE_REQUIRE_MINIMAP2: "1"
+
+  msrv:
+    name: Builds on the declared MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      # rust-version said 1.70 while clap 4.6 needs 1.85, and nothing checked
+      # it. The toolchain is an input, not the action ref: Dependabot moves
+      # refs, and a moved ref would silently check a different compiler.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - name: The declared MSRV is the one built here
+        run: grep -q '^rust-version = "1.85"$' Cargo.toml
+      - name: Build
+        run: cargo build --locked

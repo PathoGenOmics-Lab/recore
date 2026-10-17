@@ -45,15 +45,17 @@ Primary output. One row per rescued gene. Tab-separated.
 | `fragment_same_cds` | bool | Whether the chain is contained in one compatible CDS |
 | `fragment_note` | string | Fragment interpretation, such as `alignment_split`, `biological_gap`, `frameshift_gap`, or `same_cds_alignment_split` |
 
+Fields that do not apply to a row (the fragment columns of a single-hit rescue, an annotation match where none overlapped) are written empty, and booleans are `TRUE` or `FALSE`.
+
 ### Example
 
 ```tsv
 gene_cluster	genome	rescue_type	identity	coverage	contig	start	end	strand	confidence	synteny	synteny_score	synteny_support_n	synteny_reference_contexts	synteny_neighbors	synteny_upstream_matches	synteny_downstream_matches	orf_integrity_signal	annotation_match	fragment_n	fragment_query_gap_bp	fragment_target_gap_bp	fragment_colinear	fragment_same_cds	fragment_note
-group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	1.000	12	18	1	1	1	in_frame_span	Rv0210c	NA	NA	NA	NA	NA	NA
-group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS	0.833	4	5	2	1	1	in_frame_span		NA	NA	NA	NA	NA	missing_cds_no_substantial_gff_overlap
-group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	1.000	8	9	1	1	1	in_frame_span	Rv1099c	NA	NA	NA	NA	NA	NA
-group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	0.750	3	4	2	1	1	disrupted_orf	Rv2651c	NA	NA	NA	NA	NA	NA
-group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS	1.000	6	6	1	1	1	fragmented_orf		2	9	9	true	false	alignment_split
+group_2044	L1_AS00349	DROPPED	100.0	100.0	L1_AS00349	245301	246100	+	1.198	PASS	1.000	12	18	1	1	1	in_frame_span	Rv0210c						
+group_681	L4_AS00146	MISSING_CDS	99.2	89.5	L4_AS00146	2195924	2197220	+	1.066	PASS	0.833	4	5	2	1	1	in_frame_span							missing_cds_no_substantial_gff_overlap
+group_0187	A4_AS00248	SPLIT:group_0188	99.2	99.8	A4_AS00248	1203401	1204300	+	1.087	PASS	1.000	8	9	1	1	1	in_frame_span	Rv1099c						
+group_3940	L1_AS00366	PSEUDOGENE:2stops	99.0	100.0	L1_AS00366	1783748	1784254	-	0.495	PASS	0.750	3	4	2	1	1	disrupted_orf	Rv2651c						
+group_2101	L2_AS00401	ALIGNMENT_SPLIT:2frags:98%cov	99.6	98.4	L2_AS00401	552100	553020	+	0.882	PASS	1.000	6	6	1	1	1	fragmented_orf		2	9	9	TRUE	FALSE	alignment_split
 ```
 
 ### Filtering suggestions
@@ -110,7 +112,7 @@ or paralog candidate.
 | `orthology_status` | Conservative interpretation, e.g. `accepted_synteny`, `accepted_boundary_variant`, `rejected_incompatible_context`, or `rejected_paralog_without_synteny` |
 | `evidence_state` | Explicit evidence class: `STRICT_PRESENT`, `ALIAS_CLUSTER`, `SEQUENCE_ONLY`, `MISSING_CDS_UNVALIDATED`, `PARTIAL_HOMOLOGY`, `PSEUDOGENE`, `HOMOLOG_PARALOG`, or `REJECTED_CONTEXT` |
 | `matrix_action` | `correct_presence` for accepted rescues, `audit_only_quality` for accepted evidence that fails the adaptive guard, `audit_only_policy` for accepted evidence excluded by policy, or `audit_only` for rejected candidates |
-| `publication_status` | Conservative publication-level interpretation: whether the cluster can be justified as `present`, `partial/disrupted`, `possible paralog`, or `not supported` |
+| `publication_status` | How the row can be used in a paper; it follows `matrix_action`, see the values below |
 | `evidence_strength` | `high`, `moderate`, `review`, or `low` |
 | `recommended_wording` | Short text for how to describe the event in downstream tables/manuscripts |
 | `gene_cluster`, `genome`, `rescue_type`, `identity`, `coverage`, `contig`, `start`, `end`, `strand`, `confidence`, `synteny`, `annotation_match` | Same meaning as `rescue_report.tsv` |
@@ -121,6 +123,22 @@ or paralog candidate.
 | `annotation_cluster` | Cluster assigned to the overlapping annotation, when known |
 | `rejection_reason` | Reason rejected, e.g. `synteny_fail` or `paralog_without_synteny` |
 | `fragment_note` | Fragment interpretation, if applicable |
+
+`publication_status` takes one of these values:
+
+| Value | Meaning |
+|-------|---------|
+| `publication_ready_correction` | Corrected; strict same-locus or cluster-alias evidence over a whole number of codons |
+| `corrected_review` | Corrected; strict evidence whose span is not a whole number of codons, or another state that needs a look |
+| `corrected_but_review_for_publication` | Corrected; sequence-only, partial or pseudogene evidence that a sensitive policy let into the matrix |
+| `corrected_paralog_review` | Corrected; the hit may be a paralog |
+| `held_out_policy` | Accepted evidence the matrix policy kept out of the corrected matrix |
+| `held_out_quality` | Accepted evidence an adaptive quality floor kept out of the corrected matrix |
+| `audit_only_not_corrected` | Rejected by the synteny or paralog guard |
+
+Only the first four describe a corrected cell, so a value starting with
+`corrected` or `publication` always means the cell is present in
+`gene_presence_absence_corrected.csv`.
 
 Use this table as the primary audit trail for why a candidate entered, or did
 not enter, the corrected matrix.
@@ -251,7 +269,7 @@ Written when GFF annotations are loaded. One row per cluster.
 | `n_unresolved_gene_ids` | Present genomes where the cell gene ID could not be resolved in the GFF |
 | `n_unique_contexts` | Number of distinct upstream/downstream context signatures |
 | `dominant_context_count` | Number of genomes in the largest context |
-| `dominant_context_fraction` | Dominant context count divided by mapped contexts |
+| `dominant_context_fraction` | Dominant context count divided by mapped contexts; blank when no context could be mapped |
 | `interpretation` | `stable_single_locus`, `stable_single_locus_minor_noise`, `mostly_stable_review_minor_contexts`, `possible_multilocus_or_paralog`, or `insufficient_context` |
 
 Clusters flagged as `possible_multilocus_or_paralog` are not automatically
@@ -414,8 +432,18 @@ metrics.
 | `synteny_rejected`, `paralog_rejected` | Rejected evidence by genome |
 | `qc_status`, `qc_flags` | `pass`, `review`, or `fail` plus semicolon-separated flags |
 
-`gff_contig_seqid_remapped` is informational when remapping succeeds; it is
-kept in `qc_flags` but does not by itself trigger `review`.
+Flags and what they do to `qc_status`:
+
+| Flag | Status |
+|------|--------|
+| `missing_fasta_for_searchable_gaps` | `fail`: gaps could not be searched |
+| `missing_gff` | `review` |
+| `rejected_evidence_exceeds_accepted` | `review`: three or more rejected candidates, more than accepted |
+| `high_matrix_correction_burden` | `review`: ten or more corrections, over a quarter of the genome's searched gaps |
+| `correction_burden_above_cohort` | `review`: ten or more corrections, above the cohort median plus three median absolute deviations |
+| `no_rescue_evidence_for_searchable_gaps` | informational: gaps were searched and nothing was found, which is what true absences look like |
+| `nsc_presence_added` | informational |
+| `gff_contig_seqid_remapped` | informational, when remapping succeeds |
 
 ---
 
@@ -493,7 +521,8 @@ representative are no longer in the file, and the summary ends with a
 Machine-readable run manifest written for every run. It records:
 
 - `tool` and `tool_version`;
-- `schema_version` (`recore.outputs.v6`);
+- `schema_version` (`recore.outputs.v7`);
+- `created_utc`, the time the run finished writing outputs, and `command_line`, the exact invocation;
 - input paths used for the run;
 - key parameters, including matrix policy, prevalence threshold, synteny, NSC,
   reference genome, tree, and mobile-element settings;
@@ -533,12 +562,15 @@ These clusters had nearly identical nucleotide sequences but were split by Panar
 
 Written only when `--write-corrected-gff` is enabled.
 
-For each genome with at least one rescue, Recore writes a GFF3 file under
-`corrected_gff/`. If an original GFF was supplied with `--annotations`, its
-records are preserved and Recore appends rescued CDS features. If the original
-GFF contains a `##FASTA` section, rescue features are inserted before `##FASTA`
-and the FASTA tail is preserved after them. If no original GFF is available for
-a rescued genome, the file contains only the appended rescue features.
+For each genome with at least one rescue that corrected the matrix, Recore
+writes a GFF3 file under `corrected_gff/`; evidence kept out of the matrix
+(`held_out_policy`, `held_out_quality`) is not written. If an original GFF was
+supplied with `--annotations`, its records are preserved and Recore appends
+rescued CDS features, on the GFF's own seqid even when that seqid had to be
+mapped onto a differently named FASTA contig. If the original GFF contains a
+`##FASTA` section, rescue features are inserted before `##FASTA` and the FASTA
+tail is preserved after them. If no original GFF is available for a rescued
+genome, the file contains only the appended rescue features.
 
 Appended rescue features use source `Recore`, type `CDS`, and include:
 
@@ -647,7 +679,7 @@ timestamps removed:
 [INFO recore::pipeline] Raw rescues before filtering: 11
 [INFO recore::pipeline] Upgraded 3 sequence-only rescues to PSEUDOGENE:internal_stop
 [INFO recore::pipeline] Validating synteny...
-[INFO recore::pipeline] Synteny: 11 validated, 0 failed, 0 skipped (no flanking genes found)
+[INFO recore::pipeline] Synteny: 11 validated, 0 failed, 0 not assessed (no clustered flanking genes, or no annotated copy to compare with)
 [INFO recore::pipeline] Final rescues: 11 (DROPPED: 6, MISSING_CDS: 2, SPLIT: 0, FRAGMENTED: 0, ALIGNMENT_SPLIT: 0, START_VARIANT: 0, PARALOG: 0, PSEUDOGENE: 3)
 [INFO recore::pipeline] Core genome: 14 → 17 (+3)
 ```

@@ -174,6 +174,29 @@ impl PresenceAbsence {
         }
     }
 
+    /// Test constructor that also carries Panaroo's Gene and Annotation
+    /// metadata columns, so the report sees annotations the way a real run does.
+    #[cfg(test)]
+    pub fn new_for_test_with_annotations(
+        clusters: Vec<String>,
+        annotations: Vec<String>,
+        genomes: Vec<String>,
+        cell_values: Vec<Vec<String>>,
+    ) -> Self {
+        let mut pa = Self::new_for_test(clusters, genomes, cell_values);
+        pa.metadata = pa
+            .clusters
+            .iter()
+            .zip(annotations)
+            .map(|(name, annotation)| vec![name.clone(), annotation])
+            .collect();
+        let mut header = vec!["Gene".to_string(), "Annotation".to_string()];
+        header.extend(pa.genomes.iter().cloned());
+        pa.header = header;
+        pa.genome_col_indices = (2..pa.genomes.len() + 2).collect();
+        pa
+    }
+
     /// Build cluster_name → ClusterIdx index.
     pub fn cluster_index(&self) -> HashMap<String, ClusterIdx> {
         self.clusters
@@ -534,7 +557,7 @@ pub fn extract_as_id(name: &str) -> Option<&str> {
         if bytes[i] == b'A'
             && bytes[i + 1] == b'S'
             && bytes[i + 2..i + 7].iter().all(u8::is_ascii_digit)
-            && bytes.get(i + 7).map_or(true, |ch| !ch.is_ascii_digit())
+            && bytes.get(i + 7).is_none_or(|ch| !ch.is_ascii_digit())
         {
             return Some(&name[i..i + 7]);
         }

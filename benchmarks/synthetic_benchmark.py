@@ -586,14 +586,44 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+WORKDIR_MARKER = ".recore-benchmark-workdir"
+
+
+def clean_workdir(workdir: Path) -> None:
+    """Delete a previous benchmark workdir, and only that.
+
+    The path comes from --workdir, and an unguarded rmtree would take the
+    repository, a home directory or any folder passed by mistake with it. Only a
+    directory this script created (it carries a marker file), an empty one, or
+    an older run's (it holds an input/ folder) is removed."""
+    workdir = workdir.resolve()
+    if not workdir.exists():
+        return
+    root = Path(__file__).resolve().parents[1]
+    protected = {root, root.parent, Path("/").resolve(), Path.home().resolve()}
+    ours = (workdir / WORKDIR_MARKER).exists() or (workdir / "input").is_dir()
+    empty = not any(workdir.iterdir())
+    if workdir in protected or not (ours or empty):
+        raise SystemExit(
+            f"ERROR: refusing to delete {workdir}: it is not a workdir this benchmark "
+            f"created (no {WORKDIR_MARKER}). Remove it yourself or pick another --workdir."
+        )
+    shutil.rmtree(workdir)
+
+
+def mark_workdir(workdir: Path) -> None:
+    workdir.mkdir(parents=True, exist_ok=True)
+    (workdir / WORKDIR_MARKER).touch()
+
 def main() -> int:
     args = parse_args()
     recore = ensure_recore_binary(args.recore, args.skip_build)
     minimap2 = find_minimap2(args.minimap2)
 
     workdir = Path(args.workdir)
-    if workdir.exists():
-        shutil.rmtree(workdir)
+    clean_workdir(workdir)
+    mark_workdir(workdir)
     input_dir = workdir / "input"
     output_root = workdir / "outputs"
 

@@ -95,7 +95,7 @@ These events are reported separately so downstream analyses can avoid treating t
 
 **What it means:** The gene is present with the correct sequence but starts at a different position than the reference annotation. Alternative start codons (GTG, TTG) and upstream ATGs can lead to start site disagreements between annotators.
 
-**Evidence:** Full-coverage hit (≥80%) with ≥98% identity, overlapping an annotated CDS on the same strand that agrees with the cluster's representative at the stop (within one codon) and differs from it at the start by 1 to 299 bp. The representative's start and stop are placed on the contig from the alignment, counting the query bases it left unaligned at each end, so trimmed alignment ends are not mistaken for a different start. A difference at the stop end is not a start variant: that is what a representative which reads through its stop looks like.
+**Evidence:** A hit covering ≥90% of the query with ≥98% identity, overlapping an annotated CDS on the same strand that agrees with the cluster's representative at the stop (within one codon) and differs from it at the start by 1 to 299 bp. The representative's start and stop are placed on the contig from the alignment, counting the query bases it left unaligned at each end, so trimmed alignment ends are not mistaken for a different start. A difference at the stop end is not a start variant: that is what a representative which reads through its stop looks like.
 
 **Confidence:** `identity × 0.95` (the only rescue type whose score does not multiply in coverage)
 

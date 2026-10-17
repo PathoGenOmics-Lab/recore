@@ -669,7 +669,7 @@ pub fn run(args: &Args) -> Result<()> {
             .count();
         let skipped = rescues.iter().filter(|r| r.synteny_ok.is_none()).count();
         info!(
-            "Synteny: {} validated, {} failed, {} skipped (no flanking genes found)",
+            "Synteny: {} validated, {} failed, {} not assessed (no clustered flanking genes, or no annotated copy to compare with)",
             validated, failed, skipped
         );
         if validated == 0 && failed == 0 && skipped > 0 {
@@ -908,7 +908,7 @@ pub fn run(args: &Args) -> Result<()> {
             "paralog_rejected_report.tsv",
         )?;
     }
-    write_orthology_evidence(OrthologyEvidenceInputs {
+    let evidence_rows = build_orthology_evidence(OrthologyEvidenceInputs {
         rescues: &rescues,
         synteny_rejected: &synteny_rejected,
         paralog_rejected: &paralog_rejected,
@@ -917,8 +917,8 @@ pub fn run(args: &Args) -> Result<()> {
         cluster_prevalences: &cluster_prevalence_by_idx,
         cluster_seq_lengths: &cluster_seq_lengths,
         matrix_policy: args.matrix_policy,
-        output_dir: &args.output,
-    })?;
+    });
+    write_orthology_evidence(&evidence_rows, &args.output)?;
     if let Some(reference_genome) = args.reference_genome.as_deref() {
         write_reference_genome_audit(ReferenceAuditInputs {
             requested_reference: reference_genome,
@@ -938,9 +938,29 @@ pub fn run(args: &Args) -> Result<()> {
             write_reference_cluster_events(&reference_cluster_events, &pa, &args.output)?;
         }
     }
+    // Contexts and synteny blocks are read off the corrected matrix: a CDS this
+    // run rescued belongs to its cluster like any other neighbour. Read off the
+    // input matrix, the falsely absent gene was a CDS with no cluster, it was
+    // skipped, and the window slid along by one. Every single-copy neighbour of
+    // a false absence then had two contexts and was reported as a duplication
+    // or paralog expansion: 12 of the tutorial's 24 clusters, DnaA included.
+    let mut corrected_gene_to_cluster_maps = gene_to_cluster_maps.clone();
+    for rescue in matrix_rescue_map.values() {
+        if let Some(gene_id) = rescue.annotation_match.as_deref() {
+            corrected_gene_to_cluster_maps
+                .entry(rescue.genome_idx)
+                .or_default()
+                .entry(gene_id.to_string())
+                .or_insert(rescue.cluster_idx);
+        }
+    }
     let context_summaries = if !gff_indices.is_empty() {
-        let (context_rows, summaries) =
-            write_cluster_locus_contexts(&pa, &gff_indices, &gene_to_cluster_maps, &args.output)?;
+        let (context_rows, summaries) = write_cluster_locus_contexts(
+            &pa,
+            &gff_indices,
+            &corrected_gene_to_cluster_maps,
+            &args.output,
+        )?;
         let synteny_reference_gi = args
             .reference_genome
             .as_deref()
@@ -948,7 +968,7 @@ pub fn run(args: &Args) -> Result<()> {
         let block_rows = write_cluster_synteny_blocks(
             &pa,
             &gff_indices,
-            &gene_to_cluster_maps,
+            &corrected_gene_to_cluster_maps,
             synteny_reference_gi,
             &args.output,
         )?;
@@ -1019,7 +1039,13 @@ pub fn run(args: &Args) -> Result<()> {
     if args.write_corrected_gff {
         let matrix_rescues: Vec<RescueEvent> =
             matrix_rescue_map.values().map(|r| (*r).clone()).collect();
-        write_corrected_gffs(&matrix_rescues, &pa, &gff_paths, &args.output)?;
+        write_corrected_gffs(
+            &matrix_rescues,
+            &pa,
+            &gff_paths,
+            &gff_contig_remaps,
+            &args.output,
+        )?;
     }
 
     let stats = SummaryStats {
@@ -1075,6 +1101,7 @@ pub fn run(args: &Args) -> Result<()> {
             &matrix_rescue_map,
             &nsc_result,
             phylo_tree.as_ref(),
+            &evidence_rows,
             &args.output,
         )?;
     }
@@ -1532,11 +1559,41 @@ fn accepted_rescue_evidence_state(
     evidence_state(rescue, true, query_cluster, &annotation_cluster, "")
 }
 
-fn publication_status(accepted: bool, state: &str) -> &'static str {
+/// Every value publication_status can write, in the order the docs list them.
+#[cfg(test)]
+pub(super) const PUBLICATION_STATUSES: [&str; 7] = [
+    "publication_ready_correction",
+    "corrected_review",
+    "corrected_but_review_for_publication",
+    "corrected_paralog_review",
+    "held_out_policy",
+    "held_out_quality",
+    "audit_only_not_corrected",
+];
+
+/// How a row can be used in a paper. It follows what happened to the cell, so
+/// evidence the matrix policy or a quality floor kept out is never labelled a
+/// correction, and a span that is not a whole number of codons is not called
+/// publication-ready.
+fn publication_status(
+    accepted: bool,
+    state: &str,
+    matrix_action: &str,
+    orf_signal: &str,
+) -> &'static str {
     if !accepted {
         return "audit_only_not_corrected";
     }
+    match matrix_action {
+        "correct_presence" => {}
+        "audit_only_policy" => return "held_out_policy",
+        "audit_only_quality" => return "held_out_quality",
+        _ => return "audit_only_not_corrected",
+    }
     match state {
+        "STRICT_PRESENT" | "ALIAS_CLUSTER" if orf_signal == "out_of_frame_span_review" => {
+            "corrected_review"
+        }
         "STRICT_PRESENT" | "ALIAS_CLUSTER" => "publication_ready_correction",
         "SEQUENCE_ONLY" | "PARTIAL_HOMOLOGY" | "PSEUDOGENE" => {
             "corrected_but_review_for_publication"
@@ -1602,6 +1659,14 @@ struct GenomeQcInputs<'a> {
     output_dir: &'a std::path::Path,
 }
 
+fn median_of_sorted(sorted: &[usize]) -> f64 {
+    match sorted.len() {
+        0 => 0.0,
+        n if n % 2 == 1 => sorted[n / 2] as f64,
+        n => (sorted[n / 2 - 1] + sorted[n / 2]) as f64 / 2.0,
+    }
+}
+
 fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
     let GenomeQcInputs {
         pa,
@@ -1653,6 +1718,23 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
         "genome\tfasta_found\tgff_found\tgff_contig_remapped_records\tgaps_passing_filter\taccepted_rescues\tmatrix_corrected_rescues\tnsc_added_presence\tsynteny_rejected\tparalog_rejected\tqc_status\tqc_flags"
     )?;
 
+    // A genome whose corrections sit far above the cohort's is worth a look:
+    // above the median plus three median absolute deviations.
+    let burden_ceiling = {
+        let mut sorted = matrix_corrected_by_genome.clone();
+        sorted.sort_unstable();
+        let median = median_of_sorted(&sorted);
+        let mut deviations: Vec<f64> = sorted.iter().map(|&v| (v as f64 - median).abs()).collect();
+        deviations.sort_by(f64::total_cmp);
+        let mad = if deviations.is_empty() {
+            0.0
+        } else if deviations.len() % 2 == 1 {
+            deviations[deviations.len() / 2]
+        } else {
+            (deviations[deviations.len() / 2 - 1] + deviations[deviations.len() / 2]) / 2.0
+        };
+        median + 3.0 * mad
+    };
     let gff_expected = !gff_indices.is_empty();
     let mut review_count = 0usize;
     let mut fail_count = 0usize;
@@ -1698,10 +1780,23 @@ fn write_genome_qc(inputs: GenomeQcInputs<'_>) -> Result<()> {
             flags.push("nsc_presence_added");
         }
 
+        if matrix_corrected >= 10 && matrix_corrected as f64 > burden_ceiling {
+            flags.push("correction_burden_above_cohort");
+        }
+
         let fail = flags.contains(&"missing_fasta_for_searchable_gaps");
+        // Searched gaps with no evidence are what true absences look like, and
+        // NSC presence and remapped seqids are bookkeeping: none is a reason to
+        // review a genome. Marking every genome without a correction "review"
+        // while a genome with three corrections passed read backwards.
         let review = flags.iter().any(|flag| {
-            !matches!(*flag, "gff_contig_seqid_remapped")
-                && *flag != "missing_fasta_for_searchable_gaps"
+            !matches!(
+                *flag,
+                "gff_contig_seqid_remapped"
+                    | "missing_fasta_for_searchable_gaps"
+                    | "no_rescue_evidence_for_searchable_gaps"
+                    | "nsc_presence_added"
+            )
         });
         let status = if fail {
             fail_count += 1;
@@ -1751,10 +1846,9 @@ struct OrthologyEvidenceInputs<'a> {
     cluster_prevalences: &'a [f64],
     cluster_seq_lengths: &'a [usize],
     matrix_policy: MatrixPolicy,
-    output_dir: &'a std::path::Path,
 }
 
-fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
+fn build_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Vec<OrthologyEvidenceRow> {
     let OrthologyEvidenceInputs {
         rescues,
         synteny_rejected,
@@ -1764,15 +1858,9 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
         cluster_prevalences,
         cluster_seq_lengths,
         matrix_policy,
-        output_dir,
     } = inputs;
-    let path = output_dir.join("orthology_evidence.tsv");
-    let file = fs::File::create(&path)?;
-    let mut w = BufWriter::new(file);
-    writeln!(
-        w,
-        "decision\torthology_status\tevidence_state\tmatrix_action\tpublication_status\tevidence_strength\trecommended_wording\tgene_cluster\tgenome\trescue_type\tidentity\tcoverage\tcontig\tstart\tend\tstrand\tconfidence\tadaptive_identity_floor\tadaptive_coverage_floor\tadaptive_sequence_pass\torthology_confidence_score\torthology_confidence_tier\trisk_flags\tsynteny\tsynteny_score\tsynteny_support_n\tsynteny_reference_contexts\tsynteny_neighbors\tsynteny_upstream_matches\tsynteny_downstream_matches\torf_integrity_signal\tannotation_match\tannotation_cluster\trejection_reason\tfragment_note"
-    )?;
+    let mut rows =
+        Vec::with_capacity(rescues.len() + synteny_rejected.len() + paralog_rejected.len());
 
     for rescue in rescues {
         let query_cluster = pa.cluster_name(rescue.cluster_idx);
@@ -1786,14 +1874,17 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
             cluster_prevalences[rescue.cluster_idx.val()],
             cluster_seq_lengths[rescue.cluster_idx.val()],
         );
-        write_tsv_fields(
-            &mut w,
-            &[
+        let matrix_action = matrix_action_with_quality(matrix_policy, true, state, &quality);
+        rows.push(OrthologyEvidenceRow {
+            cluster_idx: rescue.cluster_idx,
+            genome_idx: rescue.genome_idx,
+            fields: vec![
                 "accepted".to_string(),
                 status.to_string(),
                 state.to_string(),
-                matrix_action_with_quality(matrix_policy, true, state, &quality).to_string(),
-                publication_status(true, state).to_string(),
+                matrix_action.to_string(),
+                publication_status(true, state, matrix_action, rescue_orf_signal(rescue))
+                    .to_string(),
                 evidence_strength(state).to_string(),
                 recommended_wording(state, true).to_string(),
                 query_cluster.to_string(),
@@ -1842,7 +1933,7 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
                     .unwrap_or("")
                     .to_string(),
             ],
-        )?;
+        });
     }
 
     for (rejected, status, reason) in [
@@ -1868,14 +1959,16 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
                 cluster_prevalences[rescue.cluster_idx.val()],
                 cluster_seq_lengths[rescue.cluster_idx.val()],
             );
-            write_tsv_fields(
-                &mut w,
-                &[
+            rows.push(OrthologyEvidenceRow {
+                cluster_idx: rescue.cluster_idx,
+                genome_idx: rescue.genome_idx,
+                fields: vec![
                     "rejected".to_string(),
                     status.to_string(),
                     state.to_string(),
                     matrix_action_with_quality(matrix_policy, false, state, &quality).to_string(),
-                    publication_status(false, state).to_string(),
+                    publication_status(false, state, "audit_only", rescue_orf_signal(rescue))
+                        .to_string(),
                     evidence_strength(state).to_string(),
                     recommended_wording(state, false).to_string(),
                     query_cluster.to_string(),
@@ -1924,12 +2017,88 @@ fn write_orthology_evidence(inputs: OrthologyEvidenceInputs<'_>) -> Result<()> {
                         .unwrap_or("")
                         .to_string(),
                 ],
-            )?;
+            });
         }
+    }
+    rows
+}
+
+/// The columns of orthology_evidence.tsv, in order.
+pub(super) const ORTHOLOGY_EVIDENCE_COLUMNS: [&str; 35] = [
+    "decision",
+    "orthology_status",
+    "evidence_state",
+    "matrix_action",
+    "publication_status",
+    "evidence_strength",
+    "recommended_wording",
+    "gene_cluster",
+    "genome",
+    "rescue_type",
+    "identity",
+    "coverage",
+    "contig",
+    "start",
+    "end",
+    "strand",
+    "confidence",
+    "adaptive_identity_floor",
+    "adaptive_coverage_floor",
+    "adaptive_sequence_pass",
+    "orthology_confidence_score",
+    "orthology_confidence_tier",
+    "risk_flags",
+    "synteny",
+    "synteny_score",
+    "synteny_support_n",
+    "synteny_reference_contexts",
+    "synteny_neighbors",
+    "synteny_upstream_matches",
+    "synteny_downstream_matches",
+    "orf_integrity_signal",
+    "annotation_match",
+    "annotation_cluster",
+    "rejection_reason",
+    "fragment_note",
+];
+
+/// One row of orthology_evidence.tsv, formatted once. The TSV writes these
+/// fields as they are and the HTML report reads its per-cell evidence out of
+/// the same rows, so the page and the file cannot say different things.
+pub(super) struct OrthologyEvidenceRow {
+    pub(super) cluster_idx: ClusterIdx,
+    pub(super) genome_idx: GenomeIdx,
+    pub(super) fields: Vec<String>,
+}
+
+impl OrthologyEvidenceRow {
+    /// The field under `column`; empty if there is no such column.
+    pub(super) fn field(&self, column: &str) -> &str {
+        ORTHOLOGY_EVIDENCE_COLUMNS
+            .iter()
+            .position(|c| *c == column)
+            .and_then(|i| self.fields.get(i))
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+}
+
+fn write_orthology_evidence(
+    rows: &[OrthologyEvidenceRow],
+    output_dir: &std::path::Path,
+) -> Result<()> {
+    let path = output_dir.join("orthology_evidence.tsv");
+    let file = fs::File::create(&path)?;
+    let mut w = BufWriter::new(file);
+    writeln!(w, "{}", ORTHOLOGY_EVIDENCE_COLUMNS.join("\t"))?;
+    for row in rows {
+        write_tsv_fields(&mut w, &row.fields)?;
     }
     w.flush()?;
     Ok(())
 }
 
+#[cfg(test)]
+mod scale_harness;
 #[cfg(test)]
 mod tests;

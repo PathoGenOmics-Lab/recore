@@ -264,33 +264,40 @@ fn html_report_summarizes_run_outputs() {
         remaining_gaps: 0,
     };
 
-    write_html_report(&args, &pa, &stats, &HashMap::new(), &None, None, out.path()).unwrap();
+    write_html_report(
+        &args,
+        &pa,
+        &stats,
+        &HashMap::new(),
+        &None,
+        None,
+        &[],
+        out.path(),
+    )
+    .unwrap();
 
     let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
     assert!(text.contains("<title>Recore run report</title>"));
     assert!(text.contains("group_1"));
     assert!(text.contains("Orthology actions"));
-    assert!(text.contains("Add --tree"));
-    assert!(text.contains("gene_presence_absence_recore.csv"));
-    // Without a tree the viewer is not embedded and explorer.js is not inlined,
-    // so none of the chrome it drives may be drawn. It used to be, which left a
-    // topbar of controls that looked live and did nothing.
+    // The file list is read from the output directory.
+    assert!(text.contains("href='orthology_evidence.tsv'"));
+    assert!(text.contains("Using these results"));
+    // Without a tree the workspace still opens on a star tree in matrix order,
+    // and says so, instead of leaving a page with one sentence on it.
+    assert!(text.contains("No --tree was given"));
+    assert!(text.contains("id='workspaceNotices'"));
     for control in [
         "id='clusterOmnibox'",
         "id='prevCluster'",
         "id='nextCluster'",
         "id='toggleSynteny'",
-        "id='shortcutsButton'",
         "id='exportView'",
-        "id='explorerFullscreen'",
         "id='palette'",
-        "id='shortcutSheet'",
     ] {
-        assert!(
-            !text.contains(control),
-            "tree-less report draws {control}, whose handler ships with the viewer"
-        );
+        assert!(text.contains(control), "tree-less report lacks {control}");
     }
+    assert!(text.contains("window.recoreExplorerFailed"));
     // What does work without a tree stays.
     assert!(text.contains("id='themeToggle'"));
     assert!(text.contains("id='openDetails'"));
@@ -408,6 +415,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
         &HashMap::new(),
         &None,
         Some(&tree),
+        &[],
         out.path(),
     )
     .unwrap();
@@ -431,22 +439,23 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("let syntenyHidden = true"));
     assert!(text.contains("selectedSyntenyReference"));
     assert!(text.contains("id='syntenySvg'"));
-    assert!(text.contains("treeEdgeStyle"));
+    assert!(text.contains("treeEdgeColor"));
     assert!(text.contains("subtreeLineage"));
-    assert!(text.contains("\"synteny\""));
+    assert!(text.contains("syntenyCounts"));
     assert!(text.contains("selectedSyntenyBlock"));
-    assert!(text.contains("synteny-tip-ring"));
-    assert!(text.contains("genomeBits"));
+    assert!(text.contains("function tidyTree"));
+    assert!(text.contains("id='syntenyData'"));
     assert!(text.contains("syntenyCarrierIndices"));
     assert!(text.contains("referenceGenes"));
     assert!(text.contains("representativeLength"));
-    assert!(text.contains("H37Rv context"));
+    assert!(text.contains("function referenceContextName"));
     assert!(text.contains("renderSyntenyPanel"));
     assert!(text.contains("cellSize"));
     assert!(text.contains("rowHeight"));
-    assert!(text.contains("id='cellSize' type='range' min='0.25'"));
-    assert!(text.contains("id='rowHeight' type='range' min='1'"));
-    assert!(text.contains("step='0.25'"));
+    // Zoom sliders are logarithmic, down to the zooms that fit a whole run as
+    // density: ln(0.01)..ln(90) and ln(0.02)..ln(40).
+    assert!(text.contains("id='cellSize' type='range' min='-4.6052' max='4.4998' step='any'"));
+    assert!(text.contains("id='rowHeight' type='range' min='-3.9120' max='3.6889' step='any'"));
     assert!(text.contains("const headerH = 24"));
     assert!(text.contains("tipColorMode"));
     assert!(text.contains("matrixColorMode"));
@@ -457,7 +466,7 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     assert!(text.contains("data-clear-mechanism"));
     assert!(text.contains("mechanismFilters = new Set"));
     assert!(text.contains("mechanismFilters.has"));
-    assert!(text.contains("Click mechanism cards to add/remove"));
+    assert!(text.contains("Tick mechanisms to show only their clusters"));
     assert!(text.contains("referenceCell"));
     assert!(text.contains("targetReferenceGene"));
     assert!(text.contains("Reference (audit)"));
@@ -493,9 +502,9 @@ fn html_report_embeds_small_phylogeny_matrix_explorer() {
     // Cells are the compact per-cluster encoding, not one character per genome.
     // Two genomes fall inside a single byte, so both clusters use bitset mode:
     // group_1 is present in genome 0 and group_2 in genome 1.
-    assert!(text.contains("\"cellEncoding\":\"recore.cells.v1\""));
-    assert!(text.contains("\"cells\":[\"AgEAAAAA\",\"AgIAAAAA\"]"));
-    assert!(text.contains("\"genomeStats\":[[1,0,0,1],[1,0,0,1]]"));
+    assert!(text.contains("\"cellEncoding\":\"recore.cells.v2\""));
+    assert!(text.contains("\"cells\":[\"AgEAAAAAAAA=\",\"AgIAAAAAAAA=\"]"));
+    assert!(text.contains("\"genomeStats\":[[1,0,0,0,1],[1,0,0,0,1]]"));
     assert!(text.contains("matrixCanvas"));
     // Canvases must be allocated at the device ratio, and wide columns must be named.
     assert!(text.contains("devicePixelRatio"));
@@ -1305,6 +1314,7 @@ group_009\tgroup_001\tRv0440\tpartial_reference_homology\t91.2\t98.5\t42.6\t237\
         &rescue_map,
         &Some(nsc),
         Some(&tree),
+        &[],
         out.path(),
     )
     .unwrap();
@@ -1373,13 +1383,48 @@ fn corrected_gff_appends_features_before_fasta_section() {
     let mut gff_paths = HashMap::new();
     gff_paths.insert(GenomeIdx(0), source);
 
-    write_corrected_gffs(&[rescue], &pa, &gff_paths, out.path()).unwrap();
+    write_corrected_gffs(&[rescue], &pa, &gff_paths, &[], out.path()).unwrap();
 
     let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
     let rescue_pos = text.find("\tRecore\tCDS\t").unwrap();
     let fasta_pos = text.find("##FASTA").unwrap();
     assert!(rescue_pos < fasta_pos);
     assert!(text.contains(">chr1\nATGCATGC"));
+}
+
+/// A GFF whose seqid differs from the single FASTA contig is read through a
+/// remap. Its corrected copy keeps the GFF's seqid on the original records, so
+/// the rescue features must use it too, not the FASTA contig name.
+#[test]
+fn corrected_gff_writes_rescues_on_the_gff_seqid_after_a_remap() {
+    let out = tempfile::tempdir().unwrap();
+    let source = out.path().join("g1.gff3");
+    std::fs::write(
+        &source,
+        b"##gff-version 3\n##sequence-region chr1 1 900\nchr1\tAMAP\tCDS\t1\t90\t.\t+\t0\tID=gene1\n",
+    )
+    .unwrap();
+    let pa =
+        PresenceAbsence::new_for_test(vec!["clA".into()], vec!["g1".into()], vec![vec!["".into()]]);
+    let rescue = RescueEvent {
+        cluster_idx: ClusterIdx(0),
+        genome_idx: GenomeIdx(0),
+        contig: "g1_contig1".into(),
+        start: 99,
+        end: 180,
+        ..rescue_with_type(RescueType::Dropped, Some(true))
+    };
+    let gff_paths: HashMap<GenomeIdx, PathBuf> = [(GenomeIdx(0), source)].into_iter().collect();
+    let remaps = vec![(
+        "g1".to_string(),
+        "chr1".to_string(),
+        "g1_contig1".to_string(),
+        1,
+    )];
+    write_corrected_gffs(&[rescue], &pa, &gff_paths, &remaps, out.path()).unwrap();
+    let text = std::fs::read_to_string(out.path().join("corrected_gff/g1.recore.gff3")).unwrap();
+    assert!(text.contains("chr1\tRecore\tCDS\t100\t180"), "{text}");
+    assert!(!text.contains("g1_contig1\tRecore"));
 }
 
 #[test]
@@ -2168,4 +2213,584 @@ fn gff_stream_copy_preserves_existing_header_after_blank_prefix() {
     assert_eq!(text.matches("##gff-version 3").count(), 1);
     assert!(text.starts_with('\n'));
     assert!(text.contains("ID=gene1"));
+}
+
+/// A single-copy gene beside a pseudogene, a missing CDS or a true loss gets a
+/// different context signature in those genomes, but the same neighbourhood.
+/// Signature differences alone used to label it a duplication or paralog
+/// expansion; only a neighbourhood with nothing in common is another locus.
+#[test]
+fn locus_context_is_judged_by_shared_neighbours() {
+    let ctx = |up: &str, down: &str| (up.to_string(), down.to_string());
+    let usual = ctx("Rv0006|Rv0005", "Rv0008c|Rv0009");
+    assert!(evolution::shares_neighbour(
+        &usual,
+        &ctx("Rv0005|Rv0004", "Rv0008c")
+    ));
+    assert!(evolution::shares_neighbour(&usual, &ctx("NA", "NA")));
+    assert!(!evolution::shares_neighbour(
+        &usual,
+        &ctx("Rv3001|Rv3002", "Rv3004|Rv3005")
+    ));
+
+    // Interpretation thresholds now read the compatible fraction.
+    assert_eq!(
+        evolution::context_interpretation(12, 4, 1.0),
+        "stable_single_locus_minor_noise"
+    );
+    assert_eq!(
+        evolution::context_interpretation(12, 2, 0.5),
+        "possible_multilocus_or_paralog"
+    );
+}
+
+/// Parsimony at a node with more than two children must not depend on the
+/// order the children are written in. Pairwise Fitch did: one ordering gave
+/// dispersed gain and loss, the other an ancestral loss.
+#[test]
+fn parsimony_is_independent_of_sibling_order() {
+    let genomes: Vec<String> = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["gene".into()],
+        genomes,
+        vec![vec![
+            "".into(),
+            "".into(),
+            "x".into(),
+            "x".into(),
+            "x".into(),
+        ]],
+    );
+    let present: Vec<bool> = (0..5).map(|i| i >= 2).collect();
+    let mut outcomes = Vec::new();
+    for newick in ["(e,(a,b,c,d));", "(e,(c,a,d,b));", "(e,(d,c,b,a));"] {
+        let mut root = evolution::NewickParser::new(newick).parse().unwrap();
+        evolution::resolve_phylo_tips(&mut root, &pa);
+        let summary = evolution::fitch_postorder(&root, &present);
+        let (mut gains, mut losses) = (0, 0);
+        evolution::assign_fitch_states(&summary, None, &mut gains, &mut losses);
+        assert_eq!(summary.changes, gains + losses, "{newick}");
+        outcomes.push((summary.changes, gains, losses));
+    }
+    assert!(outcomes.windows(2).all(|w| w[0] == w[1]), "{outcomes:?}");
+    assert_eq!(outcomes[0].0, 2, "two losses, a and b");
+}
+
+/// "<!--" followed by "<script" in any name or annotation switched the HTML
+/// parser into the script's escaped state and left the report blank. In JSON
+/// these characters only occur inside strings, so escaping them keeps every
+/// value as it was.
+#[test]
+fn report_payload_is_safe_inside_a_script_element() {
+    let json = "{\"a\":\"<!--<script>\",\"b\":\"x & y > z\",\"c\":\"line\u{2028}sep\"}";
+    let safe = output::script_safe_json(json);
+    assert!(!safe.contains('<') && !safe.contains('>') && !safe.contains('&'));
+    assert!(!safe.contains('\u{2028}'));
+    assert!(safe.contains("\\u003c!--\\u003cscript\\u003e"));
+}
+
+fn evidence_row(cluster: usize, genome: usize, values: &[(&str, &str)]) -> OrthologyEvidenceRow {
+    let fields = ORTHOLOGY_EVIDENCE_COLUMNS
+        .iter()
+        .map(|column| {
+            values
+                .iter()
+                .find(|(c, _)| c == column)
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    OrthologyEvidenceRow {
+        cluster_idx: ClusterIdx(cluster),
+        genome_idx: GenomeIdx(genome),
+        fields,
+    }
+}
+
+fn test_base64_decode(text: &str) -> Vec<u8> {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits = 0u32;
+    let mut n_bits = 0;
+    let mut out = Vec::new();
+    for c in text.bytes().filter(|&c| c != b'=') {
+        bits = (bits << 6) | alphabet.iter().position(|&a| a == c).unwrap() as u32;
+        n_bits += 6;
+        if n_bits >= 8 {
+            n_bits -= 8;
+            out.push((bits >> n_bits) as u8);
+            bits &= (1 << n_bits) - 1;
+        }
+    }
+    out
+}
+
+/// The JSON string array that follows `"key":` in `json` (no escapes inside).
+fn test_json_strings(json: &str, key: &str) -> Vec<String> {
+    let start = json.find(&format!("\"{key}\":[")).unwrap() + key.len() + 4;
+    let end = start + json[start..].find(']').unwrap();
+    json[start..end]
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_matches('"').to_string())
+        .collect()
+}
+
+/// The explorer reads each cell's evidence from one base64 string per cluster.
+/// Decoding it must give back the rows of orthology_evidence.tsv, field for
+/// field, in genome order, with empty numbers as "not given".
+#[test]
+fn explorer_evidence_round_trips_per_cluster() {
+    let rows = vec![
+        evidence_row(
+            0,
+            2,
+            &[
+                ("decision", "accepted"),
+                ("matrix_action", "audit_only_policy"),
+                ("rescue_type", "PSEUDOGENE:1stops"),
+                ("contig", "g3_ctg"),
+                ("start", "101"),
+                ("end", "400"),
+                ("identity", "99.1"),
+                ("coverage", "100.0"),
+                ("strand", "-"),
+            ],
+        ),
+        evidence_row(
+            0,
+            1,
+            &[
+                ("decision", "accepted"),
+                ("matrix_action", "correct_presence"),
+                ("rescue_type", "DROPPED"),
+                ("contig", "g2_ctg"),
+                ("start", "7"),
+                ("end", "1206"),
+                ("identity", "93.6"),
+                ("coverage", ""),
+                ("strand", "+"),
+            ],
+        ),
+        // A cluster the explorer does not draw (merged away by NSC) is left out.
+        evidence_row(5, 0, &[("decision", "accepted"), ("contig", "hidden")]),
+    ];
+    let rendered: HashMap<usize, usize> = [(0usize, 0usize), (1, 1)].into_iter().collect();
+    let json = output::explorer_evidence_json(&rows, &rendered, 2);
+    let strings = test_json_strings(&json, "strings");
+    let by_cluster = test_json_strings(&json, "byCluster");
+    assert_eq!(by_cluster.len(), 2);
+    assert_eq!(
+        by_cluster[1], "",
+        "a cluster with no evidence costs nothing"
+    );
+    assert!(!strings.iter().any(|s| s == "hidden"));
+
+    let bytes = test_base64_decode(&by_cluster[0]);
+    let mut pos = 0;
+    let mut next = || {
+        let (mut value, mut shift) = (0u64, 0);
+        loop {
+            let byte = bytes[pos];
+            pos += 1;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return value;
+            }
+            shift += 7;
+        }
+    };
+    assert_eq!(next(), 2);
+    let mut genome = 0;
+    let mut decoded = Vec::new();
+    for _ in 0..2 {
+        genome += next();
+        let _profile = next();
+        let text: Vec<String> = (0..output::EXPLORER_EVIDENCE_TEXT.len())
+            .map(|_| strings[next() as usize].clone())
+            .collect();
+        let numbers: Vec<u64> = (0..4).map(|_| next()).collect();
+        decoded.push((genome, text, numbers));
+    }
+    // Genome order, not input order.
+    assert_eq!(decoded[0].0, 1);
+    assert_eq!(decoded[0].1[0], "DROPPED");
+    assert_eq!(decoded[0].1[1], "g2_ctg");
+    assert_eq!(decoded[0].2, vec![8, 1207, 937, 0]);
+    assert_eq!(decoded[1].0, 2);
+    assert_eq!(decoded[1].1[0], "PSEUDOGENE:1stops");
+    assert_eq!(decoded[1].2, vec![102, 401, 992, 1001]);
+    assert!(json.contains("\"audit_only_policy\"") && json.contains("\"correct_presence\""));
+}
+
+/// The cell tooltip was unstyled for a release: it sat static and transparent
+/// under the scroller. Keep the rule, and keep legend keys as swatch+label pairs.
+#[test]
+fn report_styles_the_cell_tooltip_and_pairs_legend_keys() {
+    let css = include_str!("report_assets/report.css");
+    let rule = css
+        .split(".matrix-tooltip {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("a .matrix-tooltip rule");
+    assert!(rule.contains("position: absolute"));
+    assert!(rule.contains("pointer-events: none"));
+    assert!(rule.contains("background: var(--ink)"));
+    let writer = include_str!("output.rs");
+    assert!(writer.contains("<span class='key'><i class='sw p'></i>input</span>"));
+}
+
+/// A row the matrix policy or a quality floor kept out was labelled
+/// corrected_but_review_for_publication. Only a corrected cell may carry a
+/// status that says corrected, and a span that is not a whole number of codons
+/// is never publication-ready.
+#[test]
+fn publication_status_follows_the_matrix_action() {
+    let states = [
+        "STRICT_PRESENT",
+        "ALIAS_CLUSTER",
+        "SEQUENCE_ONLY",
+        "PARTIAL_HOMOLOGY",
+        "PSEUDOGENE",
+        "HOMOLOG_PARALOG",
+        "MISSING_CDS_UNVALIDATED",
+    ];
+    let actions = [
+        "correct_presence",
+        "audit_only_policy",
+        "audit_only_quality",
+        "audit_only",
+    ];
+    for state in states {
+        for action in actions {
+            for orf in ["in_frame_span", "out_of_frame_span_review", "disrupted_orf"] {
+                for accepted in [true, false] {
+                    let status = publication_status(accepted, state, action, orf);
+                    assert!(PUBLICATION_STATUSES.contains(&status), "{status}");
+                    if status.starts_with("corrected") || status.starts_with("publication") {
+                        assert!(
+                            accepted && action == "correct_presence",
+                            "{state} {action} {status}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        publication_status(true, "PSEUDOGENE", "audit_only_policy", "disrupted_orf"),
+        "held_out_policy"
+    );
+    assert_eq!(
+        publication_status(
+            true,
+            "STRICT_PRESENT",
+            "correct_presence",
+            "out_of_frame_span_review"
+        ),
+        "corrected_review"
+    );
+    assert_eq!(
+        publication_status(true, "STRICT_PRESENT", "correct_presence", "in_frame_span"),
+        "publication_ready_correction"
+    );
+}
+
+/// outputs.md lists the publication_status values; it listed four the code
+/// never wrote. The documented set and the emitted set must be the same.
+#[test]
+fn documented_publication_statuses_match_the_code() {
+    let docs = include_str!("../../docs/guide/outputs.md");
+    let section = docs
+        .split("`publication_status` takes one of these values:")
+        .nth(1)
+        .expect("the publication_status value table");
+    let documented: Vec<&str> = section
+        .lines()
+        .skip_while(|line| !line.starts_with("| `"))
+        .take_while(|line| line.starts_with("| `"))
+        .map(|line| line.split('`').nth(1).unwrap())
+        .collect();
+    assert_eq!(documented, PUBLICATION_STATUSES.to_vec());
+}
+
+/// Gaps searched with nothing found are what true absences look like. A genome
+/// with no correction must pass, and only a burden far above the cohort's asks
+/// for review.
+#[test]
+fn genome_qc_does_not_review_genomes_without_corrections() {
+    let out = tempfile::tempdir().unwrap();
+    let n = 8;
+    let genomes: Vec<String> = (0..n).map(|i| format!("g{i}")).collect();
+    let clusters: Vec<String> = (0..40).map(|i| format!("c{i}")).collect();
+    let cells = vec![vec![String::new(); n]; clusters.len()];
+    let pa = PresenceAbsence::new_for_test(clusters, genomes.clone(), cells);
+    let genome_files: HashMap<String, PathBuf> = genomes
+        .iter()
+        .map(|g| (g.clone(), PathBuf::from(format!("{g}.fa"))))
+        .collect();
+    // g0 has one correction, g7 has thirty, everyone else none.
+    let mut rescues = Vec::new();
+    for (genome, count) in [(0usize, 1usize), (7, 30)] {
+        for ci in 0..count {
+            let mut r = rescue_with_type(RescueType::Dropped, Some(true));
+            r.cluster_idx = ClusterIdx(ci);
+            r.genome_idx = GenomeIdx(genome);
+            rescues.push(r);
+        }
+    }
+    let matrix: HashMap<(ClusterIdx, GenomeIdx), &RescueEvent> = rescues
+        .iter()
+        .map(|r| ((r.cluster_idx, r.genome_idx), r))
+        .collect();
+    write_genome_qc(GenomeQcInputs {
+        pa: &pa,
+        genome_files: &genome_files,
+        gff_indices: &HashMap::new(),
+        gff_contig_remaps: &[],
+        gaps_passing_filter_by_genome: &[40; 8],
+        rescues: &rescues,
+        synteny_rejected: &[],
+        paralog_rejected: &[],
+        matrix_rescue_map: &matrix,
+        nsc_presence: &ahash::HashSet::default(),
+        output_dir: out.path(),
+    })
+    .unwrap();
+    let text = std::fs::read_to_string(out.path().join("genome_qc.tsv")).unwrap();
+    let status: HashMap<&str, (&str, &str)> = text
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let f: Vec<&str> = line.split('\t').collect();
+            (f[0], (f[10], f[11]))
+        })
+        .collect();
+    for g in ["g1", "g2", "g3", "g4", "g5", "g6"] {
+        assert_eq!(status[g].0, "pass", "{g}: {:?}", status[g]);
+        assert!(status[g]
+            .1
+            .contains("no_rescue_evidence_for_searchable_gaps"));
+    }
+    assert_eq!(status["g0"].0, "pass");
+    assert_eq!(status["g7"].0, "review");
+    assert!(status["g7"].1.contains("correction_burden_above_cohort"));
+}
+
+fn tip(name: &str, genome: Option<usize>, length: f64) -> PhyloNode {
+    PhyloNode {
+        label: Some(name.into()),
+        genome_idx: genome.map(GenomeIdx),
+        branch_length: Some(length),
+        children: Vec::new(),
+    }
+}
+
+fn inner(children: Vec<PhyloNode>, length: Option<f64>) -> PhyloNode {
+    PhyloNode {
+        label: None,
+        genome_idx: None,
+        branch_length: length,
+        children,
+    }
+}
+
+/// A clade with no matrix genome is dropped, and a node left with one child
+/// collapses into it with the lengths summed: a unary node became a nameless
+/// tip, painted present in every core column, after a reroot in the browser.
+#[test]
+fn tree_json_drops_unmatched_tips_and_collapses_unary_nodes() {
+    let tree = inner(
+        vec![
+            inner(vec![tip("a", Some(0), 1.0)], Some(2.0)),
+            inner(vec![tip("unmatched", None, 1.0)], Some(3.0)),
+            inner(
+                vec![tip("b", Some(1), 0.5), tip("c", Some(2), 0.25)],
+                Some(4.0),
+            ),
+        ],
+        None,
+    );
+    let json = output::pruned_phylo_json(&tree).unwrap();
+    assert!(!json.contains("unmatched"));
+    assert!(json.contains("{\"label\":\"a\",\"genome\":0,\"length\":3,\"children\":[]}"));
+    assert_eq!(json.matches("\"genome\":null").count(), 2, "{json}");
+    // No node of the output has exactly one child.
+    assert!(!json
+        .contains("\"children\":[{\"label\":\"a\",\"genome\":0,\"length\":3,\"children\":[]}]}"));
+    assert!(output::pruned_phylo_json(&tip("x", None, 1.0)).is_none());
+}
+
+/// A ladder tree is as deep as it has tips. The writer must not recurse: run it
+/// on a 50,000-level ladder in a thread with a 2 MB stack.
+#[test]
+fn tree_json_handles_a_fifty_thousand_level_ladder() {
+    let handle = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| {
+            let depth = 50_000;
+            let mut node = tip("t0", Some(0), 1.0);
+            for i in 1..depth {
+                node = inner(vec![node, tip(&format!("t{i}"), Some(i), 1.0)], Some(0.5));
+            }
+            let json = output::pruned_phylo_json(&node).unwrap();
+            let tips = json.matches("\"children\":[]").count();
+            // Take the tree apart by hand: dropping it would recurse too.
+            let mut stack = vec![node];
+            while let Some(mut n) = stack.pop() {
+                stack.extend(std::mem::take(&mut n.children));
+            }
+            tips
+        })
+        .unwrap();
+    assert_eq!(handle.join().unwrap(), 50_000);
+}
+
+/// A name holding "<!--" and then "<script" put the HTML parser into the
+/// script's escaped state, so the viewer and the drawer ended up inside the JSON
+/// and the page was blank with no error. The data block must hold neither, and
+/// the boot and viewer scripts must still follow it.
+#[test]
+fn hostile_names_cannot_break_out_of_the_data_block() {
+    let out = tempfile::tempdir().unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["<!--<script>".into(), "a</script><b>&".into()],
+        vec!["g1".into(), "<!--g2".into()],
+        vec![
+            vec!["gene1".into(), "".into()],
+            vec!["".into(), "gene2".into()],
+        ],
+    );
+    let mut args = default_args_for_validation();
+    args.output = out.path().to_path_buf();
+    args.write_html_report = true;
+    let stats = SummaryStats {
+        core_before: 0,
+        total_gaps: 2,
+        filtered_gaps: 2,
+        skipped_by_prevalence: 0,
+        searchable_gaps: 2,
+        missing_fasta_gaps: 0,
+        dropped: 0,
+        missing_cds: 0,
+        split: 0,
+        fragmented: 0,
+        alignment_split: 0,
+        start_variant: 0,
+        paralog: 0,
+        pseudogene: 0,
+        synteny_rejected: 0,
+        paralog_rejected: 0,
+        matrix_policy: MatrixPolicy::Balanced,
+        matrix_corrected: 0,
+        nsc_matrix_corrected: 0,
+        synteny_enabled: false,
+        nsc_clusters: 0,
+        nsc_merged_genes: 0,
+        skipped_no_reference: 0,
+        remaining_gaps: 0,
+    };
+    write_html_report(
+        &args,
+        &pa,
+        &stats,
+        &HashMap::new(),
+        &None,
+        None,
+        &[],
+        out.path(),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(out.path().join("recore_report.html")).unwrap();
+    let start = text
+        .find("<script id='explorerData' type='application/json'>")
+        .unwrap();
+    let body_start = start + "<script id='explorerData' type='application/json'>".len();
+    let end = body_start + text[body_start..].find("</script>").unwrap();
+    let block = &text[body_start..end];
+    assert!(
+        !block.contains('<') && !block.contains('>'),
+        "raw angle bracket in the data block"
+    );
+    let after = &text[end..];
+    assert!(after.contains("window.recoreExplorerFailed = function"));
+    assert!(after.contains("const data = window.recoreExplorerData;"));
+}
+
+/// The manifest and the report carry the time and the exact command line, and
+/// thresholds read as people write them.
+#[test]
+fn run_metadata_reads_cleanly() {
+    let stamp = output::utc_timestamp();
+    assert_eq!(stamp.len(), 20, "{stamp}");
+    assert!(stamp.starts_with("20") && stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T');
+    assert_eq!(output::trim_number(90.0), "90");
+    assert_eq!(output::trim_number(10.000_000_1), "10");
+    assert_eq!(output::trim_number(0.1 * 100.0), "10");
+    assert_eq!(output::trim_number(2.5), "2.5");
+    assert!(!output::command_line().is_empty());
+}
+
+/// The drawer lists the files that are there, not a hand-written list that
+/// linked an empty file and left outputs out.
+#[test]
+fn drawer_lists_the_output_directory() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(out.path().join("rescue_report.tsv"), "a\tb\n1\t2\n3\t4\n").unwrap();
+    std::fs::write(out.path().join("cluster_components.tsv"), "component\n").unwrap();
+    std::fs::write(out.path().join("recore_report.html"), "x").unwrap();
+    std::fs::create_dir(out.path().join("corrected_gff")).unwrap();
+    let entries = output::output_file_entries(out.path()).join("\n");
+    assert!(entries.contains("href='rescue_report.tsv'") && entries.contains("2 rows"));
+    assert!(entries.contains("href='cluster_components.tsv'") && entries.contains("0 rows"));
+    assert!(entries.contains("folder"));
+    assert!(!entries.contains("recore_report.html"));
+    assert!(entries.contains("target='_blank' rel='noopener'"));
+}
+
+/// recore writes TSVs unquoted, so a genome or cluster name that starts with a
+/// double quote is plain data. Reading them back with CSV quoting failed the
+/// whole --write-html-report run on the first such name.
+#[test]
+fn report_reads_tsvs_without_csv_quoting() {
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(
+        out.path().join("genome_qc.tsv"),
+        "genome\tqc_status\tqc_flags\n\"L4_AS00403\treview\tmissing_gff\ng2\tpass\t\n",
+    )
+    .unwrap();
+    let pa = PresenceAbsence::new_for_test(
+        vec!["\"Rv0003\"".into()],
+        vec!["\"L4_AS00403".into(), "g2".into()],
+        vec![vec!["a".into(), "b".into()]],
+    );
+    let rows = output::genome_qc_rows_for_test(&out.path().join("genome_qc.tsv"), &pa);
+    assert_eq!(rows[0], ("review".to_string(), "missing_gff".to_string()));
+    assert_eq!(rows[1].0, "pass");
+}
+
+/// A cluster whose carriers are all off the tree has no phylogenetic reading.
+/// It was rated "moderate" and scored above a cluster with no tree at all.
+#[test]
+fn clusters_absent_from_the_tree_are_not_assessed() {
+    let phylo = evolution::PhyloPatternSummary {
+        assessed: true,
+        matched_tips: 11,
+        present_tips: 0,
+        absent_tips: 11,
+        parsimony_changes: 0,
+        gains: 0,
+        losses: 0,
+        root_state: "absent",
+        root_state_ambiguous: false,
+        carrier_monophyly: false,
+        max_carrier_clade_fraction: 0.0,
+        carrier_mrca_tips: 0,
+        carrier_mrca_purity: 0.0,
+        dollo_loss_events_in_mrca: 0,
+        pattern: "absent_from_tree",
+    };
+    assert_eq!(evolution::phylogenetic_reliability(&phylo), "not_assessed");
 }

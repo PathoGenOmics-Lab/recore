@@ -1,55 +1,136 @@
 (() => {
 const data = window.recoreExplorerData;
-if (!data || !data.clusters.length) return;
-function readVar(name, fallback) {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// No data: the boot script has already said why.
+if (!data) return;
+if (!data.clusters.length) {
+  window.recoreExplorerFailed(new Error("the matrix has no clusters to draw"));
+  return;
+}
+{
+  const notices = document.getElementById("workspaceNotices");
+  if (notices && data.notices && data.notices.length) {
+    for (const text of data.notices) {
+      const line = document.createElement("p");
+      line.textContent = text;
+      notices.appendChild(line);
+    }
+    notices.hidden = false;
+  }
+}
+/* `source` is an optional declaration block to read instead of the live root:
+   figures always take the light palette, whatever the screen is in. */
+function readThemeVar(name, fallback, source) {
+  const value = (source || getComputedStyle(document.documentElement)).getPropertyValue(name).trim();
   return value || fallback;
 }
-function refreshThemeColors() {
-  colors.P = readVar("--present", "#155eef");
-  colors.R = readVar("--rescue", "#12b76a");
-  colors.N = readVar("--nsc", "#7a5af8");
-  colors.A = readVar("--absent", "#ffffff");
+/** The light theme's tokens, read from the stylesheet rather than by flipping
+    data-theme, which would restyle and transition the whole page. */
+function lightThemeDeclaration() {
+  for (const sheet of document.styleSheets) {
+    let rules = null;
+    try {
+      rules = sheet.cssRules;
+    } catch (_e) {
+      continue;
+    }
+    for (const rule of rules || []) {
+      if (rule.selectorText && rule.selectorText.includes(':root[data-theme="light"]')) return rule.style;
+    }
+  }
+  return null;
+}
+function readVar(name, fallback) {
+  return readThemeVar(name, fallback);
+}
+function refreshThemeColors(source) {
+  const readVar = (name, fallback) => readThemeVar(name, fallback, source);
+  colors.P = readVar("--present", "#b3bbc7");
+  colors.R = readVar("--rescue", "#0f6fd6");
+  colors.N = readVar("--nsc", "#e07b00");
+  colors.K = readVar("--kept", "#c01048");
+  colors.A = readVar("--absent", "#f4f5f7");
   strokes.P = colors.P;
   strokes.R = colors.R;
   strokes.N = colors.N;
+  strokes.K = colors.K;
   strokes.A = readVar("--absent-stroke", "#d0d5dd");
+  for (const family of Object.keys(mechanismFamilyColors)) {
+    mechanismFamilyColors[family] = readVar(`--mech-${family}`, mechanismFamilyColors[family]);
+  }
+  burdenLow = readVar("--line", "#e4e4e7");
+  qcColors.pass = readVar("--faint", "#a1a1aa");
+  qcColors.review = readVar("--warning", "#d97706");
+  qcColors.fail = readVar("--danger", "#dc2626");
   panelBg = readVar("--panel", "#ffffff");
   headerBg = readVar("--bg-subtle", "#f8fafc");
   hoverColTint = readVar("--warning-soft", "#fff7ed");
+  hoverStroke = readVar("--muted", "#667085");
+  markInk = readVar("--ink", "#101828");
   selectColTint = readVar("--accent-soft", "#eef4ff");
   selectStroke = readVar("--accent-ink", "#1d4ed8");
   gridStroke = readVar("--faint", "#98a2b3");
   labelInk = readVar("--subtle", "#475467");
 }
 const clusterByName = new Map(data.clusters.map(cluster => [cluster.name, cluster]));
-const colors = {P:"#155eef", R:"#12b76a", N:"#7a5af8", A:"#ffffff"};
-const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
+const colors = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#f4f5f7"};
+const strokes = {P:"#b3bbc7", R:"#0f6fd6", N:"#e07b00", K:"#c01048", A:"#d0d5dd"};
+let burdenLow = "#e4e4e7";
+const qcColors = {pass: "#a1a1aa", review: "#d97706", fail: "#dc2626"};
 let panelBg = "#ffffff";
 let headerBg = "#f8fafc";
 let hoverColTint = "#fff7ed";
+let hoverStroke = "#667085";
+let markInk = "#101828";
 let selectColTint = "#eef4ff";
 let selectStroke = "#1d4ed8";
 let gridStroke = "#98a2b3";
 let labelInk = "#475467";
-const labels = {P:"present in input", R:"rescued by Recore", N:"supported by NSC", A:"absent"};
-const processColors = {
-  clade_associated_gain:"#079455",
-  ancestral_retained_no_disruption:"#155eef",
-  duplication_or_paralog_expansion:"#7a5af8",
-  deletion_loss_candidate:"#b42318",
-  reference_or_lineage_loss_candidate:"#d92d20",
-  clean_insertion_or_acquisition_candidate:"#079455",
-  IS_interruption_supported:"#f79009",
-  pseudogenization:"#b54708",
-  gene_fragmentation_or_structural_break:"#dc6803",
-  partial_reference_homology:"#0e9384",
-  reference_gene_allelic_derivative:"#2970ff",
-  reference_gene_disruption_or_truncation:"#c11574",
-  translocation_or_context_shift_candidate:"#9e77ed",
-  annotation_or_clustering_artifact:"#667085",
-  unstable_or_homoplastic_accessory_signal:"#dd2590",
-  unresolved_accessory_variation:"#475467",
+const labels = {P:"present in input", R:"corrected by Recore", N:"supported by NSC", K:"found, kept out of matrix", A:"absent"};
+const shortLabels = {P:"input", R:"corrected", N:"NSC", K:"kept out", A:"absent"};
+const stateDefinitions = {
+  P:"Present in the input matrix.",
+  R:"Absent in the input. Recore found the gene in this genome and corrected the cell.",
+  N:"Absent in the input. Near-identical clusters were merged (NSC), and the merged cluster is present here.",
+  K:"Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix. Click the cell for the reason.",
+  A:"Absent, and Recore found no evidence for it.",
+};
+/* Sixteen mechanisms cannot get sixteen colours anyone can tell apart, so they
+   are drawn in six families. The family hues stay off the cell-state hues and
+   apart from each other under deutan and protan vision; the inspector and the
+   legend still name the exact mechanism. */
+const mechanismFamilies = {
+  ancestral_retained_no_disruption:"retained",
+  clade_associated_gain:"gain",
+  clean_insertion_or_acquisition_candidate:"gain",
+  deletion_loss_candidate:"loss",
+  reference_or_lineage_loss_candidate:"loss",
+  IS_interruption_supported:"disruption",
+  pseudogenization:"disruption",
+  gene_fragmentation_or_structural_break:"disruption",
+  reference_gene_disruption_or_truncation:"disruption",
+  duplication_or_paralog_expansion:"paralog",
+  translocation_or_context_shift_candidate:"paralog",
+  partial_reference_homology:"paralog",
+  reference_gene_allelic_derivative:"paralog",
+  annotation_or_clustering_artifact:"unresolved",
+  unstable_or_homoplastic_accessory_signal:"unresolved",
+  unresolved_accessory_variation:"unresolved",
+};
+const mechanismFamilyLabels = {
+  retained:"retained",
+  gain:"gain or insertion",
+  loss:"loss or deletion",
+  disruption:"disruption",
+  paralog:"paralog or context change",
+  unresolved:"artifact or unresolved",
+};
+const mechanismFamilyColors = {
+  retained:"#667085",
+  gain:"#4ca30d",
+  loss:"#7a2e0e",
+  disruption:"#fac515",
+  paralog:"#15b79e",
+  unresolved:"#1d2939",
 };
 const processDescriptions = {
   clade_associated_gain:"Legacy label for a clade-associated accessory gain; inspect current mechanism fields for final wording.",
@@ -97,10 +178,10 @@ const lineageDescriptions = {
   L6:"West African 2 (M. africanum)",
   L9:"East African",
   L10:"Horn of Africa",
-  A1:"Animal-adapted",
-  A2:"Animal-adapted",
-  A3:"Animal-adapted",
-  A4:"Animal-adapted",
+  A1:"Animal-associated",
+  A2:"Animal-associated",
+  A3:"Animal-associated",
+  A4:"Animal-associated",
   L8:"African Great Lakes",
   "M. canettii":"Outgroup",
   unknown:"Lineage not parsed from genome name",
@@ -151,6 +232,7 @@ const exportButton = document.getElementById("exportView");
 const details = document.getElementById("clusterDetails");
 const processLegend = document.getElementById("processLegend");
 const lineageLegend = document.getElementById("lineageLegend");
+const cellLegend = document.getElementById("cellLegend");
 const status = document.getElementById("matrixStatus");
 const headerCanvas = document.getElementById("columnHeaderCanvas");
 const headerCtx = headerCanvas.getContext("2d");
@@ -159,7 +241,8 @@ const matrixViewport = canvas ? canvas.parentElement : null;
 const matrixSpacer = document.getElementById("matrixSpacer");
 const headerSpacer = document.getElementById("headerSpacer");
 const treeCanvas = document.getElementById("treeCanvas");
-const treeCtx = treeCanvas ? treeCanvas.getContext("2d") : null;
+// Swapped for a figure's context while a figure is drawn.
+let treeCtx = treeCanvas ? treeCanvas.getContext("2d") : null;
 const treeViewport = treeCanvas ? treeCanvas.parentElement : null;
 const treeSpacer = document.getElementById("treeSpacer");
 const treeHeadSpacer = document.getElementById("treeHeadSpacer");
@@ -178,6 +261,15 @@ const topTreeMeta = document.getElementById("topTreeMeta");
 const topMatrixMeta = document.getElementById("topMatrixMeta");
 const topSyntenyMeta = document.getElementById("topSyntenyMeta");
 const tooltip = document.getElementById("matrixTooltip");
+// Hover and selection marks live on transparent canvases above the data, so
+// moving the pointer repaints a few lines instead of every pane, and the data
+// canvases (and the exported figure) never carry a crosshair.
+const matrixOverlay = document.getElementById("matrixOverlay");
+const matrixOverlayCtx = matrixOverlay ? matrixOverlay.getContext("2d") : null;
+const headerOverlay = document.getElementById("headerOverlay");
+const headerOverlayCtx = headerOverlay ? headerOverlay.getContext("2d") : null;
+const treeOverlay = document.getElementById("treeOverlay");
+const treeOverlayCtx = treeOverlay ? treeOverlay.getContext("2d") : null;
 const syntenyPanel = document.getElementById("syntenyPanel");
 const syntenySummary = document.getElementById("syntenySummary");
 const syntenySvg = document.getElementById("syntenySvg");
@@ -193,9 +285,9 @@ const MIN_INSPECTOR_W = 220;
 const LINEAGE_STRIP_W = 6;
 // Single source for the zoom bounds. The sliders, currentCellSize/currentRowHeight
 // and the wheel handler must agree, or the wheel snaps the value into its own range.
-const MIN_COL_ZOOM = 0.25;
+const MIN_COL_ZOOM = 0.01;
 const MAX_COL_ZOOM = 90;
-const MIN_ROW_ZOOM = 1;
+const MIN_ROW_ZOOM = 0.02;
 const MAX_ROW_ZOOM = 40;
 // Target pixel span used to pick the opening zoom from the run size.
 const FIT_TARGET_H = 560;
@@ -203,14 +295,21 @@ const FIT_TARGET_W = 720;
 // Column names are only worth drawing once a cell is wide enough to carry a
 // rotated label without the text of neighbouring columns touching.
 const LABEL_MIN_CELL_W = 9;
+// Tip names are 10px text: below 11px rows they overlap their neighbours.
+const TIP_LABEL_MIN_ROW = 11;
 const LABEL_BAND_H = 82;
 // Above this a name fits across the column, and turning your head to read a
 // dozen columns is a cost the layout no longer has to impose.
 const LABEL_HORIZONTAL_CELL_W = 54;
 const LABEL_BAND_H_FLAT = 26;
 const LABEL_FONT = "10px Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-const defaultStatus = "Hover a cell for genome, cluster and evidence state. Wheel over the column header zooms columns, over the tree zooms rows. Drag the seams between panes to resize.";
+const defaultStatus = "Hover a cell for its evidence, click it for the full row. Ctrl or Cmd and the wheel zoom columns, Alt and the wheel zoom rows, Z fits everything. Drag the seams between panes to resize.";
+// Below this width the inspector is a bottom sheet (see report.css).
+const narrowQuery = window.matchMedia ? window.matchMedia("(max-width: 1100px)") : null;
 let selected = 0;
+let selectedGenome = -1;
+// True while an exported figure is being drawn (see drawFigure).
+let drawingFigure = false;
 let hoverRow = -1;
 let hoverCol = -1;
 let leafOrder = [];
@@ -220,6 +319,7 @@ let rowOfGenome = new Int32Array(0);
 let visibleClusters = [];
 let genomeStats = [];
 let maxGenomeStats = {R:1, N:1, A:1, correction:1};
+let anyKeptOut = false;
 let maxDepth = 0;
 let maxDistance = 0;
 let treeHeight = 0;
@@ -235,7 +335,13 @@ let cellW = 8;
 let virtualW = 1;
 let virtualH = 1;
 // Cells may be fractional, but never thinner than this or they vanish.
-const MIN_CELL_PX = 0.35;
+const MIN_CELL_PX = 0.005;
+// Below these a cell is less than a pixel, and the matrix is drawn as density:
+// each device pixel shows the share of present cells it covers, with any
+// corrected or kept-out cell in it marked. Drawing cells one rect at a time
+// there cost millions of rects and painted neighbours over each other.
+const DENSITY_BELOW_COL = 0.35;
+const DENSITY_BELOW_ROW = 1;
 let renderQueued = false;
 let detailsKey = "";
 let syntenyKey = "";
@@ -249,7 +355,12 @@ let mechanismFilters = new Set();
 /* Rows matching the genome search, marked on the tree and the lineage strip. */
 let highlightedRows = new Set();
 let overviewKey = "";
+/* Set once the genome card exists (it is declared further down); render() runs
+   before that during start-up. */
+let afterRender = null;
 let treeRoot = data.tree;
+let leafByGenome = new Map();
+let offTreeGenomes = [];
 
 /* ---- Cell decoding -------------------------------------------------------
    Cells arrive as one base64 blob per cluster holding the genome indices that
@@ -266,7 +377,10 @@ let treeRoot = data.tree;
      {kind:"list", idx}           sorted genome indices
      {kind:"complement", idx}     every genome except these, drawn as a filled
                                   rect with the exclusions punched back out */
-const STATE_CODES = ["P", "R", "N", "A"];
+// The cell states, in the order the writer stores their sets. K is evidence
+// the run found that did not reach the binary matrix.
+const STATE_CODES = ["P", "R", "N", "K", "A"];
+const STORED_STATES = 4;
 const EMPTY_SET = {kind: "list", idx: new Int32Array(0)};
 const decodedRows = new Map();
 
@@ -276,8 +390,226 @@ function decodeBase64(text) {
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
-function decodeClusterSets(encoded, nGenomes) {
-  const sets = [EMPTY_SET, EMPTY_SET, EMPTY_SET];
+/* ---- Per-cell evidence ----------------------------------------------------
+   The rows of orthology_evidence.tsv, one base64 string per cluster, decoded
+   only for the clusters someone looks at. */
+const evidenceData = data.evidence && data.evidence.byCluster ? data.evidence : null;
+const evidenceCache = new Map();
+function clusterEvidence(clusterIdx) {
+  if (!evidenceData) return [];
+  const cached = evidenceCache.get(clusterIdx);
+  if (cached) return cached;
+  const rows = decodeEvidence(clusterIdx);
+  if (evidenceCache.size >= 64) evidenceCache.delete(evidenceCache.keys().next().value);
+  evidenceCache.set(clusterIdx, rows);
+  return rows;
+}
+/** Number of evidence rows of a cluster, read from the first bytes only. */
+function evidenceCount(clusterIdx) {
+  const encoded = evidenceData ? evidenceData.byCluster[clusterIdx] || "" : "";
+  if (!encoded) return 0;
+  const bytes = decodeBase64(encoded.slice(0, 8));
+  let value = 0;
+  let scale = 1;
+  for (const byte of bytes) {
+    value += (byte & 0x7f) * scale;
+    if (!(byte & 0x80)) break;
+    scale *= 128;
+  }
+  return value;
+}
+function decodeEvidence(clusterIdx) {
+  const encoded = evidenceData.byCluster[clusterIdx] || "";
+  const rows = [];
+  if (encoded) {
+    const bytes = decodeBase64(encoded);
+    let pos = 0;
+    const next = () => {
+      let value = 0;
+      let scale = 1;
+      for (;;) {
+        const byte = bytes[pos++];
+        value += (byte & 0x7f) * scale;
+        if (!(byte & 0x80)) return value;
+        scale *= 128;
+      }
+    };
+    const strings = evidenceData.strings;
+    const count = next();
+    let genome = 0;
+    for (let i = 0; i < count; i += 1) {
+      genome += next();
+      const profile = evidenceData.profiles[next()] || [];
+      const row = {genome};
+      evidenceData.profileColumns.forEach((column, j) => { row[column] = strings[profile[j]] || ""; });
+      evidenceData.textColumns.forEach(column => { row[column] = strings[next()] || ""; });
+      const start = next();
+      const end = next();
+      const identity = next();
+      const coverage = next();
+      row.start = start ? start - 1 : null;
+      row.end = end ? end - 1 : null;
+      row.identity = identity ? (identity - 1) / 10 : null;
+      row.coverage = coverage ? (coverage - 1) / 10 : null;
+      rows.push(row);
+    }
+  }
+  return rows;
+}
+/** Evidence rows for one cell; rows are sorted by genome. */
+function cellEvidence(clusterIdx, genomeIdx) {
+  const rows = clusterEvidence(clusterIdx);
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].genome < genomeIdx) lo = mid + 1;
+    else hi = mid;
+  }
+  const out = [];
+  while (lo < rows.length && rows[lo].genome === genomeIdx) out.push(rows[lo++]);
+  return out;
+}
+const MATRIX_ACTION_TEXT = {
+  correct_presence:"used in the corrected matrix",
+  audit_only_policy:"kept out by the matrix policy",
+  audit_only_quality:"kept out by a quality floor",
+  audit_only:"not used: rejected",
+};
+const PUBLICATION_TEXT = {
+  publication_ready_correction:"ready for publication",
+  corrected_but_review_for_publication:"corrected; review before publishing",
+  corrected_paralog_review:"corrected; paralog review",
+  corrected_review:"corrected; review",
+  held_out_policy:"held out by the matrix policy",
+  held_out_quality:"held out by a quality floor",
+  audit_only_not_corrected:"audit only, not corrected",
+};
+function evidenceTypeLabel(row) {
+  return (row.rescue_type || row.evidence_state || "evidence").split(/[:(]/)[0].trim();
+}
+function pctText(value) {
+  return value === null || value === undefined ? "n/a" : `${value.toFixed(1)}%`;
+}
+function evidenceLocus(row) {
+  if (!row.contig) return "";
+  const span = row.start !== null && row.end !== null ? `:${formatCoord(row.start)}-${formatCoord(row.end)}` : "";
+  return `${row.contig}${span}${row.strand ? ` (${row.strand})` : ""}`;
+}
+/** One line for the tooltip and the changed-cells list. */
+function evidenceSummary(row) {
+  return `${evidenceTypeLabel(row)}, ${pctText(row.identity)} identity, ${pctText(row.coverage)} coverage`;
+}
+function evidenceRowHtml(row) {
+  const accepted = row.decision === "accepted";
+  const why = row.rejection_reason ? `; ${row.rejection_reason.replace(/_/g, " ")}` : "";
+  const facts = [];
+  if (row.synteny) facts.push(`synteny ${escapeHtml(row.synteny)}${row.synteny_score ? ` (${escapeHtml(row.synteny_score)})` : ""}`);
+  if (row.orf_integrity_signal) facts.push(`ORF ${escapeHtml(row.orf_integrity_signal.replace(/_?orf_?/gi, " ").replace(/_/g, " ").trim())}`);
+  if (row.orthology_confidence_tier) facts.push(`${escapeHtml(row.orthology_confidence_tier.replace(/_confidence$/, "").replace(/_/g, " "))} confidence`);
+  const notes = [];
+  if (row.risk_flags) notes.push(`<dt>Flags</dt><dd>${escapeHtml(row.risk_flags.replace(/;/g, "; ").replace(/_/g, " "))}</dd>`);
+  if (row.fragment_note) notes.push(`<dt>Note</dt><dd>${escapeHtml(row.fragment_note.replace(/_/g, " "))}</dd>`);
+  if (row.annotation_match) notes.push(`<dt>Annotated as</dt><dd>${escapeHtml(row.annotation_match)}${row.annotation_cluster ? ` (${escapeHtml(row.annotation_cluster)})` : ""}</dd>`);
+  if (row.recommended_wording) notes.push(`<dt>Wording</dt><dd>${escapeHtml(row.recommended_wording)}</dd>`);
+  return `<div class="evidence-row${accepted ? "" : " rejected"}">` +
+    `<div class="ev-head"><span class="ev-type">${escapeHtml(row.rescue_type || row.evidence_state || "evidence")}</span>` +
+    `<span class="ev-action">${escapeHtml(MATRIX_ACTION_TEXT[row.matrix_action] || row.matrix_action || row.decision)}${escapeHtml(why)}</span></div>` +
+    (evidenceLocus(row) ? `<div class="ev-locus mono">${escapeHtml(evidenceLocus(row))}</div>` : "") +
+    `<div class="ev-metrics num">${pctText(row.identity)} identity &middot; ${pctText(row.coverage)} coverage</div>` +
+    (facts.length ? `<div class="ev-facts">${facts.join(" &middot; ")}</div>` : "") +
+    (row.publication_status ? `<div class="ev-pub">Publication: ${escapeHtml(PUBLICATION_TEXT[row.publication_status] || row.publication_status.replace(/_/g, " "))}</div>` : "") +
+    (notes.length ? `<dl class="cluster-dl ev-notes">${notes.join("")}</dl>` : "") +
+    `</div>`;
+}
+function emptyCellText(state) {
+  if (state === "P") return "Present in the input matrix. Recore had nothing to correct here.";
+  if (state === "N") return "Merged into a near-identical cluster by NSC; no search evidence row.";
+  return "No evidence row. Either Recore searched this gap and found nothing, or the gap was outside the search (see the prevalence filter in Run details).";
+}
+/** The selected cell: what it is, and every evidence row behind it. */
+function cellCardHtml() {
+  if (selectedGenome < 0 || !data.clusters[selected]) return "";
+  const state = stateAt(selected, selectedGenome);
+  const rows = cellEvidence(selected, selectedGenome);
+  const body = rows.length
+    ? rows.map(evidenceRowHtml).join("")
+    : `<p class="muted cell-empty">${escapeHtml(emptyCellText(state))}</p>`;
+  return `<section class="cell-card" aria-label="Selected cell">` +
+    `<div class="cell-card-head"><span class="card-title">Cell</span>` +
+    `<button type="button" class="icon-btn ghost-icon cell-close" data-clear-cell="1" aria-label="Clear the selected cell" data-tip="Clear the selected cell">&times;</button></div>` +
+    `<p class="cell-name"><button type="button" class="link-btn" data-find-tip="${selectedGenome}">${escapeHtml(data.genomes[selectedGenome] || "")}</button></p>` +
+    `<p class="cell-state"><i class="sw ${state.toLowerCase()}"></i>${escapeHtml(labels[state])}</p>` +
+    body + `</section>`;
+}
+/* Which lineages carry this cluster's corrections. Counting walks only the
+   corrected and kept-out sets, so it costs the size of the finding, not of the
+   run; it was 14 screens of scrolling with tips coloured by state. */
+let genomeLineages = null;
+let lineageSizes = null;
+function lineageBreakdownHtml(clusterIdx) {
+  if (!genomeLineages) {
+    genomeLineages = data.genomes.map(name => lineageOfGenomeName(name));
+    lineageSizes = new Map();
+    for (const lineage of genomeLineages) lineageSizes.set(lineage, (lineageSizes.get(lineage) || 0) + 1);
+  }
+  if (lineageSizes.size < 2 && lineageSizes.has("unknown")) return "";
+  const sets = clusterSets(clusterIdx);
+  const n = data.genomes.length;
+  const tally = new Map();
+  const add = (set, key) => {
+    if (set.kind === "list") {
+      for (const g of set.idx) {
+        const row = tally.get(genomeLineages[g]) || {R: 0, K: 0};
+        row[key] += 1;
+        tally.set(genomeLineages[g], row);
+      }
+    } else if (set.kind === "all" || set.kind === "complement") {
+      const skip = set.kind === "complement" ? new Set(set.idx) : null;
+      for (let g = 0; g < n; g += 1) {
+        if (skip && skip.has(g)) continue;
+        const row = tally.get(genomeLineages[g]) || {R: 0, K: 0};
+        row[key] += 1;
+        tally.set(genomeLineages[g], row);
+      }
+    }
+  };
+  add(sets[1], "R");
+  add(sets[3], "K");
+  if (!tally.size) return "";
+  const rows = [...tally.entries()].sort((a, b) => (b[1].R + b[1].K) - (a[1].R + a[1].K)).slice(0, 8);
+  const body = rows.map(([lineage, c]) => {
+    const size = lineageSizes.get(lineage) || 1;
+    const r = c.R / size * 100;
+    const k = c.K / size * 100;
+    const words = [c.R ? `${formatInt(c.R)} corrected` : "", c.K ? `${formatInt(c.K)} kept out` : ""].filter(Boolean).join(", ");
+    return `<div class="lineage-row" data-tip="${escapeHtml(`${lineageLabel(lineage)}: ${words} of ${plural(size, "genome")}`)}">` +
+      `<span class="lineage-name"><i style="background:${lineageColor(lineage)}"></i>${escapeHtml(lineage)}</span>` +
+      `<span class="lineage-bar"><b class="r" style="width:${r.toFixed(1)}%"></b><b class="k" style="width:${k.toFixed(1)}%"></b></span>` +
+      `<small class="num">${escapeHtml(words)} <span class="muted">/ ${formatInt(size)}</span></small></div>`;
+  }).join("");
+  return `<div class="card-title">Corrections by lineage</div><div class="lineage-rows">${body}</div>`;
+}
+/** The cells Recore changed in this cluster, findings first. */
+const CHANGED_CELLS_SHOWN = 20;
+function changedCellsHtml(clusterIdx) {
+  const rows = clusterEvidence(clusterIdx);
+  if (!rows.length) return "";
+  const rank = row => (row.matrix_action === "correct_presence" ? 0 : row.decision === "accepted" ? 1 : 2);
+  const sorted = rows.slice().sort((a, b) => rank(a) - rank(b) || (rowOfGenome[a.genome] - rowOfGenome[b.genome]));
+  const items = sorted.slice(0, CHANGED_CELLS_SHOWN).map(row => {
+    const state = stateAt(clusterIdx, row.genome);
+    return `<li><button type="button" class="changed-cell" data-cell-genome="${row.genome}">` +
+      `<i class="sw ${state.toLowerCase()}"></i><span class="changed-genome">${escapeHtml(data.genomes[row.genome] || "")}</span>` +
+      `<small>${escapeHtml(evidenceSummary(row))}</small></button></li>`;
+  }).join("");
+  const more = sorted.length > CHANGED_CELLS_SHOWN
+    ? `<p class="muted changed-more">and ${plural(sorted.length - CHANGED_CELLS_SHOWN, "more row")} in orthology_evidence.tsv</p>`
+    : "";
+  return `<div class="card-title">Evidence rows (${formatInt(rows.length)})</div><ul class="changed-cells">${items}</ul>${more}`;
+}
+function decodeClusterSets(encoded, nGenomes, count = STORED_STATES) {
+  const sets = Array.from({length: count}, () => EMPTY_SET);
   if (!encoded) return sets;
   const bytes = decodeBase64(encoded);
   let pos = 0;
@@ -302,7 +634,7 @@ function decodeClusterSets(encoded, nGenomes) {
     }
     return idx;
   };
-  for (let state = 0; state < 3; state += 1) {
+  for (let state = 0; state < count; state += 1) {
     const mode = bytes[pos];
     pos += 1;
     if (mode === 0) {
@@ -326,7 +658,31 @@ function decodeClusterSets(encoded, nGenomes) {
   }
   return sets;
 }
+/* Drawing wants a set as matrix rows, sorted, so the visible band is a binary
+   search plus a walk over what is on screen. Walking genome indices instead
+   costs the whole set per column: a 50%-prevalence cluster at 10,000 genomes is
+   5,000 checks to paint the 700 rows in view. Rebuilt when the tree order
+   changes (rerooting moves every row). */
+let rowEpoch = 0;
+const rowSets = new Map();
+function clusterRowSets(clusterIdx) {
+  const cached = rowSets.get(clusterIdx);
+  if (cached && cached.epoch === rowEpoch) return cached.rows;
+  const rows = clusterSets(clusterIdx).map(set => {
+    if (set.kind === "all") return null;
+    const out = new Int32Array(set.idx.length);
+    let n = 0;
+    for (let i = 0; i < set.idx.length; i += 1) {
+      const row = rowOfGenome[set.idx[i]];
+      if (row >= 0) out[n++] = row;
+    }
+    return out.subarray(0, n).sort();
+  });
+  rowSets.set(clusterIdx, {epoch: rowEpoch, rows});
+  return rows;
+}
 function buildRowOfGenome() {
+  rowEpoch += 1;
   rowOfGenome = new Int32Array(data.genomes.length).fill(-1);
   for (let row = 0; row < leafOrder.length; row += 1) {
     const genomeIdx = leafOrder[row];
@@ -366,7 +722,7 @@ function setContains(set, value) {
 function stateAt(clusterIdx, genomeIdx) {
   const sets = clusterSets(clusterIdx);
   // Later states win, matching the writer's ordering.
-  for (let state = 2; state >= 0; state -= 1) {
+  for (let state = STORED_STATES - 1; state >= 0; state -= 1) {
     if (setContains(sets[state], genomeIdx)) return STATE_CODES[state];
   }
   return "A";
@@ -378,9 +734,10 @@ function countsForCluster(clusterIdx) {
     P: setSize(sets[0], n),
     R: setSize(sets[1], n),
     N: setSize(sets[2], n),
+    K: setSize(sets[3], n),
     A: 0,
   };
-  counts.A = Math.max(0, n - counts.P - counts.R - counts.N);
+  counts.A = Math.max(0, n - counts.P - counts.R - counts.N - counts.K);
   return counts;
 }
 function passesActiveFilters(idx, includeMechanism = true) {
@@ -474,9 +831,10 @@ function computeGenomeStats() {
   // Totals come precomputed from the writer: deriving them here would mean
   // decoding every cluster before the first paint.
   genomeStats = data.genomes.map((_, gi) => {
-    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0];
-    return {P: totals[0], R: totals[1], N: totals[2], A: totals[3]};
+    const totals = (data.genomeStats && data.genomeStats[gi]) || [0, 0, 0, 0, 0];
+    return {P: totals[0], R: totals[1], N: totals[2], K: totals[3], A: totals[4]};
   });
+  anyKeptOut = genomeStats.some(s => s.K > 0);
   maxGenomeStats = genomeStats.reduce((acc, s) => ({
     R: Math.max(acc.R, s.R),
     N: Math.max(acc.N, s.N),
@@ -493,13 +851,16 @@ function gradientColor(value, maxValue, low, high) {
   const rgb = a.map((v, i) => Math.round(v + (b[i] - v) * t));
   return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
+function mechanismFamily(mechanism) {
+  return mechanismFamilies[mechanism] || "unresolved";
+}
+/** Canvas colour of a mechanism, read from the theme tokens. */
 function processColor(mechanism) {
-  if (processColors[mechanism]) return processColors[mechanism];
-  let hash = 0;
-  const text = mechanism || "unresolved_accessory_variation";
-  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  const hue = hash % 360;
-  return `hsl(${hue} 58% 43%)`;
+  return mechanismFamilyColors[mechanismFamily(mechanism)];
+}
+/** The same colour for markup, so it follows a theme change without a rebuild. */
+function processCss(mechanism) {
+  return `var(--mech-${mechanismFamily(mechanism)})`;
 }
 function processKind(cluster) {
   return (cluster && cluster.mechanism) || "unresolved_accessory_variation";
@@ -523,9 +884,55 @@ function lineageLabel(lineage) {
   const description = lineageDescriptions[lineage] || "";
   return description ? `${lineage} - ${description}` : lineage;
 }
+/* The cell legend says what the matrix is drawing now: the states this run
+   has in evidence mode, the mechanism families in view in mechanism mode. It
+   was static markup, so in mechanism mode green read as "rescued". */
+let cellLegendKey = "";
+function renderCellLegend() {
+  if (!cellLegend) return;
+  const byProcess = matrixColorMode.value === "process";
+  const key = byProcess ? `m|${visibleClusters.length}|${mechanismFilterKey()}` : `s|${anyKeptOut}|${data.nscEnabled}`;
+  if (key === cellLegendKey) return;
+  cellLegendKey = key;
+  const item = (cls, style, label, tip) =>
+    `<span class="key" data-tip="${escapeHtml(tip)}"><i class="sw ${cls}"${style ? ` style="${style}"` : ""}></i>${escapeHtml(label)}</span>`;
+  if (!byProcess) {
+    cellLegend.innerHTML = shownStates()
+      .map(state => item(state.toLowerCase(), "", shortLabels[state], stateDefinitions[state]))
+      .join("");
+    return;
+  }
+  const families = new Map();
+  for (const idx of visibleClusters) {
+    const family = mechanismFamily(processKind(data.clusters[idx]));
+    families.set(family, (families.get(family) || 0) + 1);
+  }
+  // Six families do not fit a pane header, so they share one key that opens
+  // the full, filterable list in the matrix menu.
+  const present = Object.keys(mechanismFamilyLabels).filter(family => families.has(family));
+  const tip = present
+    .map(family => `${mechanismFamilyLabels[family]}: ${plural(families.get(family), "cluster")}`)
+    .join("; ");
+  const stack = present.map(family => `<i class="sw" style="background:var(--mech-${family})"></i>`).join("");
+  const keys = [`<button type="button" class="key key-btn" data-open-mechanisms="1" data-tip="${escapeHtml(`Input cells take the colour of their cluster's mechanism family. ${tip}. Click for the list and filters.`)}"><span class="sw-stack">${stack}</span>mechanism</button>`];
+  keys.push(item("r", "", shortLabels.R, stateDefinitions.R));
+  if (anyKeptOut) keys.push(item("k", "", shortLabels.K, stateDefinitions.K));
+  cellLegend.innerHTML = keys.join("");
+}
 function renderLineageLegend() {
   if (!lineageLegend) return;
-  if (colorMode.value !== "lineage") {
+  const mode = colorMode.value;
+  if (mode === "rescue" || mode === "absence" || mode === "correction") {
+    // Burden modes are a ramp: say where it starts and what its top means.
+    const [, max, high, noun] = burdenOf(mode, {R: 0, N: 0, A: 0});
+    lineageLegend.style.display = "flex";
+    lineageLegend.innerHTML = `<span class="lineage-title">Tips coloured by ${escapeHtml(noun)} per genome</span>` +
+      `<span class="lineage-chip"><i class="ramp-zero"></i><small>0</small></span>` +
+      `<span class="burden-ramp" style="background:linear-gradient(90deg, ${burdenLow}, ${high})"></span>` +
+      `<span class="lineage-chip"><small>${formatInt(max)}</small></span>`;
+    return;
+  }
+  if (mode !== "lineage") {
     lineageLegend.innerHTML = "";
     lineageLegend.style.display = "none";
     return;
@@ -537,7 +944,7 @@ function renderLineageLegend() {
   });
   const items = lineageOrder
     .filter(lineage => counts.has(lineage))
-    .map(lineage => `<span class="lineage-chip"><i style="background:${lineageColor(lineage)}"></i><strong>${escapeHtml(lineage)}</strong><small>${counts.get(lineage)} tips</small></span>`)
+    .map(lineage => `<span class="lineage-chip"><i style="background:${lineageColor(lineage)}"></i><strong>${escapeHtml(lineage)}</strong><small>${plural(counts.get(lineage), "tip")}</small></span>`)
     .join("");
   lineageLegend.style.display = "flex";
   lineageLegend.innerHTML = `<span class="lineage-title">MTBC lineage colors</span>${items}`;
@@ -562,18 +969,25 @@ function renderProcessLegend() {
   if (!processLegend) return;
   const cluster = data.clusters[selected] || {};
   const selectedMechanism = processKind(cluster);
-  const filterLabel = mechanismFilters.size
-    ? `<button type="button" class="process-clear" data-clear-mechanism="1">Showing ${escapeHtml(mechanismFilterSummary())} (${visibleClusters.length} clusters). Clear filters</button>`
-    : `<span>Click mechanism cards to add/remove matrix-column filters.</span>`;
+  // A compact checklist: swatch, name and count, the description in the tip.
+  // The clear control sits first, so it is never scrolled out of view.
+  const head = mechanismFilters.size
+    ? `<div class="process-head"><span>${escapeHtml(mechanismFilterSummary())}: ${plural(visibleClusters.length, "cluster")}</span><button type="button" class="process-clear" data-clear-mechanism="1">Clear</button><button type="button" class="process-clear" data-download-visible="1">Download TSV</button></div>`
+    : `<div class="process-head"><span>Tick mechanisms to show only their clusters.</span><button type="button" class="process-clear" data-download-visible="1">Download TSV</button></div>`;
   const items = visibleProcessCounts().map(([mechanism, row]) => {
     const active = mechanism === selectedMechanism ? " active" : "";
-    const filtered = mechanismFilters.has(mechanism) ? " filtered" : "";
-    return `<button type="button" class="process-item${active}${filtered}" data-mechanism="${escapeHtml(mechanism)}"><span class="process-swatch" style="background:${processColor(mechanism)}"></span><div><strong>${escapeHtml(processLabel(mechanism))}</strong><small>${plural(row.clusters, "cluster")}; ${plural(row.present, "present cell")}. ${escapeHtml(processDescription(mechanism))}</small></div></button>`;
+    const on = mechanismFilters.has(mechanism);
+    return `<button type="button" class="process-item${active}${on ? " filtered" : ""}" role="menuitemcheckbox" aria-checked="${on}" data-mechanism="${escapeHtml(mechanism)}" data-tip="${escapeHtml(processDescription(mechanism))}"><span class="process-check" aria-hidden="true">${on ? "&#10003;" : ""}</span><span class="process-swatch" style="background:${processCss(mechanism)}"></span><span class="process-name">${escapeHtml(processLabel(mechanism))}</span><small class="num">${formatInt(row.clusters)}</small></button>`;
   }).join("");
-  processLegend.innerHTML = `<div class="process-selected"><span class="process-chip" style="--process-color:${processColor(selectedMechanism)}"><i></i>${escapeHtml(processLabel(selectedMechanism))}</span><span>${escapeHtml(processDescription(selectedMechanism))}</span>${filterLabel}</div><div class="process-list">${items}</div>`;
+  processLegend.innerHTML = `${head}<div class="process-list">${items}</div>`;
 }
 function tipStyle(genomeIdx) {
   const mode = colorMode.value;
+  // A figure has no selected cluster, so tips coloured by one would mean
+  // something the figure cannot show.
+  if (drawingFigure && (mode === "cluster" || mode === "process")) {
+    return {fill: labelInk, stroke: labelInk, title: ""};
+  }
   if (mode === "cluster") {
     const state = stateAt(selected, genomeIdx);
     return {fill: colors[state], stroke: strokes[state], title: labels[state]};
@@ -583,9 +997,15 @@ function tipStyle(genomeIdx) {
     const state = stateAt(selected, genomeIdx);
     const mechanism = processKind(cluster);
     const color = processColor(mechanism);
-    return state === "A"
-      ? {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)} absent`}
-      : {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
+    if (state === "A") return {fill: colors.A, stroke: strokes.A, title: `${processLabel(mechanism)}; absent`};
+    if (state === "R" || state === "K") return {fill: colors[state], stroke: strokes[state], title: `${processLabel(mechanism)}; ${labels[state]}`};
+    return {fill: color, stroke: color, title: `${processLabel(mechanism)}; ${labels[state]}`};
+  }
+  if (mode === "qc") {
+    const qc = genomeQc(genomeIdx);
+    const status = qc ? qc.status : "";
+    const fill = status === "fail" ? qcColors.fail : status === "review" ? qcColors.review : status === "pass" ? qcColors.pass : colors.A;
+    return {fill, stroke: status ? fill : strokes.A, title: status ? `QC ${status}${qc.flags ? `: ${qc.flags.replace(/;/g, "; ")}` : ""}` : "no QC row"};
   }
   if (mode === "lineage") {
     const genome = data.genomes[genomeIdx] || "";
@@ -594,35 +1014,44 @@ function tipStyle(genomeIdx) {
     return {fill: color, stroke: color, title: lineageLabel(lineage)};
   }
   const stats = genomeStats[genomeIdx] || {R:0, N:0, A:0};
-  if (mode === "rescue") {
-    return {fill: gradientColor(stats.R, maxGenomeStats.R, "#e0f2fe", "#0369a1"), stroke: "#0369a1", title: `rescued cells ${stats.R}`};
-  }
-  if (mode === "absence") {
-    return {fill: gradientColor(stats.A, maxGenomeStats.A, "#f8fafc", "#b42318"), stroke: "#b42318", title: `absent cells ${stats.A}`};
-  }
-  const correction = stats.R + stats.N;
-  return {fill: gradientColor(correction, maxGenomeStats.correction, "#ecfdf3", "#067647"), stroke: "#067647", title: `corrected/NSC cells ${correction}`};
+  const [value, max, high, noun] = burdenOf(mode, stats);
+  // Zero is a hollow ring, so "none" never passes for a pale "some" in either
+  // theme, and the ramp runs from the line colour to the state's own colour.
+  if (!value) return {fill: panelBg, stroke: gridStroke, title: `${noun}: 0`};
+  return {fill: gradientColor(value, max, burdenLow, high), stroke: high, title: `${noun}: ${formatInt(value)}`};
+}
+/** The value a burden tip mode shows, its maximum, its colour and its name. */
+function burdenOf(mode, stats) {
+  if (mode === "rescue") return [stats.R, maxGenomeStats.R, colors.R, "corrected cells"];
+  if (mode === "absence") return [stats.A, maxGenomeStats.A, labelInk, "absent cells"];
+  return [stats.R + stats.N, maxGenomeStats.correction, colors.R, "corrected or NSC cells"];
 }
 function subtreeLineage(node) {
-  if (node._subtreeLineage !== undefined) return node._subtreeLineage;
-  if (!node.children || !node.children.length) {
-    node._subtreeLineage = lineageOfGenomeName(tipName(node));
-    return node._subtreeLineage;
-  }
-  const childLineages = (node.children || []).map(subtreeLineage);
-  const first = childLineages[0] || "unknown";
-  node._subtreeLineage = childLineages.every(lineage => lineage === first) ? first : "mixed";
-  return node._subtreeLineage;
+  return node._lineage || "unknown";
 }
-function treeEdgeStyle(child) {
-  if (colorMode.value !== "lineage") return "";
-  const lineage = subtreeLineage(child);
-  if (!lineage || lineage === "mixed") return "";
-  return ` style="stroke:${lineageColor(lineage)};stroke-width:1.35;stroke-opacity:.82"`;
+/* Synteny sits in its own script element and is parsed the first time the panel
+   needs it; until then only the per-cluster block counts are in memory. */
+let syntenyStore = null;
+function syntenyBlocksFor(cluster) {
+  if (!cluster) return [];
+  if (!syntenyStore) {
+    const element = document.getElementById("syntenyData");
+    try {
+      syntenyStore = element ? JSON.parse(element.textContent) : {};
+    } catch (error) {
+      syntenyStore = {};
+      status.textContent = `Synteny data could not be read: ${error.message}`;
+    }
+    if (element) element.remove();
+  }
+  return syntenyStore[cluster.name] || [];
+}
+function syntenyBlockCount(clusterIdx) {
+  return data.syntenyCounts ? (data.syntenyCounts[clusterIdx] || 0) : 0;
 }
 function selectedSyntenyBlockData() {
   const cluster = data.clusters[selected];
-  const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+  const blocks = syntenyBlocksFor(cluster);
   if (!blocks.length) return null;
   selectedSyntenyBlock = Math.max(0, Math.min(selectedSyntenyBlock, blocks.length - 1));
   return blocks[selectedSyntenyBlock] || null;
@@ -643,49 +1072,75 @@ function isSelectedSyntenyCarrier(genomeIdx) {
   return selectedSyntenyCarriers.has(genomeIdx);
 }
 function syntenyCarrierIndices(block) {
-  if (Array.isArray(block.genomes)) return block.genomes;
-  const bits = String(block.genomeBits || "");
-  const out = [];
-  for (let i = 0; i < bits.length; i += 1) {
-    const value = parseInt(bits[i], 16);
-    if (!Number.isFinite(value)) continue;
-    for (let bit = 0; bit < 4; bit += 1) {
-      if (value & (1 << bit)) out.push(i * 4 + bit);
+  if (block._carriers) return block._carriers;
+  const n = data.genomes.length;
+  const set = decodeClusterSets(block.carriers || "", n, 1)[0];
+  let out;
+  if (set.kind === "all") out = Array.from({length: n}, (_, g) => g);
+  else if (set.kind === "complement") {
+    const skip = new Set(set.idx);
+    out = [];
+    for (let g = 0; g < n; g += 1) if (!skip.has(g)) out.push(g);
+  } else out = Array.from(set.idx || []);
+  block._carriers = out;
+  return out;
+}
+/* ---- Tree walks ------------------------------------------------------------
+   Every walk uses an explicit stack. A ladder-shaped tree of 10,000 tips is
+   10,000 levels deep, and the recursive versions threw RangeError past about
+   2,500 levels, which left the whole workspace blank. */
+function copyNode(node) {
+  return {label: node.label || "", genome: node.genome, length: Number(node.length || 0), children: []};
+}
+function cloneNode(node) {
+  const root = copyNode(node);
+  const stack = [[node, root]];
+  while (stack.length) {
+    const [source, target] = stack.pop();
+    for (const child of source.children || []) {
+      const copy = copyNode(child);
+      target.children.push(copy);
+      stack.push([child, copy]);
     }
+  }
+  return root;
+}
+/** Nodes with every parent before its children, leaves left to right. */
+function preorder(root) {
+  const out = [];
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    out.push(node);
+    const children = node.children || [];
+    for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
   }
   return out;
 }
-function cloneNode(node) {
-  return {
-    label: node.label || "",
-    genome: node.genome,
-    length: Number(node.length || 0),
-    children: (node.children || []).map(cloneNode),
-  };
+function isLeaf(node) {
+  return !node.children || !node.children.length;
+}
+function hasGenome(node) {
+  return node.genome !== null && node.genome !== undefined;
 }
 function tipName(node) {
-  return node.genome === null || node.genome === undefined
+  return !hasGenome(node)
     ? (node.label || "")
     : (data.genomes[node.genome] || node.label || "");
 }
 function isL8Tip(node) {
-  return (!node.children || !node.children.length) && /^L8[_-]/.test(tipName(node));
+  return isLeaf(node) && /^L8[_-]/.test(tipName(node));
 }
-function assignTreeIds(node, parent, nodes, edges) {
-  const id = nodes.length;
-  node._id = id;
-  node._parent = parent;
-  nodes.push(node);
-  (node.children || []).forEach(child => {
-    const childId = assignTreeIds(child, node, nodes, edges);
-    const length = Number(child.length || 0);
-    edges.push([id, childId, length]);
-  });
-  return id;
-}
-function collectL8Leaves(node, out) {
-  if (isL8Tip(node)) out.push(node);
-  (node.children || []).forEach(child => collectL8Leaves(child, out));
+function assignTreeIds(root, nodes, edges) {
+  root._parent = null;
+  for (const node of preorder(root)) {
+    node._id = nodes.length;
+    nodes.push(node);
+    for (const child of node.children || []) child._parent = node;
+  }
+  for (const node of nodes) {
+    for (const child of node.children || []) edges.push([node._id, child._id, Number(child.length || 0)]);
+  }
 }
 function commonAncestor(nodes) {
   if (!nodes.length) return null;
@@ -706,60 +1161,98 @@ function commonAncestor(nodes) {
   }
   return mrca;
 }
+function treeHasTip(root, test) {
+  return preorder(root).some(node => isLeaf(node) && test(node));
+}
+/* Drops leaves that carry no genome, which rerooting turned an unmatched or
+   unary branch into: such a tip drew a nameless row painted present in every
+   core column. Collapses one-child nodes into their child, summing the branch
+   lengths. Counts tips and marks L8 subtrees once per node, so sorting the
+   children costs nothing more. */
+function tidyTree(root, sortBy) {
+  const order = preorder(root);
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const node = order[i];
+    const kept = [];
+    for (let child of node.children || []) {
+      if (isLeaf(child) && !hasGenome(child)) continue;
+      while (child.children.length === 1) {
+        const only = child.children[0];
+        only.length = Number(only.length || 0) + Number(child.length || 0);
+        child = only;
+      }
+      kept.push(child);
+    }
+    node.children = kept;
+    node._tips = kept.length ? kept.reduce((sum, child) => sum + child._tips, 0) : (hasGenome(node) ? 1 : 0);
+    node._l8 = kept.length ? kept.some(child => child._l8) : isL8Tip(node);
+    if (sortBy === "l8") kept.sort((x, y) => Number(y._l8) - Number(x._l8) || y._tips - x._tips);
+    else if (sortBy === "tips") kept.sort((x, y) => y._tips - x._tips);
+  }
+  let top = root;
+  while (top.children.length === 1) top = top.children[0];
+  top.length = 0;
+  return top;
+}
 function rootByL8(node) {
   const root = cloneNode(node);
   const nodes = [];
-  const edges = [];
-  assignTreeIds(root, null, nodes, edges);
-  const leaves = [];
-  collectL8Leaves(root, leaves);
+  assignTreeIds(root, nodes, []);
+  const leaves = nodes.filter(isL8Tip);
   if (!leaves.length) return root;
   const rootNode = leaves.length === 1 && leaves[0]._parent ? leaves[0]._parent : commonAncestor(leaves);
-  const adj = nodes.map(() => []);
-  edges.forEach(([a, b, length]) => {
-    adj[a].push({id:b, length});
-    adj[b].push({id:a, length});
-  });
-  function build(id, parentId, length) {
-    const source = nodes[id];
-    const children = adj[id]
-      .filter(edge => edge.id !== parentId)
-      .map(edge => build(edge.id, id, edge.length));
-    children.sort((a, b) => Number(hasL8Tip(b)) - Number(hasL8Tip(a)) || countTips(b) - countTips(a));
-    return {label: source.label || "", genome: source.genome, length, children};
+  const {adj} = graphOf(nodes);
+  return buildFrom(nodes, adj, rootNode ? rootNode._id : root._id, null, 0);
+}
+function findLeafByGenome(_node, genomeIdx) {
+  return leafByGenome.get(genomeIdx) || null;
+}
+/* Depth and distance on the way down; rows, row spans and the lineage of each
+   subtree on the way up. One pass each, whatever the shape of the tree. */
+function layoutTree(root) {
+  leafOrder = [];
+  leafByGenome = new Map();
+  maxDepth = 0;
+  maxDistance = 0;
+  const order = preorder(root);
+  root.depth = 0;
+  root.distance = 0;
+  for (const node of order) {
+    if (node.depth > maxDepth) maxDepth = node.depth;
+    if (node.distance > maxDistance) maxDistance = node.distance;
+    if (isLeaf(node)) {
+      node.row = leafOrder.length;
+      leafOrder.push(node.genome);
+      leafByGenome.set(node.genome, node);
+      continue;
+    }
+    for (const child of node.children) {
+      child.depth = node.depth + 1;
+      child.distance = node.distance + Number(child.length || 0);
+    }
   }
-  return build(rootNode ? rootNode._id : root._id, null, 0);
-}
-function hasL8Tip(node) {
-  return isL8Tip(node) || (node.children || []).some(hasL8Tip);
-}
-function countTips(node) {
-  if (!node.children || !node.children.length) return 1;
-  return node.children.reduce((sum, child) => sum + countTips(child), 0);
-}
-function findLeafByGenome(node, genomeIdx) {
-  if ((!node.children || !node.children.length) && node.genome === genomeIdx) return node;
-  for (const child of node.children || []) {
-    const found = findLeafByGenome(child, genomeIdx);
-    if (found) return found;
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const node = order[i];
+    if (isLeaf(node)) {
+      node._span = {first: node.row, last: node.row};
+      node._lineage = lineageOfGenomeName(tipName(node));
+      continue;
+    }
+    let sum = 0;
+    let first = Infinity;
+    let last = -Infinity;
+    const lineage = node.children[0]._lineage;
+    let same = true;
+    for (const child of node.children) {
+      sum += child.row;
+      if (child._span.first < first) first = child._span.first;
+      if (child._span.last > last) last = child._span.last;
+      if (child._lineage !== lineage) same = false;
+    }
+    node.row = sum / node.children.length;
+    node._span = {first, last};
+    node._lineage = same ? lineage : "mixed";
   }
-  return null;
-}
-function layout(node, depth, distance = 0) {
-  node.depth = depth;
-  node.distance = distance;
-  maxDepth = Math.max(maxDepth, depth);
-  maxDistance = Math.max(maxDistance, distance);
-  if (!node.children || node.children.length === 0) {
-    node.row = leafOrder.length;
-    leafOrder.push(node.genome);
-    return node.row;
-  }
-  let sum = 0;
-  let count = 0;
-  node.children.forEach(child => { sum += layout(child, depth + 1, distance + Number(child.length || 0)); count += 1; });
-  node.row = count ? sum / count : leafOrder.length;
-  return node.row;
 }
 /* Keeps the selection inside the visible set and repaints the find field. This
    used to build one <option> per cluster on every keystroke, which at 30,000
@@ -785,8 +1278,8 @@ function populateOptions() {
   if (clusterPosition) {
     const at = visibleClusters.indexOf(selected);
     clusterPosition.textContent = at < 0
-      ? `0 / ${visibleClusters.length}`
-      : `${at + 1} / ${visibleClusters.length}`;
+      ? `0 / ${formatInt(visibleClusters.length)}`
+      : `${formatInt(at + 1)} / ${formatInt(visibleClusters.length)}`;
   }
   if (omnibox) {
     omnibox.setAttribute(
@@ -816,20 +1309,29 @@ function stepCluster(delta) {
   populateOptions();
   render(true);
 }
+/* The zoom sliders hold the logarithm of the zoom, so every step of the slider
+   or notch of the wheel is the same ratio: 0.25 to 0.31 feels like 40 to 50. */
+function readZoom(control, min, max) {
+  const value = Math.exp(Number(control.value));
+  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : 8;
+}
+function writeZoom(control, value, min, max) {
+  control.value = String(Math.log(Math.max(min, Math.min(max, value))));
+}
 function currentCellSize() {
-  const value = Number(sizeControl.value || 8);
-  return Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, value));
+  return readZoom(sizeControl, MIN_COL_ZOOM, MAX_COL_ZOOM);
 }
 function currentRowHeight() {
-  const value = Number(rowHeightControl.value || 8);
-  return Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, value));
+  return readZoom(rowHeightControl, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
 }
 function clusterLabel(cluster) {
   return cluster.annotation ? `${cluster.name} - ${cluster.annotation}` : cluster.name;
 }
 /** Horizontal room the branches actually get, once labels are accounted for. */
 function treeUsableWidth() {
-  const labelPad = labelToggle.checked && leafOrder.length <= 1500 ? 150 : 24;
+  // Reserve room exactly when names are drawn (see renderTree), whatever the
+  // tip count, or a zoomed-in large tree truncates every name to "L4…".
+  const labelPad = labelToggle.checked && cellH >= TIP_LABEL_MIN_ROW ? 150 : 24;
   return Math.max(80, treeWidth - 22 - labelPad);
 }
 function xForNode(node) {
@@ -843,42 +1345,6 @@ function xForNode(node) {
   }
   return 14 + node.depth * (usable / Math.max(1, maxDepth));
 }
-function drawNode(node, parts) {
-  const x = xForNode(node);
-  const y = node.row * cellH + cellH / 2;
-  if (node.children && node.children.length) {
-    node.children.forEach(child => {
-      const cx = xForNode(child);
-      const cy = child.row * cellH + cellH / 2;
-      const branchTitle = treeMode === "phylogram" ? `<title>branch length ${formatBranchLength(child.length)}</title>` : "";
-      const edgeStyle = treeEdgeStyle(child);
-      parts.push(`<line x1="${x}" y1="${cy}" x2="${cx}" y2="${cy}" class="tree-edge"${edgeStyle}>${branchTitle}</line>`);
-      parts.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${cy}" class="tree-edge"${edgeStyle}/>`);
-      drawNode(child, parts);
-    });
-  } else {
-    const style = tipStyle(node.genome);
-    const label = data.genomes[node.genome] || node.label || "";
-    const radius = Math.max(0.18, Math.min(5, cellH / 2 - 0.08));
-    const strokeWidth = Math.max(0.2, Math.min(1.2, cellH * 0.45));
-    parts.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="${style.fill}" stroke="${style.stroke}" stroke-width="${strokeWidth}"><title>${escapeHtml(label)}: ${escapeHtml(style.title)}</title></circle>`);
-    if (highlightedRows.has(node.row)) {
-    treeCtx.strokeStyle = "#0ea5e9";
-    treeCtx.lineWidth = 1.6;
-    treeCtx.beginPath();
-    treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
-    treeCtx.stroke();
-  }
-  if (isSelectedSyntenyCarrier(node.genome)) {
-      const ringRadius = radius + Math.max(1.2, Math.min(3, cellH * 0.30));
-      const ringTitle = selectedSyntenyReference ? "selected H37Rv reference context" : `selected synteny #${selectedSyntenyBlock + 1}`;
-      parts.push(`<circle cx="${x}" cy="${y}" r="${ringRadius}" class="synteny-tip-ring"><title>${escapeHtml(label)}: ${escapeHtml(ringTitle)}</title></circle>`);
-    }
-    if (labelToggle.checked && leafOrder.length <= 1500 && cellH >= 4) {
-      parts.push(`<text x="${x + 9}" y="${y + 3}" class="tip-label">${escapeHtml(label)}</text>`);
-    }
-  }
-}
 function formatBranchLength(value) {
   const n = Number(value || 0);
   if (!Number.isFinite(n)) return "0";
@@ -886,11 +1352,42 @@ function formatBranchLength(value) {
   if (Math.abs(n) < 0.001) return n.toExponential(2);
   return n.toPrecision(4);
 }
+/* One number format for the whole page, matching the Rust side: integers
+   grouped with commas whatever the reader's locale, coordinates never grouped.
+   A Spanish locale printed 12.715 for a coordinate next to 0.005 subs/site. */
+function formatInt(value) {
+  return Number(value).toLocaleString("en-US");
+}
+/** A share that never rounds a real count to 0% or 100%. */
+function formatPct(value, total) {
+  if (!total) return "0%";
+  const pct = value / total * 100;
+  if (value > 0 && pct < 0.1) return "<0.1%";
+  if (value < total && pct > 99.9) return ">99.9%";
+  return `${pct.toFixed(1)}%`;
+}
 function plural(count, noun) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return `${formatInt(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+}
+/** Cut from the middle, keeping both ends: contig names differ at the end. */
+function clipMiddle(text, maxLen) {
+  const value = String(text || "");
+  if (value.length <= maxLen) return value;
+  const keep = Math.max(2, maxLen - 1);
+  const head = Math.ceil(keep / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - (keep - head))}`;
+}
+/** A gene in no cluster: Panaroo writes NA for it. */
+function isUnclustered(gene) {
+  return !gene.gap && (!gene.cluster || gene.cluster === "NA");
+}
+function referenceContextName() {
+  return data.referenceGenome && data.referenceGenome.name
+    ? `${data.referenceGenome.name} context`
+    : "Reference context";
 }
 function clipText(text, maxLen) {
   const value = String(text || "");
@@ -969,10 +1466,11 @@ function referenceGenesForBlock(block, clusterName) {
   if (Array.isArray(block.referenceGenes) && block.referenceGenes.length) {
     return block.referenceGenes.map(gene => normalizeSyntenyGene(gene, clusterName, true));
   }
-  return [{name:"__GAP__", cluster:"__GAP__", geneId:"H37Rv context not resolved", strand:".", contig:"", start:"", end:"", length:"", target:false, reference:true, gap:true}];
+  return [{name:"__GAP__", cluster:"__GAP__", geneId:"reference context not resolved", strand:".", contig:"", start:"", end:"", length:"", target:false, reference:true, gap:true}];
 }
 function syntenyDisplayLabel(gene) {
-  if (gene.gap) return gene.geneId || "H37Rv gap";
+  if (gene.gap) return gene.geneId || "context gap";
+  if (isUnclustered(gene)) return "unclustered";
   const direct = gene.geneId ? displayReferenceLocus(gene.geneId) : "";
   if (direct && /^Rv\d{4}c?$/.test(direct)) return direct;
   if (gene.reference && direct) return direct;
@@ -1101,14 +1599,14 @@ function niceScaleBp(raw) {
   return step * magnitude;
 }
 function formatBp(bp) {
-  if (bp >= 1000) return `${(bp / 1000).toLocaleString(undefined, {maximumFractionDigits: 1})} kb`;
+  if (bp >= 1000) return `${(bp / 1000).toFixed(1).replace(/\.0$/, "")} kb`;
   return `${Math.round(bp)} bp`;
 }
 function renderSyntenyPanel() {
   if (syntenyHidden) return;
   if (!syntenyPanel || !syntenySvg || !syntenySummary) return;
   const cluster = data.clusters[selected];
-  const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+  const blocks = syntenyBlocksFor(cluster);
   updateSelectedSyntenyCarriers(blocks);
   const scrollContainer = syntenyPanel.querySelector(".synteny-scroll") || syntenyPanel;
   const paneWidth = Math.max(360, scrollContainer.clientWidth || syntenyPanel.clientWidth || 600);
@@ -1197,7 +1695,11 @@ function renderSyntenyPanel() {
     ? " Reference row inferred from shared neighbours."
     : "";
   const pxPerBp = syntenyPxPerBp(lengthScale);
-  syntenySummary.textContent = `${cluster.name}: ${blocks.length} unique 5-neighbour block${blocks.length === 1 ? "" : "s"}; selected ${selectedLabel} marks ${selectedCount} tip${selectedCount === 1 ? "" : "s"}.${referenceSummary}`;
+  // Blocks come from annotated loci, so a corrected cell (a gene the input's
+  // annotation missed) has no block of its own: say so where the count is.
+  const corrected = countsForCluster(selected).R;
+  const correctedNote = corrected ? ` ${plural(corrected, "corrected genome")} ${corrected === 1 ? "has" : "have"} no annotated locus and no block; click their cells for the locus.` : "";
+  syntenySummary.textContent = `${cluster.name}: ${plural(blocks.length, "unique 5-neighbour block")}; selected ${selectedLabel} marks ${plural(selectedCount, "tip")}.${referenceSummary}${correctedNote}`;
 
   // Collect per-row positions BEFORE drawing so we can draw connection lines on
   // a single layer that sits above row backgrounds but below the arrows.
@@ -1276,7 +1778,7 @@ function renderSyntenyPanel() {
     // Meta column
     if (row.kind === "reference") {
       parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 18}" class="synteny-rank">REF</text>`);
-      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">H37Rv context</text>`);
+      parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">${escapeHtml(clipText(referenceContextName(), 26))}</text>`);
       parts.push(
         `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub">inferred from shared neighbours</text>`
       );
@@ -1287,19 +1789,25 @@ function renderSyntenyPanel() {
       const fraction = block.fraction === null || block.fraction === undefined || block.fraction === "NA"
         ? ""
         : ` · ${Math.round(Number(block.fraction) * 100)}%`;
+      // The share is of genomes with an annotated locus, not of every carrier:
+      // say so, or 7 of 9 printed as 78% next to a card that says 100%.
+      const frac = Number(block.fraction);
+      const annotated = frac > 0 && Number(block.nGenomes) > 0 ? Math.round(Number(block.nGenomes) / frac) : null;
       parts.push(
-        `<text x="${PADDING_X + 12 + 26}" y="${rowY + 18}" class="synteny-meta-rank-sub">n=${block.nGenomes ?? "?"}${fraction}</text>`
+        `<text x="${PADDING_X + 12 + 26}" y="${rowY + 18}" class="synteny-meta-rank-sub">n=${block.nGenomes ?? "?"}${annotated ? ` of ${annotated} annotated` : fraction}</text>`
       );
       const titleText = block.representativeGenome
         ? `${block.representativeGenome}`
         : (firstExampleLocus(block) || cluster.name);
       parts.push(`<text x="${PADDING_X + 12}" y="${rowY + 36}" class="synteny-meta-title">${escapeHtml(clipText(titleText, 22))}</text>`);
-      const coordText = block.representativeContig && block.representativeStart && block.representativeEnd
-        ? `${block.representativeContig}:${formatCoord(block.representativeStart)}-${formatCoord(block.representativeEnd)}`
-        : firstExampleLocus(block) || "";
-      const lenSuffix = block.representativeLength ? ` · ${block.representativeLength} bp` : "";
+      // Coordinates are never cut; a long contig name gives way in the middle.
+      let coordText = firstExampleLocus(block) || "";
+      if (block.representativeContig && block.representativeStart && block.representativeEnd) {
+        const span = `:${formatCoord(block.representativeStart)}-${formatCoord(block.representativeEnd)}`;
+        coordText = `${clipMiddle(block.representativeContig, Math.max(6, 30 - span.length))}${span}`;
+      }
       parts.push(
-        `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub">${escapeHtml(clipText(coordText + lenSuffix, 30))}</text>`
+        `<text x="${PADDING_X + 12}" y="${rowY + 52}" class="synteny-meta-sub"><title>${escapeHtml(`${block.representativeContig || ""}:${block.representativeStart || ""}-${block.representativeEnd || ""}${block.representativeLength ? ` (${block.representativeLength} bp)` : ""}`)}</title>${escapeHtml(coordText)}</text>`
       );
       const interp = (block.interpretation || "").replace(/_/g, " ");
       const selectedTag = isSelected ? "selected" : (interp || "click to mark tips");
@@ -1323,18 +1831,23 @@ function renderSyntenyPanel() {
       else cls.push("synteny-neighbor");
       const label = syntenyDisplayLabel(gene);
       const coord = syntenyCoordLabel(gene);
-      const title = [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
+      const title = isUnclustered(gene)
+        ? ["Unclustered: this gene is in no cluster of the input matrix", gene.geneId, coord].filter(Boolean).join(" | ")
+        : [syntenyGeneLabel(gene.cluster || gene.name), gene.geneId, coord].filter(Boolean).join(" | ");
       const geneAttrs = gene.gap || !gene.cluster || gene.cluster === "NA"
         ? ""
         : ` data-gene-cluster="${escapeHtml(gene.cluster)}"`;
       parts.push(
         `<path d="${arrowPath(x, baseY, geneW, GENE_H, gene.strand)}" class="${cls.join(" ")}"${geneAttrs}><title>${escapeHtml(title)}</title></path>`
       );
-      const labelClass = gene.target ? "synteny-target-label" : "synteny-arrow-label";
+      const labelClass = gene.target
+        ? "synteny-target-label"
+        : isUnclustered(gene) ? "synteny-arrow-label synteny-unclustered" : "synteny-arrow-label";
       parts.push(
         `<text x="${x + geneW / 2}" y="${baseY + 14}" text-anchor="middle" class="${labelClass}">${escapeHtml(clipText(label, 11))}</text>`
       );
-      const subLabel = clipText(syntenySecondaryLabel(gene), 12);
+      // Narrow arrows keep only the name; the annotation is in the title.
+      const subLabel = geneW >= 90 && !isUnclustered(gene) ? clipText(syntenySecondaryLabel(gene), 12) : "";
       if (subLabel) {
         parts.push(
           `<text x="${x + geneW / 2}" y="${baseY + GENE_H + 12}" text-anchor="middle" class="synteny-sub-label">${escapeHtml(subLabel)}</text>`
@@ -1374,7 +1887,7 @@ function renderSyntenyPanel() {
 function formatCoord(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  return n.toLocaleString();
+  return String(Math.round(n));
 }
 function loadLayout() {
   try {
@@ -1421,7 +1934,9 @@ function applyLayout() {
   const measured = bodyW >= MIN_TREE_W + MIN_MATRIX_W;
   let treeW = layoutState.treeW;
   let inspectorW = layoutState.inspectorW;
-  const inspectorShown = !!inspectorPane && getComputedStyle(inspectorPane).display !== "none";
+  // A bottom sheet (narrow windows) floats over the workspace and takes no width.
+  const inspectorStyle = inspectorPane ? getComputedStyle(inspectorPane) : null;
+  const inspectorShown = !!inspectorStyle && inspectorStyle.display !== "none" && inspectorStyle.position !== "fixed";
   if (measured) {
     // The matrix keeps its floor; the tree and the inspector give way first.
     const used = treeW + (inspectorShown ? inspectorW : 0) + 12;
@@ -1573,7 +2088,16 @@ function setupDragHandle(handle, side) {
   });
 }
 function treeCaption() {
-  const rootLabel = hasL8Tip(treeRoot) ? "L8-rooted" : "input-rooted";
+  // Read the mode, not the tips: an L8 tip in the tree said "L8-rooted" under
+  // every root.
+  const mode = rootMode ? rootMode.value : defaultRootMode;
+  const rootLabel = mode === "l8"
+    ? "L8-rooted"
+    : mode === "midpoint"
+      ? "midpoint-rooted"
+      : mode.startsWith("genome:")
+        ? `rooted on ${data.genomes[Number(mode.slice(7))] || "a genome"}`
+        : "rooted as supplied";
   return treeMode === "phylogram" && maxDistance > 0
     ? `phylogram, ${rootLabel}, longest root-to-tip path ${formatBranchLength(maxDistance)}`
     : `cladogram, ${rootLabel}, branch lengths ignored`;
@@ -1582,15 +2106,24 @@ function updateTopBarMeta() {
   if (topTreeMeta) {
     // Short in the header, full text on hover: the caption is the first thing
     // that should give way when the pane narrows.
-    topTreeMeta.textContent = `${leafOrder.length} tips`;
-    topTreeMeta.setAttribute("data-tip", `${leafOrder.length} matched tips · ${treeCaption()}`);
+    // Matrix genomes the tree does not have are not drawn; say so instead of
+    // letting "10 genomes" in the top bar and 4 rows on screen disagree.
+    const offTree = offTreeGenomes;
+    topTreeMeta.textContent = offTree.length
+      ? `${plural(leafOrder.length, "tip")} · ${formatInt(offTree.length)} not on the tree`
+      : plural(leafOrder.length, "tip");
+    topTreeMeta.classList.toggle("warn", offTree.length > 0);
+    const missing = offTree.length
+      ? ` · not on the tree, so not drawn: ${offTree.slice(0, 20).join(", ")}${offTree.length > 20 ? `, and ${formatInt(offTree.length - 20)} more` : ""}`
+      : "";
+    topTreeMeta.setAttribute("data-tip", `${plural(leafOrder.length, "matched tip")} · ${treeCaption()}${missing}`);
   }
-  if (topMatrixMeta) topMatrixMeta.textContent = `${visibleClusters.length} / ${data.clusters.length} clusters`;
+  if (topMatrixMeta) topMatrixMeta.textContent = `${formatInt(visibleClusters.length)} / ${plural(data.clusters.length, "cluster")}`;
   if (topSyntenyMeta) {
     const cluster = data.clusters[selected];
-    const blocks = cluster && data.synteny ? (data.synteny[cluster.name] || []) : [];
+    const count = syntenyBlockCount(selected);
     topSyntenyMeta.textContent = cluster
-      ? (blocks.length ? `${cluster.name} – ${blocks.length} unique block${blocks.length === 1 ? "" : "s"}` : `${cluster.name} – no synteny data`)
+      ? (count ? `${cluster.name} – ${plural(count, "unique block")}` : `${cluster.name} – no synteny data`)
       : "select a cluster";
   }
 }
@@ -1615,6 +2148,11 @@ function referenceMechanismRow(cluster) {
     const spelled = labels[refState] || refState;
     bits.push(`State in reference: <strong>${escapeHtml(spelled)}</strong>`);
   }
+  if (!bits.length && !data.referenceGenome) {
+    // Without --reference-genome nothing was looked up, so "no equivalent
+    // detected" claimed a search that never ran.
+    return `<dt>Reference (audit)</dt><dd class="muted">No reference genome supplied (--reference-genome).</dd>`;
+  }
   if (!bits.length) {
     const mechanism = processKind(cluster);
     const text = mechanism === "clean_insertion_or_acquisition_candidate"
@@ -1634,10 +2172,16 @@ function canvasScale(cssW, cssH) {
   return Math.max(1, Math.min(dpr, byDim, byArea));
 }
 function sizeCanvas(target, context, cssW, cssH, scale) {
-  target.width = Math.max(1, Math.round(cssW * scale));
-  target.height = Math.max(1, Math.round(cssH * scale));
-  target.style.width = `${cssW}px`;
-  target.style.height = `${cssH}px`;
+  const w = Math.max(1, Math.round(cssW * scale));
+  const h = Math.max(1, Math.round(cssH * scale));
+  // Reallocating a canvas on every frame cost a layout and a fresh bitmap;
+  // only do it when the size actually changed.
+  if (target.width !== w || target.height !== h) {
+    target.width = w;
+    target.height = h;
+    target.style.width = `${cssW}px`;
+    target.style.height = `${cssH}px`;
+  }
   context.setTransform(scale, 0, 0, scale, 0, 0);
 }
 
@@ -1661,13 +2205,17 @@ function updateCellGeometry() {
     matrixSpacer.style.width = `${virtualW}px`;
     matrixSpacer.style.height = `${virtualH}px`;
   }
+  // The followers get some slack: their viewports differ from the matrix's by
+  // a scrollbar or a strip, and without it the tree stopped a few pixels short
+  // of the matrix's last row. They draw from the matrix's scroll position, so
+  // the slack is never seen.
   if (headerSpacer) {
-    headerSpacer.style.width = `${virtualW}px`;
+    headerSpacer.style.width = `${virtualW + 64}px`;
     headerSpacer.style.height = "1px";
   }
   if (treeSpacer) {
     treeSpacer.style.width = "1px";
-    treeSpacer.style.height = `${virtualH}px`;
+    treeSpacer.style.height = `${virtualH + 64}px`;
   }
   return {rows, cols};
 }
@@ -1696,6 +2244,219 @@ function viewportSize(element) {
   return {w: Math.max(1, element.clientWidth), h: Math.max(1, element.clientHeight)};
 }
 
+function inDensityMode(cw, ch) {
+  // A hair of slack: the opening fit lands exactly on the threshold, and a
+  // rounding error must not tip it into density.
+  return cw < DENSITY_BELOW_COL - 1e-6 || ch < DENSITY_BELOW_ROW - 1e-6;
+}
+function hexRgb(hex) {
+  const h = String(hex).trim();
+  if (h[0] !== "#" || h.length < 7) return [128, 128, 128];
+  return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+}
+/* The matrix as density, one device pixel at a time, written as ImageData at
+   (dx, dy) device pixels. Columns whose set covers every row (or every row but
+   a few) are added per pixel row in bulk, so the cost follows pixels plus set
+   entries, not cells: the whole 10,000 x 30,000 matrix in one pass. */
+function paintDensity(context, opts) {
+  const {firstCol, lastCol, firstRow, lastRow, left, top, cw, ch, dataW, dataH, scale, dx = 0, dy = 0} = opts;
+  const W = Math.max(1, Math.round(dataW * scale));
+  const H = Math.max(1, Math.round(dataH * scale));
+  const nPix = W * H;
+  const P = new Uint32Array(nPix);
+  const R = new Uint32Array(nPix);
+  const K = new Uint32Array(nPix);
+  const N = new Uint32Array(nPix);
+  const colsAt = new Uint32Array(W);
+  const bulk = new Int32Array(W);
+  // Each visible row covers [y0, y1) device rows.
+  const nRows = Math.max(0, lastRow - firstRow);
+  const y0s = new Int32Array(nRows);
+  const y1s = new Int32Array(nRows);
+  const rowsAt = new Uint32Array(H);
+  for (let i = 0; i < nRows; i += 1) {
+    const r = firstRow + i;
+    const a = Math.max(0, Math.min(H - 1, Math.floor((r * ch - top) * scale)));
+    const b = Math.max(a + 1, Math.min(H, Math.floor(((r + 1) * ch - top) * scale)));
+    y0s[i] = a;
+    y1s[i] = b;
+    for (let y = a; y < b; y += 1) rowsAt[y] += 1;
+  }
+  const addRow = (arr, x0, x1, r, sign) => {
+    const i = r - firstRow;
+    if (i < 0 || i >= nRows) return;
+    for (let y = y0s[i]; y < y1s[i]; y += 1) {
+      const base = y * W;
+      for (let x = x0; x < x1; x += 1) arr[base + x] += sign;
+    }
+  };
+  for (let c = firstCol; c < lastCol; c += 1) {
+    const clusterIdx = originalClusterAtVisibleColumn(c);
+    if (clusterIdx < 0) continue;
+    const x0 = Math.max(0, Math.min(W - 1, Math.floor((c * cw - left) * scale)));
+    const x1 = Math.max(x0 + 1, Math.min(W, Math.floor(((c + 1) * cw - left) * scale)));
+    for (let x = x0; x < x1; x += 1) colsAt[x] += 1;
+    const sets = clusterSets(clusterIdx);
+    const rowsets = clusterRowSets(clusterIdx);
+    const targets = [P, R, N, K];
+    for (let state = 0; state < 4; state += 1) {
+      const set = sets[state];
+      const rows = rowsets[state];
+      const arr = targets[state];
+      if (set.kind === "list") {
+        if (!rows || !rows.length) continue;
+        let i = lowerBound(rows, firstRow);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], 1);
+        continue;
+      }
+      // "all" or "complement": count the column in bulk, then take out the
+      // excluded rows. Only input presence is ever that dense.
+      if (arr !== P) {
+        for (let r = firstRow; r < lastRow; r += 1) addRow(arr, x0, x1, r, 1);
+        if (set.kind === "complement" && rows) {
+          let i = lowerBound(rows, firstRow);
+          for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+        }
+        continue;
+      }
+      for (let x = x0; x < x1; x += 1) bulk[x] += 1;
+      if (set.kind === "complement" && rows) {
+        let i = lowerBound(rows, firstRow);
+        for (; i < rows.length && rows[i] < lastRow; i += 1) addRow(arr, x0, x1, rows[i], -1);
+      }
+    }
+  }
+  const absent = hexRgb(colors.A);
+  const present = hexRgb(colors.P);
+  const nsc = hexRgb(colors.N);
+  const rescue = hexRgb(colors.R);
+  const kept = hexRgb(colors.K);
+  const panel = hexRgb(panelBg);
+  const image = context.createImageData(W, H);
+  const out = image.data;
+  for (let y = 0; y < H; y += 1) {
+    const rowsHere = rowsAt[y];
+    for (let x = 0; x < W; x += 1) {
+      const idx = y * W + x;
+      const cells = colsAt[x] * rowsHere;
+      let rgb = panel;
+      if (cells > 0) {
+        const p = Math.max(0, P[idx] + bulk[x] * rowsHere) / cells;
+        const n = N[idx] / cells;
+        const a = Math.max(0, 1 - p - n);
+        rgb = [0, 1, 2].map(k => absent[k] * a + present[k] * p + nsc[k] * n);
+        // Any finding in the pixel tints it, and the tint deepens with the
+        // finding's share: one corrected cell among 500 is a hint, a pixel
+        // where a twentieth of the cells were corrected is full colour.
+        const finding = R[idx] ? rescue : K[idx] ? kept : null;
+        if (finding) {
+          const share = (R[idx] || K[idx]) / cells;
+          const w = 0.3 + 0.7 * Math.min(1, share / 0.05);
+          rgb = [0, 1, 2].map(k => rgb[k] * (1 - w) + finding[k] * w);
+        }
+      }
+      const o = idx * 4;
+      out[o] = rgb[0];
+      out[o + 1] = rgb[1];
+      out[o + 2] = rgb[2];
+      out[o + 3] = 255;
+    }
+  }
+  context.putImageData(image, dx, dy);
+}
+/* Paints the cells of columns [firstCol, lastCol) and rows [firstRow, lastRow),
+   with the matrix origin at (left, top) and cw x ch cells. The screen and the
+   exported figure both draw through here, so they cannot disagree. */
+function paintCells(context, opts) {
+  const {firstCol, lastCol, firstRow, lastRow, left, top, cw, ch, dataW, dataH} = opts;
+  // Absent cells have their own fill, so the matrix has an edge and an empty
+  // run does not look like an empty pane.
+  context.fillStyle = colors.A;
+  context.fillRect(0, 0, dataW, dataH);
+  // Cells never shrink below a hairline, so a dense matrix stays legible instead
+  // of fading out when several clusters share a pixel column.
+  const drawW = Math.max(1, cw > 2 ? cw - 1 : cw);
+  const drawH = Math.max(1, ch > 2 ? ch - 1 : ch);
+  // A gutter exists only when drawH < ch. At exactly 2px rows there is none,
+  // and drawing row by row there was pure cost.
+  const gutterRows = drawH < ch;
+  const byProcess = matrixColorMode.value === "process";
+
+  // Runs of adjacent rows are one rect each; row gutters, when rows are tall
+  // enough to have them, are cut afterwards as one background line per visible
+  // row. Drawing every cell as its own rect cost 340,000 fillRect calls for a
+  // dense window at 3px rows; this is a few thousand.
+  const fillRows = (x, a, b) => {
+    context.fillRect(x, a * ch - top, drawW, (b - a) * ch);
+  };
+  const paintSet = (set, rows, x) => {
+    if (set.kind === "list") {
+      let i = lowerBound(rows, firstRow);
+      while (i < rows.length && rows[i] < lastRow) {
+        const from = rows[i];
+        let to = from + 1;
+        i += 1;
+        while (i < rows.length && rows[i] === to && to < lastRow) { to += 1; i += 1; }
+        fillRows(x, from, to);
+      }
+      return;
+    }
+    // "all" or "complement": paint the visible runs between excluded rows. No
+    // background punch-out, so a later state never erases an earlier one.
+    const excluded = set.kind === "all" ? null : rows;
+    const n = excluded ? excluded.length : 0;
+    let i = n ? lowerBound(excluded, firstRow) : 0;
+    let from = firstRow;
+    while (from < lastRow) {
+      const stop = i < n ? Math.min(excluded[i], lastRow) : lastRow;
+      if (stop > from) fillRows(x, from, stop);
+      from = stop + 1;
+      i += 1;
+    }
+  };
+  // Input and NSC cells first for the whole window, then evidence kept out of
+  // the matrix, then rescued cells last. Below one pixel per column neighbours
+  // share pixels, and painting column by column let the next cluster's cells
+  // cover the corrections, which are the cells this report exists to show.
+  for (const states of [[0, 2], [3], [1]]) {
+    for (let c = firstCol; c < lastCol; c += 1) {
+      const clusterIdx = originalClusterAtVisibleColumn(c);
+      if (clusterIdx < 0) continue;
+      const sets = clusterSets(clusterIdx);
+      const rowsets = clusterRowSets(clusterIdx);
+      // Below a pixel per column, snap to whole pixels: a fractional x is
+      // antialiased into a blend of neighbours, and a green cell blended into
+      // blue reads as neither.
+      const x = cw < 1 ? Math.floor(c * cw - left) : c * cw - left;
+      const processFill = byProcess
+        ? processColor(processKind(data.clusters[clusterIdx]))
+        : null;
+      for (const state of states) {
+        const set = sets[state];
+        if (set.kind === "list" && !set.idx.length) continue;
+        // In mechanism mode the input cells take the mechanism's colour, and
+        // the cells Recore changed keep theirs, so they still read as findings.
+        const own = colors[STATE_CODES[state]] || colors.A;
+        context.fillStyle = processFill && (state === 0 || state === 2) ? processFill : own;
+        paintSet(set, rowsets[state], x);
+      }
+    }
+  }
+
+  if (gutterRows) {
+    context.fillStyle = panelBg;
+    for (let r = firstRow; r < lastRow; r += 1) {
+      context.fillRect(0, r * ch - top + drawH, dataW, ch - drawH);
+    }
+  }
+  if (drawW < cw) {
+    // Column gutters too, or absent cells would run together into a band.
+    context.fillStyle = panelBg;
+    for (let c = firstCol; c < lastCol; c += 1) {
+      context.fillRect(c * cw - left + drawW, 0, cw - drawW, dataH);
+    }
+  }
+}
 function renderMatrix(scrollToSelected) {
   const {rows, cols} = updateCellGeometry();
   if (scrollToSelected) {
@@ -1716,80 +2477,14 @@ function renderMatrix(scrollToSelected) {
 
   const left = matrixScrollLeft();
   const top = matrixScrollTop();
+  const dataW = Math.min(view.w, virtualW - left);
+  const dataH = Math.min(view.h, virtualH - top);
   const [firstCol, lastCol] = visibleColumnRange(view.w);
   const [firstRow, lastRow] = visibleRowRange(view.h);
-  // Cells never shrink below a hairline, so a dense matrix stays legible instead
-  // of fading out when several clusters share a pixel column.
-  const drawW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
-  const drawH = Math.max(1, cellH > 2 ? cellH - 1 : cellH);
-  const gutterRows = cellH >= 2;
-  const byProcess = matrixColorMode.value === "process";
-  const spanTop = firstRow * cellH - top;
-  const spanHeight = (lastRow - firstRow) * cellH;
-
-  for (let c = firstCol; c < lastCol; c += 1) {
-    const clusterIdx = originalClusterAtVisibleColumn(c);
-    if (clusterIdx < 0) continue;
-    const sets = clusterSets(clusterIdx);
-    const x = c * cellW - left;
-    const processFill = byProcess
-      ? processColor(processKind(data.clusters[clusterIdx]))
-      : null;
-    const fillWholeColumn = () => {
-      if (gutterRows) {
-        for (let r = firstRow; r < lastRow; r += 1) {
-          ctx.fillRect(x, r * cellH - top, drawW, drawH);
-        }
-      } else {
-        ctx.fillRect(x, spanTop, drawW, spanHeight);
-      }
-    };
-    for (let state = 0; state < 3; state += 1) {
-      const set = sets[state];
-      ctx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
-      if (set.kind === "all") {
-        fillWholeColumn();
-        continue;
-      }
-      if (set.kind === "complement") {
-        fillWholeColumn();
-        ctx.fillStyle = panelBg;
-        for (let i = 0; i < set.idx.length; i += 1) {
-          const row = rowOfGenome[set.idx[i]];
-          if (row >= firstRow && row < lastRow) {
-            ctx.fillRect(x, row * cellH - top, drawW, Math.max(1, cellH));
-          }
-        }
-        continue;
-      }
-      // Only the genomes inside the visible band are worth walking.
-      const idx = set.idx;
-      for (let i = 0; i < idx.length; i += 1) {
-        const row = rowOfGenome[idx[i]];
-        if (row >= firstRow && row < lastRow) {
-          ctx.fillRect(x, row * cellH - top, drawW, drawH);
-        }
-      }
-    }
-  }
-
-  const bandH = Math.max(0, Math.min(view.h, virtualH - top));
-  const selectedCol = selectedVisibleColumn();
-  if (selectedCol >= firstCol && selectedCol < lastCol && bandH > 0) {
-    const x = selectedCol * cellW - left;
-    ctx.fillStyle = "rgba(37,99,235,.13)";
-    ctx.fillRect(x, 0, Math.max(1, cellW), bandH);
-    ctx.strokeStyle = selectStroke;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, 0.5, Math.max(1, cellW - 1), bandH - 1);
-  }
-  if (hoverRow >= firstRow && hoverRow < lastRow) {
-    ctx.fillStyle = "rgba(245,158,11,.14)";
-    ctx.fillRect(0, hoverRow * cellH - top, Math.min(view.w, virtualW - left), Math.max(1, cellH));
-  }
-  if (hoverCol >= firstCol && hoverCol < lastCol && bandH > 0) {
-    ctx.fillStyle = "rgba(245,158,11,.10)";
-    ctx.fillRect(hoverCol * cellW - left, 0, Math.max(1, cellW), bandH);
+  if (rows && cols && dataW > 0 && dataH > 0) {
+    const opts = {firstCol, lastCol, firstRow, lastRow, left, top, cw: cellW, ch: cellH, dataW, dataH};
+    if (inDensityMode(cellW, cellH)) paintDensity(ctx, {...opts, scale});
+    else paintCells(ctx, opts);
   }
   if (rows === 0 || cols === 0) {
     ctx.fillStyle = labelInk;
@@ -1802,7 +2497,10 @@ function columnLabelsFlat() {
   return cellW >= LABEL_HORIZONTAL_CELL_W;
 }
 function columnLabelBand() {
-  if (cellW < LABEL_MIN_CELL_W || visibleClusters.length > 4000) return 0;
+  // Gate on the cell, not the run: only the columns in view are labelled, so a
+  // 30,000-cluster run zoomed to 10px columns labels about 80 of them. The old
+  // count cap meant a large run never showed a single cluster name.
+  if (cellW < LABEL_MIN_CELL_W) return 0;
   return columnLabelsFlat() ? LABEL_BAND_H_FLAT : LABEL_BAND_H;
 }
 function renderColumnHeader() {
@@ -1825,7 +2523,14 @@ function renderColumnHeader() {
   const byProcess = matrixColorMode.value === "process";
   const tickW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
 
-  for (let c = firstCol; c < lastCol; c += 1) {
+  // Ticks that touch and share a colour are one bar: a rect per column cost a
+  // fillRect per cluster in view, thousands of them, on every repaint.
+  if (!byProcess && cellW <= 2) {
+    headerCtx.fillStyle = gridStroke;
+    const x0 = firstCol * cellW - left;
+    headerCtx.fillRect(x0, cssH - 9, Math.max(1, (lastCol - firstCol) * cellW), 6);
+  }
+  for (let c = firstCol; c < lastCol && (byProcess || cellW > 2); c += 1) {
     const clusterIdx = originalClusterAtVisibleColumn(c);
     if (clusterIdx < 0) continue;
     const x = c * cellW - left;
@@ -1836,10 +2541,6 @@ function renderColumnHeader() {
     if (byProcess && band) {
       headerCtx.fillRect(x, band, tickW, 6);
     }
-  }
-  if (hoverCol >= firstCol && hoverCol < lastCol) {
-    headerCtx.fillStyle = hoverColTint;
-    headerCtx.fillRect(hoverCol * cellW - left, 0, Math.max(1, cellW), cssH);
   }
   if (selectedCol >= firstCol && selectedCol < lastCol) {
     const x = selectedCol * cellW - left;
@@ -1876,14 +2577,37 @@ function renderColumnHeader() {
   }
   headerCtx.restore();
 }
-function fitLabel(text, maxWidth) {
+/* Longest prefix that fits, found by halving rather than one character per
+   measureText call: 120-character names cost thousands of calls a header.
+   Results are cached per name and width; the font never changes. */
+const fitCache = new Map();
+function fitText(context, text, maxWidth) {
   const value = String(text || "");
-  if (headerCtx.measureText(value).width <= maxWidth) return value;
-  for (let len = value.length - 1; len > 1; len -= 1) {
-    const candidate = `${value.slice(0, len)}…`;
-    if (headerCtx.measureText(candidate).width <= maxWidth) return candidate;
+  const key = `${Math.round(maxWidth)}|${value}`;
+  const cached = fitCache.get(key);
+  if (cached !== undefined) return cached;
+  let out = value;
+  if (context.measureText(value).width > maxWidth) {
+    let lo = 1;
+    let hi = value.length - 1;
+    out = "…";
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const candidate = `${value.slice(0, mid)}…`;
+      if (context.measureText(candidate).width <= maxWidth) {
+        out = candidate;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
   }
-  return "…";
+  if (fitCache.size > 20000) fitCache.clear();
+  fitCache.set(key, out);
+  return out;
+}
+function fitLabel(text, maxWidth) {
+  return fitText(headerCtx, text, maxWidth);
 }
 
 /* The tree is a canvas rather than SVG: 10,000 tips is roughly 40,000 SVG nodes,
@@ -1894,25 +2618,38 @@ function fitLabel(text, maxWidth) {
    be the reader's choice rather than whatever the Newick happened to carry.
    assignTreeIds already yields an adjacency list, so rooting anywhere is a
    matter of picking the node and rebuilding downwards from it. */
+function graphOf(nodes) {
+  const adj = nodes.map(() => []);
+  for (const node of nodes) {
+    for (const child of node.children || []) {
+      const length = Number(child.length || 0);
+      adj[node._id].push({id: child._id, length});
+      adj[child._id].push({id: node._id, length});
+    }
+  }
+  return {adj};
+}
 function treeGraph(node) {
   const root = cloneNode(node);
   const nodes = [];
-  const edges = [];
-  assignTreeIds(root, null, nodes, edges);
-  const adj = nodes.map(() => []);
-  edges.forEach(([a, b, length]) => {
-    adj[a].push({id: b, length: Number(length) || 0});
-    adj[b].push({id: a, length: Number(length) || 0});
-  });
-  return {root, nodes, adj};
+  assignTreeIds(root, nodes, []);
+  return {root, nodes, adj: graphOf(nodes).adj};
 }
-function buildFrom(nodes, adj, id, parentId, length) {
-  const source = nodes[id];
-  const children = adj[id]
-    .filter(edge => edge.id !== parentId)
-    .map(edge => buildFrom(nodes, adj, edge.id, id, edge.length));
-  children.sort((a, b) => countTips(b) - countTips(a));
-  return {label: source.label || "", genome: source.genome, length, children};
+function buildFrom(nodes, adj, rootId, parentId = null, length = 0) {
+  const root = copyNode(nodes[rootId]);
+  root.length = length;
+  const stack = [[rootId, parentId, root]];
+  while (stack.length) {
+    const [id, from, target] = stack.pop();
+    for (const edge of adj[id]) {
+      if (edge.id === from) continue;
+      const child = copyNode(nodes[edge.id]);
+      child.length = edge.length;
+      target.children.push(child);
+      stack.push([edge.id, id, child]);
+    }
+  }
+  return root;
 }
 /** Farthest node from a start, by summed branch length. */
 function farthestFrom(adj, start) {
@@ -1934,28 +2671,40 @@ function farthestFrom(adj, start) {
   return {best, dist, prev};
 }
 /* Midpoint rooting: the two most distant tips define the tree's diameter, and
-   the root goes halfway along the path between them. */
-function midpointRoot(nodes, adj) {
-  if (!adj.length) return 0;
+   the root goes exactly halfway along the path between them, splitting the
+   edge that straddles the midpoint. Rooting on the nearer end of that edge put
+   every root distance off by up to half an edge. */
+function midpointTree(nodes, adj) {
+  if (nodes.length <= 1) return buildFrom(nodes, adj, 0);
   const first = farthestFrom(adj, 0).best;
   const {best: second, dist, prev} = farthestFrom(adj, first);
   const half = dist[second] / 2;
-  let cursor = second;
-  while (prev[cursor] >= 0 && dist[cursor] > half) {
-    const parent = prev[cursor];
-    // Stop at whichever end of the straddling edge is nearer the midpoint.
-    if (dist[parent] <= half) {
-      return half - dist[parent] <= dist[cursor] - half ? parent : cursor;
-    }
-    cursor = parent;
+  if (!(half > 0)) {
+    // No lengths to halve: root beside the tip, never on it, so it stays a tip.
+    const next = adj[first][0];
+    return buildFrom(nodes, adj, next ? next.id : first);
   }
-  return cursor;
+  let cursor = second;
+  while (prev[cursor] >= 0 && dist[prev[cursor]] > half) cursor = prev[cursor];
+  const parent = prev[cursor];
+  const eps = 1e-12 * Math.max(1, half);
+  if (parent < 0 || Math.abs(dist[cursor] - half) <= eps) return buildFrom(nodes, adj, cursor);
+  if (Math.abs(dist[parent] - half) <= eps) return buildFrom(nodes, adj, parent);
+  return {
+    label: "",
+    genome: null,
+    length: 0,
+    children: [
+      buildFrom(nodes, adj, cursor, parent, dist[cursor] - half),
+      buildFrom(nodes, adj, parent, cursor, half - dist[parent]),
+    ],
+  };
 }
 function rerootTree(mode) {
-  if (mode === "input") return cloneNode(data.tree);
-  if (mode === "l8") return rootByL8(data.tree);
+  if (mode === "input") return tidyTree(cloneNode(data.tree), "none");
+  if (mode === "l8") return tidyTree(rootByL8(data.tree), "l8");
   const {nodes, adj} = treeGraph(data.tree);
-  if (mode === "midpoint") return buildFrom(nodes, adj, midpointRoot(nodes, adj), null, 0);
+  if (mode === "midpoint") return tidyTree(midpointTree(nodes, adj), "tips");
   if (mode.startsWith("genome:")) {
     const genomeIdx = Number(mode.slice(7));
     const id = nodes.findIndex(n => n.genome === genomeIdx);
@@ -1963,18 +2712,16 @@ function rerootTree(mode) {
       // Root on the tip's parent, so the chosen genome hangs off the root as an
       // outgroup rather than becoming a degenerate root itself.
       const parent = adj[id][0];
-      return buildFrom(nodes, adj, parent ? parent.id : id, null, 0);
+      return tidyTree(buildFrom(nodes, adj, parent ? parent.id : id, null, 0), "tips");
     }
   }
-  return rootByL8(data.tree);
+  return tidyTree(hasL8 ? rootByL8(data.tree) : cloneNode(data.tree), hasL8 ? "l8" : "none");
 }
 /** Rebuild layout state after the displayed root changes. */
 function applyRoot(mode) {
   treeRoot = rerootTree(mode);
-  leafOrder = [];
-  maxDepth = 0;
-  maxDistance = 0;
-  layout(treeRoot, 0, 0);
+  layoutTree(treeRoot);
+  offTreeGenomes = data.genomes.filter((_, gi) => !leafByGenome.has(gi));
   buildRowOfGenome();
   resetMatrixCache();
   syntenyKey = "";
@@ -1990,104 +2737,80 @@ function renderTree() {
 
   const top = matrixScrollTop();
   const [firstRow, lastRow] = visibleRowRange(view.h);
-  const showLabels = labelToggle.checked && cellH >= 5 && leafOrder.length <= 4000;
+  // Only tips in the visible band are drawn, so the tip count is no reason to
+  // hide names once a row is tall enough to carry one.
+  const showLabels = labelToggle.checked && cellH >= TIP_LABEL_MIN_ROW;
 
   treeCtx.lineWidth = 1;
   treeCtx.strokeStyle = gridStroke;
   drawTreeNode(treeRoot, top, firstRow, lastRow, view.h, showLabels);
-
-  if (hoverRow >= firstRow && hoverRow < lastRow) {
-    const y = hoverRow * cellH + cellH / 2 - top;
-    treeCtx.strokeStyle = "rgba(249,115,22,.55)";
-    treeCtx.beginPath();
-    treeCtx.moveTo(0, y);
-    treeCtx.lineTo(width, y);
-    treeCtx.stroke();
-  }
   renderLineageStrip(view.h, top, firstRow, lastRow);
 }
-function drawTreeNode(node, top, firstRow, lastRow, viewH, showLabels) {
-  const rowSpan = nodeRowSpan(node);
-  // Whole subtrees outside the band cost nothing.
-  if (rowSpan.last < firstRow || rowSpan.first > lastRow) return;
-  const x = xForNode(node);
-  const y = node.row * cellH + cellH / 2 - top;
-  if (node.children && node.children.length) {
-    for (const child of node.children) {
-      const childSpan = nodeRowSpan(child);
-      if (childSpan.last < firstRow || childSpan.first > lastRow) continue;
-      const cx = xForNode(child);
-      const cy = child.row * cellH + cellH / 2 - top;
-      treeCtx.strokeStyle = treeEdgeColor(child);
-      treeCtx.beginPath();
-      treeCtx.moveTo(x, cy);
-      treeCtx.lineTo(cx, cy);
-      treeCtx.moveTo(x, y);
-      treeCtx.lineTo(x, cy);
-      treeCtx.stroke();
-      drawTreeNode(child, top, firstRow, lastRow, viewH, showLabels);
+function drawTreeNode(root, top, firstRow, lastRow, viewH, showLabels) {
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    // Whole subtrees outside the band cost nothing.
+    if (node._span.last < firstRow || node._span.first > lastRow) continue;
+    const x = xForNode(node);
+    const y = node.row * cellH + cellH / 2 - top;
+    if (!isLeaf(node)) {
+      for (const child of node.children) {
+        if (child._span.last < firstRow || child._span.first > lastRow) continue;
+        const cx = xForNode(child);
+        const cy = child.row * cellH + cellH / 2 - top;
+        treeCtx.strokeStyle = treeEdgeColor(child);
+        treeCtx.beginPath();
+        treeCtx.moveTo(x, cy);
+        treeCtx.lineTo(cx, cy);
+        treeCtx.moveTo(x, y);
+        treeCtx.lineTo(x, cy);
+        treeCtx.stroke();
+        stack.push(child);
+      }
+      continue;
     }
-    return;
-  }
-  if (node.row < firstRow || node.row >= lastRow) return;
-  const style = tipStyle(node.genome);
-  const radius = Math.max(0.5, Math.min(4.5, cellH / 2 - 0.5));
-  treeCtx.fillStyle = style.fill;
-  treeCtx.beginPath();
-  treeCtx.arc(x, y, radius, 0, Math.PI * 2);
-  treeCtx.fill();
-  if (radius >= 1.5) {
-    treeCtx.strokeStyle = style.stroke;
-    treeCtx.lineWidth = 1;
-    treeCtx.stroke();
-  }
-  if (highlightedRows.has(node.row)) {
-    treeCtx.strokeStyle = "#0ea5e9";
-    treeCtx.lineWidth = 1.6;
+    if (node.row < firstRow || node.row >= lastRow) continue;
+    const style = tipStyle(node.genome);
+    const radius = Math.max(0.5, Math.min(4.5, cellH / 2 - 0.5));
+    treeCtx.fillStyle = style.fill;
     treeCtx.beginPath();
-    treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
-    treeCtx.stroke();
-  }
-  if (isSelectedSyntenyCarrier(node.genome)) {
-    treeCtx.strokeStyle = "#f97316";
-    treeCtx.lineWidth = 1.4;
-    treeCtx.beginPath();
-    treeCtx.arc(x, y, radius + Math.max(1.4, Math.min(3, cellH * 0.3)), 0, Math.PI * 2);
-    treeCtx.stroke();
-  }
-  if (showLabels) {
-    treeCtx.fillStyle = labelInk;
-    treeCtx.font = LABEL_FONT;
-    treeCtx.textBaseline = "middle";
-    treeCtx.textAlign = "left";
-    treeCtx.fillText(fitTipLabel(data.genomes[node.genome] || ""), x + radius + 4, y);
+    treeCtx.arc(x, y, radius, 0, Math.PI * 2);
+    treeCtx.fill();
+    if (radius >= 1.5) {
+      treeCtx.strokeStyle = style.stroke;
+      treeCtx.lineWidth = 1;
+      treeCtx.stroke();
+    }
+    if (highlightedRows.has(node.row)) {
+      treeCtx.strokeStyle = "#0ea5e9";
+      treeCtx.lineWidth = 1.6;
+      treeCtx.beginPath();
+      treeCtx.arc(x, y, radius + Math.max(2, Math.min(4, cellH * 0.4)), 0, Math.PI * 2);
+      treeCtx.stroke();
+    }
+    if (isSelectedSyntenyCarrier(node.genome)) {
+      treeCtx.strokeStyle = "#f97316";
+      treeCtx.lineWidth = 1.4;
+      treeCtx.beginPath();
+      treeCtx.arc(x, y, radius + Math.max(1.4, Math.min(3, cellH * 0.3)), 0, Math.PI * 2);
+      treeCtx.stroke();
+    }
+    if (showLabels) {
+      treeCtx.fillStyle = labelInk;
+      treeCtx.font = LABEL_FONT;
+      treeCtx.textBaseline = "middle";
+      treeCtx.textAlign = "left";
+      treeCtx.fillText(fitTipLabel(data.genomes[node.genome] || ""), x + radius + 4, y);
+    }
   }
 }
 function fitTipLabel(text) {
   const budget = Math.max(24, treeWidth - xForNode({depth: maxDepth, distance: maxDistance, children: []}) - 10);
-  const value = String(text);
-  if (treeCtx.measureText(value).width <= budget) return value;
-  for (let len = value.length - 1; len > 1; len -= 1) {
-    const candidate = `${value.slice(0, len)}…`;
-    if (treeCtx.measureText(candidate).width <= budget) return candidate;
-  }
-  return "…";
+  return fitText(treeCtx, text, budget);
 }
 /** Row span covered by a subtree, memoised: used to skip offscreen branches. */
 function nodeRowSpan(node) {
-  if (node._span) return node._span;
-  if (!node.children || !node.children.length) {
-    node._span = {first: node.row, last: node.row};
-    return node._span;
-  }
-  let first = Infinity;
-  let last = -Infinity;
-  for (const child of node.children) {
-    const span = nodeRowSpan(child);
-    if (span.first < first) first = span.first;
-    if (span.last > last) last = span.last;
-  }
-  node._span = {first, last};
   return node._span;
 }
 function treeEdgeColor(child) {
@@ -2117,17 +2840,32 @@ function renderLineageStrip(viewH, top, firstRow, lastRow) {
 
 /** One labelled count with its share, used by both inspector tabs. */
 function countRow(label, value, total, key) {
-  const share = total ? `${(value / total * 100).toFixed(1)}%` : "0%";
+  const share = formatPct(value, total);
   return `<div class="count-row"><span class="sw ${key}"></span>` +
     `<span class="count-name">${escapeHtml(label)}</span>` +
-    `<b class="num">${value.toLocaleString()}</b><small class="num">${share}</small></div>`;
+    `<b class="num">${formatInt(value)}</b><small class="num">${share}</small></div>`;
 }
 
+/** The states this run can have, in drawing order. NSC only when it ran, and
+    kept-out evidence only when there is any: a row of zeros for a step that
+    never ran reads as a result. */
+function shownStates() {
+  const states = ["P", "R"];
+  if (data.nscEnabled) states.push("N");
+  if (anyKeptOut) states.push("K");
+  states.push("A");
+  return states;
+}
+function stateCountRows(counts, total) {
+  return shownStates()
+    .map(state => countRow(labels[state], counts[state] || 0, total, state.toLowerCase()))
+    .join("");
+}
 /** Prevalence as a bar, because "16 / 16" and "3 / 16" should not look alike. */
 function prevalenceBar(present, total, pct) {
   const width = total ? Math.max(1, Math.round(present / total * 100)) : 0;
   return `<div class="prevalence-bar"><i style="width:${width}%"></i></div>` +
-    `<p class="prevalence num">${present.toLocaleString()} / ${total.toLocaleString()} genomes &middot; ${pct}</p>`;
+    `<p class="prevalence num">${formatInt(present)} / ${plural(total, "genome")} &middot; ${pct}</p>`;
 }
 
 /* The inspector reflects the selected cluster; keyed so it is not rebuilt on
@@ -2135,15 +2873,15 @@ function prevalenceBar(present, total, pct) {
 function renderClusterDetails() {
   const cluster = data.clusters[selected];
   const nextDetailsKey = cluster
-    ? `${selected}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
+    ? `${selected}|${selectedGenome}|${referenceOnly}|${mechanismFilterKey()}|${visibleClusters.length}`
     : "none";
   if (nextDetailsKey !== detailsKey && cluster) {
     const counts = countsForCluster(selected);
     const mechanism = processKind(cluster);
     const mechanismLabel = processLabel(mechanism);
     const mechanismDescription = processDescription(mechanism);
-    const mechanismColor = processColor(mechanism);
-    const prevalencePct = `${Math.round(cluster.prevalence * 1000) / 10}%`;
+    const mechanismColor = processCss(mechanism);
+    const prevalencePct = formatPct(cluster.present, data.genomes.length);
     const refRow = referenceMechanismRow(cluster);
     const supportRow = cluster.support
       ? `<dt>Support tier</dt><dd>${escapeHtml(cluster.support)}</dd>`
@@ -2158,19 +2896,16 @@ function renderClusterDetails() {
       ? `<dt>Recommended wording</dt><dd><span class="process-wording">${escapeHtml(cluster.wording)}</span></dd>`
       : "";
     const total = Math.max(1, data.genomes.length);
-    details.innerHTML = `
+    details.innerHTML = `${cellCardHtml()}
       <div class="cluster-head">
         <h3>${escapeHtml(cluster.name)}</h3>
         <p class="annotation">${escapeHtml(cluster.annotation || "No annotation provided")}</p>
       </div>
       ${prevalenceBar(cluster.present, total, prevalencePct)}
-      <div class="card-title">Evidence in ${total.toLocaleString()} genomes</div>
-      <div class="count-rows">
-        ${countRow("present in input", counts.P, total, "p")}
-        ${countRow("rescued by Recore", counts.R, total, "r")}
-        ${countRow("supported by NSC", counts.N, total, "n")}
-        ${countRow("absent", counts.A, total, "a")}
-      </div>
+      <div class="card-title">Evidence in ${plural(total, "genome")}</div>
+      <div class="count-rows">${stateCountRows(counts, total)}</div>
+      ${lineageBreakdownHtml(selected)}
+      ${changedCellsHtml(selected)}
       <div class="card-title">Mechanism</div>
       <span class="process-chip" style="--process-color:${mechanismColor}"><i></i>${escapeHtml(mechanismLabel)}</span>
       <p class="process-wording">${escapeHtml(mechanismDescription)}</p>
@@ -2198,9 +2933,13 @@ function render(scrollToSelected = false) {
   renderSyntenyPanel();
   renderTree();
   renderLineageLegend();
+  renderCellLegend();
   renderTreeScaleBar();
   renderOverview();
   updateTopBarMeta();
+  renderFilterChips();
+  renderOverlays();
+  if (afterRender) afterRender();
 }
 function scheduleRender(scrollToSelected = false) {
   if (scrollToSelected) {
@@ -2214,12 +2953,89 @@ function scheduleRender(scrollToSelected = false) {
     render(false);
   });
 }
+/* Marks a column or row with lines that sit in the gutters when cells have
+   gutters, and just outside the cells when they do not, so no cell is tinted:
+   a selected absent cell still reads as absent. */
+function markColumn(context, x, w, h, width) {
+  if (w >= 3) {
+    context.fillRect(x - width, 0, width, h);
+    context.fillRect(x + w - 1, 0, width, h);
+    return;
+  }
+  const bx = Math.floor(x);
+  context.fillRect(bx - width, 0, width, h);
+  context.fillRect(bx + Math.max(1, Math.ceil(w)), 0, width, h);
+}
+function markRow(context, y, h, w, width) {
+  if (h >= 3) {
+    context.fillRect(0, y - width, w, width);
+    context.fillRect(0, y + h - 1, w, width);
+    return;
+  }
+  const by = Math.floor(y);
+  context.fillRect(0, by - width, w, width);
+  context.fillRect(0, by + Math.max(1, Math.ceil(h)), w, width);
+}
+function clearOverlay(target, context, base) {
+  if (!target || !context || !base) return false;
+  const w = base.clientWidth;
+  const h = base.clientHeight;
+  if (target.width !== base.width || target.height !== base.height) {
+    sizeCanvas(target, context, w, h, base.width / Math.max(1, w));
+  } else {
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, target.width, target.height);
+    context.setTransform(base.width / Math.max(1, w), 0, 0, base.width / Math.max(1, w), 0, 0);
+  }
+  return true;
+}
+function renderOverlays() {
+  const left = matrixScrollLeft();
+  const top = matrixScrollTop();
+  const selectedCol = selectedVisibleColumn();
+  if (clearOverlay(matrixOverlay, matrixOverlayCtx, canvas)) {
+    const o = matrixOverlayCtx;
+    const w = Math.min(canvas.clientWidth, virtualW - left);
+    const h = Math.min(canvas.clientHeight, virtualH - top);
+    if (hoverRow >= 0 && h > 0) {
+      o.fillStyle = hoverStroke;
+      markRow(o, hoverRow * cellH - top, cellH, w, 1);
+    }
+    if (hoverCol >= 0 && h > 0) {
+      o.fillStyle = hoverStroke;
+      markColumn(o, hoverCol * cellW - left, cellW, h, 1);
+    }
+    if (selectedCol >= 0 && h > 0) {
+      o.fillStyle = markInk;
+      markColumn(o, selectedCol * cellW - left, cellW, h, cellW >= 3 ? 2 : 1);
+    }
+  }
+  if (clearOverlay(headerOverlay, headerOverlayCtx, headerCanvas) && hoverCol >= 0) {
+    const o = headerOverlayCtx;
+    o.fillStyle = hoverStroke;
+    markColumn(o, hoverCol * cellW - left, cellW, headerCanvas.clientHeight, 1);
+  }
+  if (clearOverlay(treeOverlay, treeOverlayCtx, treeCanvas) && hoverRow >= 0) {
+    const o = treeOverlayCtx;
+    o.fillStyle = hoverStroke;
+    markRow(o, hoverRow * cellH - top, cellH, treeCanvas.clientWidth, 1);
+  }
+}
+let overlayQueued = false;
+function scheduleOverlays() {
+  if (overlayQueued) return;
+  overlayQueued = true;
+  requestAnimationFrame(() => {
+    overlayQueued = false;
+    renderOverlays();
+  });
+}
 function setHover(row, col, text) {
   const changed = hoverRow !== row || hoverCol !== col;
   hoverRow = row;
   hoverCol = col;
   if (text) status.textContent = text;
-  if (changed) scheduleRender(false);
+  if (changed) scheduleOverlays();
 }
 function setTreeMode(mode) {
   treeMode = mode;
@@ -2231,7 +3047,18 @@ function resetMatrixCache() {
   hoverCol = -1;
 }
 refreshThemeColors();
-const defaultRootMode = hasL8Tip(data.tree) ? "l8" : "input";
+const hasL8 = treeHasTip(data.tree, isL8Tip);
+const defaultRootMode = hasL8 ? "l8" : "input";
+if (rootMode) {
+  // No L8 tip, no L8 outgroup to offer.
+  const l8Option = [...rootMode.options].find(option => option.value === "l8");
+  if (l8Option && !hasL8) l8Option.remove();
+}
+// Lineage colouring only means something when some tip names a lineage.
+if (!treeHasTip(data.tree, node => lineageOfGenomeName(tipName(node)) !== "unknown")) {
+  const lineageOption = [...colorMode.options].find(option => option.value === "lineage");
+  if (lineageOption) lineageOption.remove();
+}
 applyRoot(defaultRootMode);
 if (rootMode) rootMode.value = defaultRootMode;
 computeGenomeStats();
@@ -2239,21 +3066,36 @@ refreshVisibleClusters();
 // Open at a zoom that suits the run. A 16-genome, 12-cluster matrix at the old
 // fixed sliders was a thumbnail in a half-empty pane; a 3000-tip tree needed the
 // opposite. Column width is fitted to the space the matrix pane actually has.
-function fitZoomToData() {
+/* `whole` fits every row and column, as density when cells fall below a pixel.
+   Without it (the opening view) cells stay at least the density threshold, so
+   the first paint draws cells, not a raster of the whole run. */
+function fitZoomToData(whole = false) {
   const tips = Math.max(1, leafOrder.length);
   const cols = Math.max(1, visibleClusters.length);
   const bodyW = viewerBody ? viewerBody.clientWidth : 0;
+  // The inspector takes a column only when it is not a bottom sheet.
+  const inspectorTakesWidth = !(narrowQuery && narrowQuery.matches);
   const matrixW = bodyW > 0
-    ? Math.max(220, bodyW - layoutState.treeW - layoutState.inspectorW - 24)
+    ? Math.max(220, bodyW - layoutState.treeW - (inspectorTakesWidth ? layoutState.inspectorW : 0) - 24)
     : FIT_TARGET_W;
   const viewH = matrixViewport ? matrixViewport.clientHeight : 0;
   const targetH = viewH > 120 ? viewH - 4 : FIT_TARGET_H;
-  const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(targetH / tips)));
+  // Whole pixels when the rows fit at one or more; otherwise exactly the share
+  // that fits, so Z always shows every row (as density below a pixel).
+  const rowFit = targetH / tips >= 1
+    ? Math.max(1, Math.min(MAX_ROW_ZOOM, Math.floor(targetH / tips)))
+    : whole ? Math.max(MIN_ROW_ZOOM, targetH / tips) : DENSITY_BELOW_ROW;
   // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
-  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW - 2) / cols / 0.82)));
-  rowHeightControl.value = String(rowFit);
-  sizeControl.value = String(colFit);
-  labelToggle.checked = tips <= 500 && rowFit >= 4;
+  // Round down to the slider step (0.25), not to whole units: 1,118 columns in
+  // 788px want 0.86, and flooring that to 0 sent the fit to the 0.25 minimum,
+  // leaving half the pane empty after Z.
+  const colStep = 0.25;
+  const exactCol = (matrixW - 2) / cols / 0.82;
+  const colFit = exactCol >= colStep
+    ? Math.max(colStep, Math.min(MAX_COL_ZOOM, Math.floor(exactCol / colStep) * colStep))
+    : whole ? Math.max(MIN_COL_ZOOM, exactCol) : Math.max(exactCol, DENSITY_BELOW_COL / 0.82);
+  writeZoom(rowHeightControl, rowFit, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
+  writeZoom(sizeControl, colFit, MIN_COL_ZOOM, MAX_COL_ZOOM);
 }
 populateOptions();
 if (layoutState.syntenyHiddenStored === false) {
@@ -2344,9 +3186,17 @@ paneMenus.forEach(({menu, button}) => {
   });
   menu.addEventListener("click", event => event.stopPropagation());
 });
+if (cellLegend) {
+  cellLegend.addEventListener("click", event => {
+    if (!event.target.closest("[data-open-mechanisms]")) return;
+    event.stopPropagation();
+    setPaneMenu(matrixMenu, true);
+    if (processLegend) processLegend.scrollIntoView({block: "nearest"});
+  });
+}
 document.addEventListener("pointerdown", event => {
   if (!anyPaneMenuOpen()) return;
-  if (event.target.closest(".pane-menu, #treeMenuBtn, #matrixMenuBtn")) return;
+  if (event.target.closest(".pane-menu, #treeMenuBtn, #matrixMenuBtn, [data-open-mechanisms]")) return;
   setPaneMenu(null, false);
 });
 
@@ -2437,7 +3287,55 @@ function clearSyntenyHighlight() {
     link.classList.remove("highlight", "dimmed");
   });
 }
+/** The clusters in view, with what the matrix shows for each, as TSV. */
+function visibleClustersTsv() {
+  const lines = [["cluster", "annotation", "mechanism", "present_in_input", "corrected", "nsc", "kept_out", "absent"].join("\t")];
+  for (const idx of visibleClusters) {
+    const cluster = data.clusters[idx];
+    const c = countsForCluster(idx);
+    lines.push([cluster.name, cluster.annotation || "", processKind(cluster), c.P, c.R, c.N, c.K, c.A]
+      .map(v => String(v).replace(/[\t\n]/g, " ")).join("\t"));
+  }
+  return `${lines.join("\n")}\n`;
+}
+/* Active mechanism filters as removable chips beside the matrix count, so a
+   filter left on is visible with the menu closed. */
+function renderFilterChips() {
+  let box = document.getElementById("filterChips");
+  if (!box && topMatrixMeta) {
+    box = document.createElement("span");
+    box.id = "filterChips";
+    box.className = "filter-chips";
+    topMatrixMeta.after(box);
+  }
+  if (!box) return;
+  const key = mechanismFilterKey();
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = [...mechanismFilters].sort().map(mechanism =>
+    `<button type="button" class="filter-chip" data-remove-mechanism="${escapeHtml(mechanism)}" data-tip="Remove this filter"><i style="background:${processCss(mechanism)}"></i>${escapeHtml(processLabel(mechanism))} &times;</button>`).join("");
+}
+function applyMechanismFilters() {
+  refreshVisibleClusters();
+  populateOptions();
+  resetMatrixCache();
+  syncMenuIndicators();
+  // A filter changes how many columns there are; fit them to the pane again.
+  fitZoomToData(true);
+  if (matrixPane) matrixPane.scrollLeft = 0;
+  render(true);
+}
+document.addEventListener("click", event => {
+  const chip = event.target.closest("[data-remove-mechanism]");
+  if (!chip) return;
+  mechanismFilters.delete(chip.getAttribute("data-remove-mechanism"));
+  applyMechanismFilters();
+});
 processLegend.addEventListener("click", event => {
+  if (event.target.closest("[data-download-visible]")) {
+    downloadBlob(new Blob([visibleClustersTsv()], {type: "text/tab-separated-values"}), "recore_visible_clusters.tsv");
+    return;
+  }
   const clear = event.target.closest("[data-clear-mechanism]");
   const card = event.target.closest("[data-mechanism]");
   if (!clear && !card) return;
@@ -2451,11 +3349,7 @@ processLegend.addEventListener("click", event => {
       mechanismFilters.add(mechanism);
     }
   }
-  refreshVisibleClusters();
-  populateOptions();
-  resetMatrixCache();
-  syncMenuIndicators();
-  render(true);
+  applyMechanismFilters();
 });
 async function toggleFullscreen() {
   if (!document.fullscreenElement && explorerSection.requestFullscreen) {
@@ -2481,36 +3375,79 @@ if (columnOrder) {
     refreshVisibleClusters();
     populateOptions();
     resetMatrixCache();
-    render(true);
+    // Sorting is asked for to see the top of the new order; following the old
+    // selection used to land the view thousands of columns into it.
+    if (matrixPane) matrixPane.scrollLeft = 0;
+    if (visibleClusters.length) {
+      selected = originalClusterAtVisibleColumn(0);
+      selectedSyntenyReference = false;
+      populateOptions();
+    }
+    render(false);
   });
 }
-function adjustRange(control, delta, min, max) {
-  const value = Number(control.value || min);
-  const next = Math.max(min, Math.min(max, value + delta));
-  if (next === value) return false;
-  control.value = String(next);
+/* A plain wheel scrolls, everywhere: it used to zoom rows over the tree, so the
+   tree could not be scrolled and one tick switched on the slow path. Ctrl or
+   Cmd and the wheel (a trackpad pinch arrives that way) zoom columns, Alt and
+   the wheel zoom rows, by 1.25 a notch, keeping the cell under the pointer
+   where it is. Motion is read from whichever axis carries it, since macOS sends
+   Shift-wheel as deltaX, and accumulated, so a trackpad swipe of 30 events is a
+   few steps and not thirty. */
+const ZOOM_STEP = 1.25;
+const WHEEL_NOTCH_PX = 40;
+let wheelAccum = 0;
+let wheelAccumAt = 0;
+function zoomAround(axis, factor, clientX, clientY) {
+  const rect = matrixPane.getBoundingClientRect();
+  if (axis === "column") {
+    const px = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const at = (matrixPane.scrollLeft + px) / cellW;
+    const before = currentCellSize();
+    writeZoom(sizeControl, before * factor, MIN_COL_ZOOM, MAX_COL_ZOOM);
+    if (currentCellSize() === before) return false;
+    updateCellGeometry();
+    matrixPane.scrollLeft = Math.max(0, at * cellW - px);
+  } else {
+    const py = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    const at = (matrixPane.scrollTop + py) / cellH;
+    const before = currentRowHeight();
+    writeZoom(rowHeightControl, before * factor, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
+    if (currentRowHeight() === before) return false;
+    updateCellGeometry();
+    matrixPane.scrollTop = Math.max(0, at * cellH - py);
+  }
   return true;
 }
-function wheelZoom(event, forcedAxis = "") {
-  const columnZoom = forcedAxis === "column" || event.shiftKey;
-  const rowZoom = forcedAxis === "row" || event.ctrlKey || event.metaKey || event.altKey;
-  if (!columnZoom && !rowZoom) return;
+function wheelZoom(event) {
+  const columnZoom = event.ctrlKey || event.metaKey;
+  const rowZoom = !columnZoom && event.altKey;
+  if (!columnZoom && !rowZoom) {
+    // Shift and a vertical wheel scroll sideways. macOS already turns it into
+    // deltaX; other systems and synthetic events do not, so do it here.
+    if (event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+      matrixPane.scrollLeft += event.deltaY * unit;
+    }
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
-  const delta = event.deltaY < 0 ? 1 : -1;
-  const changed = columnZoom
-    ? adjustRange(sizeControl, delta, MIN_COL_ZOOM, MAX_COL_ZOOM)
-    : adjustRange(rowHeightControl, delta, MIN_ROW_ZOOM, MAX_ROW_ZOOM);
-  if (changed) {
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+  const motion = (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX) * unit;
+  const now = performance.now();
+  if (now - wheelAccumAt > 300 || Math.sign(motion) !== Math.sign(wheelAccum)) wheelAccum = 0;
+  wheelAccumAt = now;
+  wheelAccum += motion;
+  if (Math.abs(wheelAccum) < WHEEL_NOTCH_PX) return;
+  const factor = wheelAccum < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+  wheelAccum = 0;
+  if (zoomAround(columnZoom ? "column" : "row", factor, event.clientX, event.clientY)) {
     resetMatrixCache();
     render(false);
   }
 }
 viewerBody.addEventListener("wheel", wheelZoom, {passive:false});
-if (treePane) treePane.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-if (treeScroll) treeScroll.addEventListener("wheel", event => wheelZoom(event, "row"), {passive:false});
-headerScroller.addEventListener("wheel", event => wheelZoom(event, "column"), {passive:false});
-matrixPane.addEventListener("wheel", wheelZoom, {passive:false});
 
 /* The panes share one scroll origin: the matrix scroller is the source of truth,
    the header follows it horizontally and the tree vertically. Before this the
@@ -2527,7 +3464,8 @@ function syncFromMatrix() {
 matrixPane.addEventListener("scroll", syncFromMatrix, {passive: true});
 if (headerScroller) {
   headerScroller.addEventListener("scroll", () => {
-    if (syncingScroll) return;
+    // The matrix moved the header; this is that move coming back, not a new one.
+    if (syncingScroll || Math.abs(headerScroller.scrollLeft - matrixPane.scrollLeft) < 1) return;
     syncingScroll = true;
     matrixPane.scrollLeft = headerScroller.scrollLeft;
     syncingScroll = false;
@@ -2536,7 +3474,7 @@ if (headerScroller) {
 }
 if (treeScroll) {
   treeScroll.addEventListener("scroll", () => {
-    if (syncingScroll) return;
+    if (syncingScroll || Math.abs(treeScroll.scrollTop - matrixPane.scrollTop) < 1) return;
     syncingScroll = true;
     matrixPane.scrollTop = treeScroll.scrollTop;
     syncingScroll = false;
@@ -2558,7 +3496,12 @@ function columnAtPointer(event, element) {
 }
 function selectVisibleColumn(c) {
   if (c < 0) return;
-  selected = originalClusterAtVisibleColumn(c);
+  openInspectorSheet();
+  const next = originalClusterAtVisibleColumn(c);
+  // A new cluster starts on its first synteny block, as stepping does; the
+  // previous cluster's block number used to carry over.
+  if (next !== selected) selectedSyntenyBlock = 0;
+  selected = next;
   selectedSyntenyReference = false;
   populateOptions();
   render(true);
@@ -2607,35 +3550,253 @@ matrixPane.addEventListener("mousemove", event => {
   const state = stateAt(clusterIdx, genomeIdx);
   const cluster = data.clusters[clusterIdx];
   const mechanism = processKind(cluster);
-  setHover(r, c, `${cluster.name} / ${data.genomes[genomeIdx]}: ${labels[state]}; ${processLabel(mechanism)}`);
-  const paneRect = matrixPane.getBoundingClientRect();
+  // The cell's own evidence first, the cluster's mechanism after and labelled as
+  // the cluster's, so it does not read as the reason for this cell.
+  const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
+  const stateLine = evidence ? `${labels[state]}: ${evidenceSummary(evidence)}` : labels[state];
+  setHover(r, c, `${data.genomes[genomeIdx]} / ${cluster.name}: ${stateLine}`);
+  const key = `${clusterIdx}|${genomeIdx}`;
+  if (tooltip.dataset.key !== key) {
+    tooltip.dataset.key = key;
+    tooltip.innerHTML = `<strong>${escapeHtml(data.genomes[genomeIdx])}</strong> / ${escapeHtml(cluster.name)}` +
+      `<span class="tt-state"><i class="sw ${state.toLowerCase()}"></i>${escapeHtml(stateLine)}</span>` +
+      `<span class="tt-mech">Cluster mechanism: ${escapeHtml(processLabel(mechanism))}</span>`;
+  }
   tooltip.style.display = "block";
-  tooltip.style.left = `${Math.min(event.clientX - paneRect.left + 14, paneRect.width - 300)}px`;
-  tooltip.style.top = `${event.clientY - paneRect.top + 14}px`;
-  tooltip.innerHTML = `<strong>${escapeHtml(cluster.name)}</strong><br>${escapeHtml(data.genomes[genomeIdx])}: ${escapeHtml(labels[state])}<br><span>${escapeHtml(processLabel(mechanism))}</span><br><span>${escapeHtml(cluster.annotation || "")}</span>`;
+  // Below and right of the pointer, flipped at the pane edges.
+  const paneRect = matrixPane.getBoundingClientRect();
+  const x = event.clientX - paneRect.left;
+  const y = event.clientY - paneRect.top;
+  const w = tooltip.offsetWidth;
+  const h = tooltip.offsetHeight;
+  const left = x + 14 + w > paneRect.width ? Math.max(4, x - 14 - w) : x + 14;
+  const top = y + 14 + h > paneRect.height ? Math.max(4, y - 14 - h) : y + 14;
+  tooltip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+});
+/* ---- Changed cells, for the drawer ----------------------------------------
+   Every evidence row as a list a reader can copy or download, built from the
+   same per-cluster data the cell card reads. The preview is built when the
+   drawer first opens; the full text only when it is asked for. */
+const CELL_STATE_WORDS = {P: "present", R: "corrected", N: "NSC", K: "kept out", A: "absent"};
+const CORRECTION_COLUMNS = ["genome", "cluster", "cell_state", "decision", "rescue_type", "identity", "coverage", "contig", "start", "end", "strand", "synteny", "synteny_score", "orf_integrity_signal", "matrix_action", "publication_status", "rejection_reason", "risk_flags"];
+function correctionRecord(clusterIdx, row) {
+  const value = column => {
+    if (column === "genome") return data.genomes[row.genome] || "";
+    if (column === "cluster") return data.clusters[clusterIdx].name;
+    if (column === "cell_state") return CELL_STATE_WORDS[stateAt(clusterIdx, row.genome)] || "";
+    if (column === "identity" || column === "coverage") return row[column] === null ? "" : row[column].toFixed(1);
+    if (column === "start" || column === "end") return row[column] === null ? "" : String(row[column]);
+    return row[column] || "";
+  };
+  return CORRECTION_COLUMNS.map(value);
+}
+function correctionsTsv() {
+  const lines = [CORRECTION_COLUMNS.join("\t")];
+  for (let ci = 0; ci < data.clusters.length; ci += 1) {
+    if (!evidenceCount(ci)) continue;
+    for (const row of decodeEvidence(ci)) {
+      lines.push(correctionRecord(ci, row).map(v => String(v).replace(/[\t\n]/g, " ")).join("\t"));
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+const CORRECTIONS_PREVIEW = 50;
+let correctionsBuilt = false;
+function buildCorrectionsPreview() {
+  const box = document.getElementById("correctionsTable");
+  if (!box || correctionsBuilt || !evidenceData) return;
+  correctionsBuilt = true;
+  let total = 0;
+  for (let ci = 0; ci < data.clusters.length; ci += 1) total += evidenceCount(ci);
+  if (!total) {
+    box.innerHTML = "<p class='muted'>No evidence rows: Recore changed no cell in this run.</p>";
+    return;
+  }
+  // Corrections first, then kept out, then rejected, in matrix order.
+  const picked = [[], [], []];
+  for (let ci = 0; ci < data.clusters.length && picked[0].length < CORRECTIONS_PREVIEW; ci += 1) {
+    if (!evidenceCount(ci)) continue;
+    for (const row of decodeEvidence(ci)) {
+      const rank = row.matrix_action === "correct_presence" ? 0 : row.decision === "accepted" ? 1 : 2;
+      if (picked[rank].length < CORRECTIONS_PREVIEW) picked[rank].push([ci, row]);
+    }
+  }
+  const shown = [...picked[0], ...picked[1], ...picked[2]].slice(0, CORRECTIONS_PREVIEW);
+  const body = shown.map(([ci, row]) => {
+    const state = stateAt(ci, row.genome);
+    return `<tr data-cell-cluster="${ci}" data-cell-genome="${row.genome}" tabindex="0">` +
+      `<td><span class="state-chip ${state.toLowerCase()}">${escapeHtml(CELL_STATE_WORDS[state])}</span></td>` +
+      `<td class="mono">${escapeHtml(data.genomes[row.genome] || "")}</td>` +
+      `<td class="mono">${escapeHtml(data.clusters[ci].name)}</td>` +
+      `<td>${escapeHtml(row.rescue_type || row.evidence_state || "")}</td>` +
+      `<td class="num">${pctText(row.identity)}</td><td class="num">${pctText(row.coverage)}</td></tr>`;
+  }).join("");
+  box.innerHTML = `<p class="muted">${plural(total, "evidence row")}${total > shown.length ? `; the first ${formatInt(shown.length)} are shown, corrections first. Copy or download the rest.` : "."} Click a row to open that cell.</p>` +
+    `<div class="table-wrap"><table class="corrections"><thead><tr><th>Cell</th><th>Genome</th><th>Cluster</th><th>Type</th><th class="num">Identity</th><th class="num">Coverage</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function openCellFromDrawer(row) {
+  const clusterIdx = Number(row.getAttribute("data-cell-cluster"));
+  const genomeIdx = Number(row.getAttribute("data-cell-genome"));
+  document.getElementById("closeDetails")?.click();
+  selected = clusterIdx;
+  selectedGenome = genomeIdx;
+  selectedSyntenyReference = false;
+  populateOptions();
+  setInspectorTab("cluster");
+  render(true);
+  scrollToGenome(genomeIdx);
+}
+// The drawer is written after this script, so its controls are reached by
+// delegation rather than looked up now.
+document.addEventListener("click", event => {
+  const row = event.target.closest("#correctionsTable tr[data-cell-cluster]");
+  if (row) {
+    openCellFromDrawer(row);
+    return;
+  }
+  if (event.target.closest("#openDetails")) {
+    requestAnimationFrame(buildCorrectionsPreview);
+    return;
+  }
+  const copyButton = event.target.closest("#copyCorrections");
+  if (copyButton) {
+    const copy = window.recoreCopyText || (() => Promise.resolve(false));
+    copy(correctionsTsv()).then(ok => {
+      copyButton.textContent = ok ? "Copied" : "Copy failed: use Download";
+      setTimeout(() => { copyButton.textContent = "Copy as TSV"; }, 1800);
+    });
+    return;
+  }
+  if (event.target.closest("#downloadCorrections")) {
+    downloadBlob(new Blob([correctionsTsv()], {type: "text/tab-separated-values"}), "recore_changed_cells.tsv");
+  }
+});
+document.addEventListener("keydown", event => {
+  const row = event.target.closest && event.target.closest("#correctionsTable tr[data-cell-cluster]");
+  if (row && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    openCellFromDrawer(row);
+  }
+});
+
+/* ---- Keyboard cell cursor -------------------------------------------------
+   The matrix is a canvas, so without this a keyboard could reach a row only by
+   typing its genome into find. The cursor reuses the hover marks and readout,
+   and says where it is through the live region. */
+const liveRegion = document.getElementById("liveRegion");
+function announce(text) {
+  if (!liveRegion) return;
+  liveRegion.textContent = "";
+  // A fresh node each time, so the same text twice is still read out.
+  requestAnimationFrame(() => { liveRegion.textContent = text; });
+}
+const cursor = {row: -1, col: -1};
+function cellReadout(row, col) {
+  const clusterIdx = originalClusterAtVisibleColumn(col);
+  const genomeIdx = leafOrder[row];
+  const cluster = data.clusters[clusterIdx];
+  if (!cluster || genomeIdx === undefined) return "";
+  const state = stateAt(clusterIdx, genomeIdx);
+  const evidence = state === "R" || state === "K" ? cellEvidence(clusterIdx, genomeIdx)[0] : null;
+  return `${data.genomes[genomeIdx]}, ${cluster.name}: ${labels[state]}${evidence ? `, ${evidenceSummary(evidence)}` : ""}`;
+}
+function moveCursor(row, col) {
+  const rows = leafOrder.length;
+  const cols = visibleClusters.length;
+  if (!rows || !cols) return;
+  cursor.row = Math.max(0, Math.min(rows - 1, row));
+  cursor.col = Math.max(0, Math.min(cols - 1, col));
+  const view = viewportSize(matrixViewport);
+  const y = cursor.row * cellH;
+  const x = cursor.col * cellW;
+  if (y < matrixPane.scrollTop) matrixPane.scrollTop = y;
+  else if (y + cellH > matrixPane.scrollTop + view.h) matrixPane.scrollTop = y + cellH - view.h;
+  if (x < matrixPane.scrollLeft) matrixPane.scrollLeft = x;
+  else if (x + cellW > matrixPane.scrollLeft + view.w) matrixPane.scrollLeft = x + cellW - view.w;
+  const text = cellReadout(cursor.row, cursor.col);
+  setHover(cursor.row, cursor.col, text);
+  announce(text);
+}
+matrixPane.addEventListener("focus", () => {
+  if (cursor.row >= 0) return;
+  const row = selectedGenome >= 0 ? rowOfGenome[selectedGenome] : Math.floor(matrixPane.scrollTop / cellH);
+  moveCursor(Math.max(0, row), Math.max(0, selectedVisibleColumn()));
+});
+matrixPane.addEventListener("blur", () => setHover(-1, -1, defaultStatus));
+matrixPane.addEventListener("keydown", event => {
+  if (event.metaKey || event.altKey) return;
+  const view = viewportSize(matrixViewport);
+  const pageRows = Math.max(1, Math.floor(view.h / cellH) - 1);
+  const pageCols = Math.max(1, Math.floor(view.w / cellW) - 1);
+  const {row, col} = cursor.row >= 0 ? cursor : {row: 0, col: Math.max(0, selectedVisibleColumn())};
+  let next = null;
+  switch (event.key) {
+    case "ArrowDown": next = [row + (event.shiftKey ? pageRows : 1), col]; break;
+    case "ArrowUp": next = [row - (event.shiftKey ? pageRows : 1), col]; break;
+    case "ArrowRight": next = [row, col + (event.shiftKey ? pageCols : 1)]; break;
+    case "ArrowLeft": next = [row, col - (event.shiftKey ? pageCols : 1)]; break;
+    case "PageDown": next = [row + pageRows, col]; break;
+    case "PageUp": next = [row - pageRows, col]; break;
+    case "Home": next = event.ctrlKey ? [row, 0] : [0, col]; break;
+    case "End": next = event.ctrlKey ? [row, visibleClusters.length - 1] : [leafOrder.length - 1, col]; break;
+    case "Enter":
+    case " ":
+      event.preventDefault();
+      event.stopPropagation();
+      selectedGenome = leafOrder[row];
+      selectVisibleColumn(col);
+      announce(`Opened ${cellReadout(row, col)}`);
+      return;
+    default:
+      return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  moveCursor(next[0], next[1]);
 });
 matrixPane.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
+  tooltip.dataset.key = "";
   setHover(-1, -1, defaultStatus);
 });
-matrixPane.addEventListener("click", event => selectVisibleColumn(columnAtPointer(event, matrixPane)));
+matrixPane.addEventListener("click", event => {
+  // A cell is a cluster and a genome. Selecting only the cluster left an open
+  // genome card describing some other genome, in some other cluster.
+  const c = columnAtPointer(event, matrixPane);
+  const r = rowAtPointer(event, matrixPane);
+  if (r >= 0) selectedGenome = leafOrder[r];
+  if (c >= 0) selectVisibleColumn(c);
+  else if (r >= 0) renderGenomeDetails();
+});
 
 /* ---- Print and export ----------------------------------------------------
    Canvases are bitmaps sized to the on-screen viewport, so printing without
    redrawing them clips the panes to whatever the screen happened to be. Redraw
    once the print layout is in place, and again when it is torn down. */
-window.addEventListener("beforeprint", () => {
-  applyLayout();
-  resetMatrixCache();
-  syntenyKey = "";
-  render(false);
-});
-window.addEventListener("afterprint", () => {
-  applyLayout();
-  resetMatrixCache();
-  syntenyKey = "";
-  render(false);
-});
+/* Printing swaps the live panes for the figure: the whole matrix, in the
+   light palette, with tips on their rows, a key and a caption. Redrawing the
+   canvases for paper ran under screen styles (dark, the pane's screen width)
+   and printed 17 of 24 columns. */
+function preparePrint() {
+  const main = document.getElementById("explorer");
+  if (!main || document.getElementById("printFigure")) return;
+  const image = document.createElement("img");
+  image.id = "printFigure";
+  image.className = "print-figure";
+  image.alt = "Corrected matrix with the phylogeny";
+  image.src = figureCanvas(true).toDataURL("image/png");
+  main.before(image);
+}
+function finishPrint() {
+  document.getElementById("printFigure")?.remove();
+}
+window.addEventListener("beforeprint", preparePrint);
+window.addEventListener("afterprint", finishPrint);
+if (window.matchMedia) {
+  const printQuery = window.matchMedia("print");
+  const onPrintChange = event => (event.matches ? preparePrint() : finishPrint());
+  if (printQuery.addEventListener) printQuery.addEventListener("change", onPrintChange);
+}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -2647,66 +3808,287 @@ function downloadBlob(blob, filename) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-/* Compose the panes as drawn into one bitmap at 2x. The report's job is to end
-   up in a manuscript, and screenshotting a browser window is not a figure
-   pipeline. */
-function exportViewPng() {
-  const scale = 2;
+/* ---- Figure export ---------------------------------------------------------
+   One bitmap with the tree, the lineage strip, the column names and the matrix
+   drawn on one geometry, so tip N sits on row N. It used to paste the screen's
+   canvases, stretching the tree to the matrix height (rows drifted up to 38 px
+   off their tips), baking in the hover band, the selection tint and the dark
+   theme, and upscaling a 1x bitmap. The whole matrix goes in when it fits;
+   otherwise the window on screen, and the caption names the ranges. */
+const FIGURE_SCALE = 3;
+const FIGURE_MAX_DIM = 16000;
+const FIGURE_MAX_PIXELS = 90e6;
+const FIGURE_WHOLE_MAX = 4000;
+function figureRange(forceWhole = false) {
+  const rows = leafOrder.length;
+  const cols = visibleClusters.length;
+  if (cols * cellW <= FIGURE_WHOLE_MAX && rows * cellH <= FIGURE_WHOLE_MAX) {
+    return {c0: 0, c1: cols, r0: 0, r1: rows, whole: true, cw: cellW, ch: cellH};
+  }
+  if (forceWhole) {
+    // Paper takes the whole run: shrink the cells (to density if need be).
+    return {
+      c0: 0, c1: cols, r0: 0, r1: rows, whole: true,
+      cw: Math.min(cellW, 1600 / Math.max(1, cols)),
+      ch: Math.min(cellH, 1100 / Math.max(1, rows)),
+    };
+  }
+  const view = viewportSize(matrixViewport);
+  const left = matrixScrollLeft();
+  const top = matrixScrollTop();
+  return {
+    c0: Math.max(0, Math.floor(left / cellW)),
+    c1: Math.min(cols, Math.ceil((left + view.w) / cellW)),
+    r0: Math.max(0, Math.floor(top / cellH)),
+    r1: Math.min(rows, Math.ceil((top + view.h) / cellH)),
+    whole: false,
+    cw: cellW,
+    ch: cellH,
+  };
+}
+function drawFigure(forceWhole = false) {
+  const {c0, c1, r0, r1, whole, cw, ch} = figureRange(forceWhole);
+  const margin = 16;
   const gap = 8;
-  const treeBodyW = treeCanvas ? treeCanvas.clientWidth : 0;
-  const treeW = treeBodyW + LINEAGE_STRIP_W;
-  const headTop = headerCanvas ? headerCanvas.clientHeight : 0;
-  const matrixW = canvas ? canvas.clientWidth : 0;
-  const bodyH = canvas ? canvas.clientHeight : 0;
-  const width = treeW + gap + matrixW;
-  const height = headTop + bodyH;
-  if (width < 2 || height < 2) return;
+  const treeW = treeWidth;
+  const stripW = colorMode.value === "lineage" ? LINEAGE_STRIP_W : 0;
+  const band = columnLabelBand();
+  const headH = band ? band + 10 : 10;
+  const matrixW = Math.max(1, (c1 - c0) * cw);
+  const matrixH = Math.max(1, (r1 - r0) * ch);
+  const keyH = 22;
+  const captionH = 34;
+  const width = margin * 2 + treeW + stripW + gap + matrixW;
+  const height = margin * 2 + headH + matrixH + keyH + captionH;
+  const scale = Math.max(1, Math.min(
+    FIGURE_SCALE,
+    FIGURE_MAX_DIM / Math.max(width, height),
+    Math.sqrt(FIGURE_MAX_PIXELS / (width * height)),
+  ));
   const out = document.createElement("canvas");
   out.width = Math.round(width * scale);
   out.height = Math.round(height * scale);
-  const octx = out.getContext("2d");
-  octx.setTransform(scale, 0, 0, scale, 0, 0);
-  octx.fillStyle = panelBg;
-  octx.fillRect(0, 0, width, height);
-  // A canvas with a zero dimension throws from drawImage, and any pane can be
-  // collapsed by the user or by a narrow window.
-  const paste = (source, x, y, w, h) => {
-    if (!source || !source.width || !source.height || w < 1 || h < 1) return;
-    octx.drawImage(source, x, y, w, h);
-  };
-  paste(headerCanvas, treeW + gap, 0, matrixW, headTop);
-  paste(treeCanvas, 0, headTop, treeBodyW, bodyH);
-  paste(lineageStripCanvas, treeBodyW, headTop, LINEAGE_STRIP_W, bodyH);
-  paste(canvas, treeW + gap, headTop, matrixW, bodyH);
-  out.toBlob(blob => {
-    if (blob) downloadBlob(blob, "recore_matrix.png");
-  }, "image/png");
+  const f = out.getContext("2d");
+  f.setTransform(scale, 0, 0, scale, 0, 0);
+  f.fillStyle = panelBg;
+  f.fillRect(0, 0, width, height);
+  const bodyTop = margin + headH;
+  const matrixLeft = margin + treeW + stripW + gap;
+
+  // Tree: the screen's drawing code on the figure's context and rows.
+  const keepCtx = treeCtx;
+  const keepHighlights = highlightedRows;
+  const keepCarriers = selectedSyntenyCarriers;
+  const keepCellH = cellH;
+  highlightedRows = new Set();
+  selectedSyntenyCarriers = new Set();
+  try {
+    // The tree's rows follow the figure's row height, which paper may shrink.
+    cellH = ch;
+    treeCtx = f;
+    f.save();
+    f.beginPath();
+    f.rect(margin, bodyTop, treeW, matrixH);
+    f.clip();
+    f.translate(margin, bodyTop);
+    f.lineWidth = 1;
+    drawTreeNode(treeRoot, r0 * ch, r0, r1, matrixH, labelToggle.checked && ch >= TIP_LABEL_MIN_ROW);
+    f.restore();
+  } finally {
+    cellH = keepCellH;
+    treeCtx = keepCtx;
+    highlightedRows = keepHighlights;
+    selectedSyntenyCarriers = keepCarriers;
+  }
+  if (stripW) {
+    for (let r = r0; r < r1; r += 1) {
+      f.fillStyle = lineageColor(lineageOfGenomeName(data.genomes[leafOrder[r]] || ""));
+      f.fillRect(margin + treeW, bodyTop + (r - r0) * ch, stripW, Math.max(1, ch));
+    }
+  }
+
+  // Matrix and column names.
+  f.save();
+  f.translate(matrixLeft, bodyTop);
+  const figureCells = {firstCol: c0, lastCol: c1, firstRow: r0, lastRow: r1, left: c0 * cw, top: r0 * ch, cw, ch, dataW: matrixW, dataH: matrixH};
+  if (inDensityMode(cw, ch)) {
+    paintDensity(f, {...figureCells, scale, dx: Math.round(matrixLeft * scale), dy: Math.round(bodyTop * scale)});
+  } else {
+    paintCells(f, figureCells);
+  }
+  f.restore();
+  if (band) {
+    f.save();
+    f.font = LABEL_FONT;
+    f.fillStyle = labelInk;
+    f.textBaseline = "middle";
+    const flat = columnLabelsFlat();
+    f.textAlign = flat ? "center" : "left";
+    for (let c = c0; c < c1; c += 1) {
+      const cluster = data.clusters[originalClusterAtVisibleColumn(c)];
+      if (!cluster) continue;
+      const x = matrixLeft + (c - c0) * cw + cw / 2;
+      if (flat) {
+        f.fillText(fitLabel(cluster.name, cw - 8), x, margin + band / 2);
+      } else {
+        f.save();
+        f.translate(x, margin + band - 4);
+        f.rotate(-Math.PI / 2);
+        f.fillText(fitLabel(cluster.name, band - 12), 0, 0);
+        f.restore();
+      }
+    }
+    f.restore();
+  }
+
+  // Key: the states drawn, then the tree's scale.
+  let x = margin;
+  const keyY = bodyTop + matrixH + 8;
+  f.font = LABEL_FONT;
+  f.textBaseline = "middle";
+  f.textAlign = "left";
+  for (const state of shownStates()) {
+    f.fillStyle = colors[state];
+    f.fillRect(x, keyY, 10, 10);
+    if (state === "A") {
+      f.strokeStyle = strokes.A;
+      f.strokeRect(x + 0.5, keyY + 0.5, 9, 9);
+    }
+    f.fillStyle = labelInk;
+    f.fillText(labels[state], x + 14, keyY + 5);
+    x += 14 + f.measureText(labels[state]).width + 14;
+  }
+  if (treeMode === "phylogram" && maxDistance > 0) {
+    const step = niceStep(maxDistance * 0.32);
+    const barW = step * (treeUsableWidth() / maxDistance);
+    if (barW >= 14 && Number.isFinite(barW)) {
+      x += 10;
+      f.fillStyle = labelInk;
+      f.fillRect(x, keyY + 5, barW, 1.2);
+      f.fillText(`${formatDistance(step)} substitutions/site`, x + barW + 6, keyY + 5);
+    }
+  }
+
+  // Caption: what is shown, out of what, under which settings.
+  const policy = (document.querySelector(".readout b.tag") || {}).textContent || "";
+  const version = (document.querySelector(".version-chip") || {}).textContent || "";
+  const shown = whole
+    ? `${plural(r1 - r0, "genome")} x ${plural(c1 - c0, "cluster")}`
+    : `rows ${formatInt(r0 + 1)}-${formatInt(r1)} of ${formatInt(leafOrder.length)} genomes, columns ${formatInt(c0 + 1)}-${formatInt(c1)} of ${formatInt(visibleClusters.length)} clusters`;
+  const caption = [
+    `Recore corrected matrix: ${shown}`,
+    `${treeCaption()}`,
+    policy ? `${policy} policy` : "",
+    version ? `recore ${version}` : "",
+  ].filter(Boolean).join(" · ");
+  f.fillStyle = labelInk;
+  f.fillText(caption, margin, keyY + 26);
+  return out;
+}
+/** A figure in the light palette, restored however the drawing ends. */
+function figureCanvas(forceWhole = false) {
+  const light = lightThemeDeclaration();
+  try {
+    drawingFigure = true;
+    if (light) refreshThemeColors(light);
+    return drawFigure(forceWhole);
+  } finally {
+    drawingFigure = false;
+    if (light) refreshThemeColors();
+  }
+}
+function exportViewPng() {
+  const out = figureCanvas();
+  return new Promise(resolve => {
+    out.toBlob(blob => {
+      if (blob) downloadBlob(blob, "recore_matrix.png");
+      resolve(Boolean(blob));
+    }, "image/png");
+  });
 }
 /* Synteny is already vector, so export it as vector: gene arrows have to stay
    crisp at print resolution. */
+/* Every drawn property is copied from the live element as a plain attribute:
+   PDF tools and illustration software do not resolve var(), and an embedded
+   <style> with the page's tokens drew black bars in MuPDF. rgba() becomes a hex
+   colour plus an opacity, which every renderer understands. */
+const SVG_STYLE_PROPS = ["fill", "fill-opacity", "stroke", "stroke-opacity", "stroke-width", "stroke-dasharray", "opacity", "font-family", "font-size", "font-weight", "font-style", "text-anchor", "dominant-baseline"];
+function plainColor(value) {
+  const match = /^rgba?\(([^)]+)\)$/.exec(String(value).trim());
+  if (!match) return [value, null];
+  const parts = match[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+  const hex = "#" + parts.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, "0")).join("");
+  return [hex, parts.length > 3 ? parts[3] : null];
+}
 function exportSyntenySvg() {
   if (!syntenySvg || syntenyHidden) return false;
   const clone = syntenySvg.cloneNode(true);
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  // Inline the rules the drawing relies on, or it opens unstyled outside the page.
-  const rules = [];
-  for (const sheet of document.styleSheets) {
-    let cssRules = null;
-    try {
-      cssRules = sheet.cssRules;
-    } catch (_e) {
-      continue;
+  const live = [syntenySvg, ...syntenySvg.querySelectorAll("*")];
+  const copies = [clone, ...clone.querySelectorAll("*")];
+  const light = lightThemeDeclaration();
+  // Read the styles under the light theme. The switch and the switch back
+  // happen inside this one task, so nothing is painted in between, and
+  // transitions are held off so none starts from the brief change.
+  const root = document.documentElement;
+  const theme = root.getAttribute("data-theme");
+  root.classList.add("theme-frozen");
+  if (theme !== "light") root.setAttribute("data-theme", "light");
+  try {
+  live.forEach((element, i) => {
+    const target = copies[i];
+    const computed = getComputedStyle(element);
+    for (const prop of SVG_STYLE_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (!value || value === "none" && prop !== "fill" && prop !== "stroke") continue;
+      target.setAttribute(prop, value);
     }
-    for (const rule of cssRules || []) {
-      const selector = rule.selectorText || "";
-      if (selector.includes("synteny") || selector.startsWith(":root")) {
-        rules.push(rule.cssText);
+    // A colour's own alpha folds into its opacity attribute; a transparent
+    // label box written as plain #000000 drew black.
+    for (const prop of ["fill", "stroke"]) {
+      const [hex, alpha] = plainColor(computed.getPropertyValue(prop));
+      if (!target.hasAttribute(prop) || hex === computed.getPropertyValue(prop)) continue;
+      target.setAttribute(prop, alpha === 0 ? "none" : hex);
+      if (alpha !== null && alpha > 0 && alpha < 1) {
+        const own = Number(computed.getPropertyValue(`${prop}-opacity`)) || 1;
+        target.setAttribute(`${prop}-opacity`, String(Math.round(own * alpha * 1000) / 1000));
       }
     }
+    target.removeAttribute("class");
+    target.removeAttribute("style");
+  });
+  } finally {
+    if (theme === null) root.removeAttribute("data-theme");
+    else if (theme !== "light") root.setAttribute("data-theme", theme);
+    getComputedStyle(root).color;
+    root.classList.remove("theme-frozen");
   }
-  const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-  style.textContent = rules.join("\n");
-  clone.insertBefore(style, clone.firstChild);
+  clone.querySelectorAll("style").forEach(node => node.remove());
+  // A figure is read on paper: a white ground and a title naming the cluster.
+  const width = Number(syntenySvg.getAttribute("width")) || syntenySvg.clientWidth;
+  const height = Number(syntenySvg.getAttribute("height")) || syntenySvg.clientHeight;
+  const ns = "http://www.w3.org/2000/svg";
+  const group = document.createElementNS(ns, "g");
+  group.setAttribute("transform", "translate(0 28)");
+  while (clone.firstChild) group.appendChild(clone.firstChild);
+  const ground = document.createElementNS(ns, "rect");
+  ground.setAttribute("width", String(width));
+  ground.setAttribute("height", String(height + 28));
+  ground.setAttribute("fill", readThemeVar("--panel", "#ffffff", light));
+  const title = document.createElementNS(ns, "text");
+  title.setAttribute("x", "14");
+  title.setAttribute("y", "19");
+  title.setAttribute("font-family", "Inter, Helvetica, Arial, sans-serif");
+  title.setAttribute("font-size", "13");
+  title.setAttribute("font-weight", "600");
+  title.setAttribute("fill", readThemeVar("--ink", "#18181b", light));
+  title.textContent = `${(data.clusters[selected] || {}).name || ""}: unique synteny blocks (Recore ${(document.querySelector(".version-chip") || {}).textContent || ""})`;
+  clone.appendChild(ground);
+  clone.appendChild(title);
+  clone.appendChild(group);
+  clone.setAttribute("width", String(width));
+  clone.setAttribute("height", String(height + 28));
+  clone.setAttribute("viewBox", `0 0 ${width} ${height + 28}`);
   const blob = new Blob([new XMLSerializer().serializeToString(clone)], {
     type: "image/svg+xml",
   });
@@ -2714,12 +4096,16 @@ function exportSyntenySvg() {
   return true;
 }
 if (exportButton) {
-  exportButton.addEventListener("click", () => {
-    exportViewPng();
-    const svg = exportSyntenySvg();
-    status.textContent = svg
-      ? "Exported recore_matrix.png and recore_synteny.svg."
-      : "Exported recore_matrix.png.";
+  exportButton.addEventListener("click", async () => {
+    const files = [];
+    if (await exportViewPng()) files.push("recore_matrix.png");
+    // Safari starts only one download per user gesture tick; the second has to
+    // come a moment later, or it is dropped while the status claims it was saved.
+    if (!syntenyHidden && syntenySvg) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      if (exportSyntenySvg()) files.push("recore_synteny.svg");
+    }
+    status.textContent = files.length ? `Exported ${files.join(" and ")}.` : "Nothing was exported.";
   });
 }
 
@@ -2753,8 +4139,6 @@ function rootOnGenome(genomeIdx) {
    A plain tip click used to reroot the whole tree, which is a big move to
    trigger by accident and left no way to simply ask about a genome. Click now
    inspects; Alt-click reroots. */
-let selectedGenome = -1;
-
 function setInspectorTab(name) {
   const wantGenome = name === "genome";
   if (clusterTab) {
@@ -2770,15 +4154,53 @@ function setInspectorTab(name) {
 }
 
 if (clusterTab) clusterTab.addEventListener("click", () => setInspectorTab("cluster"));
+if (details) {
+  details.addEventListener("click", event => {
+    if (event.target.closest("[data-clear-cell]")) {
+      selectedGenome = -1;
+      highlightedRows = new Set();
+      render(false);
+      return;
+    }
+    const cell = event.target.closest("[data-cell-genome]");
+    if (cell) {
+      // A row of the evidence list opens that cell and brings its tip into view.
+      selectedGenome = Number(cell.getAttribute("data-cell-genome"));
+      scrollToGenome(selectedGenome);
+      return;
+    }
+    const findTip = event.target.closest("[data-find-tip]");
+    if (findTip) scrollToGenome(Number(findTip.getAttribute("data-find-tip")));
+  });
+}
 if (genomeTab) genomeTab.addEventListener("click", () => setInspectorTab("genome"));
 
+/* In a narrow window the inspector is a bottom sheet: a selection opens it. */
+function openInspectorSheet() {
+  if (inspectorPane && narrowQuery && narrowQuery.matches) inspectorPane.classList.add("sheet-open");
+}
+function closeInspectorSheet() {
+  if (inspectorPane) inspectorPane.classList.remove("sheet-open");
+}
+document.getElementById("closeInspector")?.addEventListener("click", closeInspectorSheet);
 function inspectGenome(genomeIdx, {focus = true} = {}) {
   if (genomeIdx < 0) return;
   selectedGenome = genomeIdx;
   renderGenomeDetails();
   if (focus) setInspectorTab("genome");
+  openInspectorSheet();
 }
 
+function genomeQc(genomeIdx) {
+  const row = data.genomeQc && data.genomeQc[genomeIdx];
+  return row && row[0] ? {status: row[0], flags: row[1] || ""} : null;
+}
+function genomeQcHtml(genomeIdx) {
+  const qc = genomeQc(genomeIdx);
+  if (!qc) return "";
+  const flags = qc.flags ? qc.flags.split(";").filter(Boolean).map(flag => flag.replace(/_/g, " ")) : [];
+  return `<p class="qc-line"><span class="qc-chip ${escapeHtml(qc.status)}">QC ${escapeHtml(qc.status)}</span>${flags.length ? ` <small class="muted">${escapeHtml(flags.join("; "))}</small>` : ""}</p>`;
+}
 function renderGenomeDetails() {
   if (!genomeDetails) return;
   if (selectedGenome < 0) {
@@ -2786,8 +4208,8 @@ function renderGenomeDetails() {
     return;
   }
   const name = data.genomes[selectedGenome] || "";
-  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, A: 0};
-  const assessed = totals.P + totals.R + totals.N + totals.A;
+  const totals = genomeStats[selectedGenome] || {P: 0, R: 0, N: 0, K: 0, A: 0};
+  const assessed = totals.P + totals.R + totals.N + totals.K + totals.A;
   const lineage = lineageOfGenomeName(name);
   const node = findLeafByGenome(treeRoot, selectedGenome);
   const state = stateAt(selected, selectedGenome);
@@ -2799,18 +4221,17 @@ function renderGenomeDetails() {
       <h3>${escapeHtml(name)}</h3>
       ${isReference ? "<span class='pill'>reference</span>" : ""}
     </div>
-    <p class="muted">Tip ${row >= 0 ? row + 1 : "?"} of ${leafOrder.length}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
+    <p class="muted">Tip ${row >= 0 ? formatInt(row + 1) : "?"} of ${formatInt(leafOrder.length)}${lineage && lineage !== "unknown" ? ` &middot; lineage ${escapeHtml(lineage)}` : ""}</p>
+    ${genomeQcHtml(selectedGenome)}
     <dl class="cluster-dl">
       <dt>In the selected cluster</dt>
-      <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong></dd>
+      <dd>${escapeHtml(cluster ? cluster.name : "none")}: <strong>${escapeHtml(labels[state])}</strong>${(() => {
+        const row = cluster ? cellEvidence(selected, selectedGenome)[0] : null;
+        return row ? `<br><span class="muted">${escapeHtml(evidenceSummary(row))}</span>` : "";
+      })()}</dd>
     </dl>
-    <div class="card-title">Cluster content across ${assessed.toLocaleString()} clusters</div>
-    <div class="count-rows">
-      ${countRow("present in input", totals.P, assessed, "p")}
-      ${countRow("rescued by Recore", totals.R, assessed, "r")}
-      ${countRow("supported by NSC", totals.N, assessed, "n")}
-      ${countRow("absent", totals.A, assessed, "a")}
-    </div>
+    <div class="card-title">Cluster content across ${plural(assessed, "cluster")}</div>
+    <div class="count-rows">${stateCountRows(totals, assessed)}</div>
     <dl class="cluster-dl">
       <dt>Position on the tree</dt>
       <dd>${node
@@ -2913,24 +4334,29 @@ function setPaletteScope(scope) {
 
 /* Name hits beat annotation hits, and a prefix beats a hit in the middle, so the
    thing you half-remembered the start of comes first. */
-function scoreHit(name, note, query) {
+/* Lower is better. An exact name, with its case, beats the same name in
+   another case: Enter on "Group_1" opened group_1 when both existed. */
+function scoreHit(name, note, query, raw = query) {
   const lowName = name.toLowerCase();
-  if (!query) return 3;
-  if (lowName.startsWith(query)) return 0;
-  if (lowName.includes(query)) return 1;
-  if (note && note.toLowerCase().includes(query)) return 2;
+  if (!query) return 5;
+  if (name === raw) return 0;
+  if (lowName === query) return 1;
+  if (lowName.startsWith(query)) return 2;
+  if (lowName.includes(query)) return 3;
+  if (note && note.toLowerCase().includes(query)) return 4;
   return -1;
 }
 
 function buildPaletteRows() {
-  const query = search.value.trim().toLowerCase();
+  const raw = search.value.trim();
+  const query = raw.toLowerCase();
   const hits = [];
   if (paletteScope !== "genome") {
     for (let i = 0; i < visibleClusters.length; i += 1) {
       const idx = visibleClusters[i];
       const cluster = data.clusters[idx];
       const note = cluster.annotation || "";
-      const score = scoreHit(cluster.name, note, query);
+      const score = scoreHit(cluster.name, note, query, raw);
       if (score < 0) continue;
       hits.push({
         kind: "cluster",
@@ -2948,7 +4374,7 @@ function buildPaletteRows() {
       const name = data.genomes[genomeIdx] || "";
       const lineage = lineageOfGenomeName(name);
       const note = lineage && lineage !== "unknown" ? `lineage ${lineage}` : "";
-      const score = scoreHit(name, note, query);
+      const score = scoreHit(name, note, query, raw);
       if (score < 0) continue;
       hits.push({
         kind: "genome",
@@ -2990,8 +4416,8 @@ function refreshPalette() {
   }
   if (paletteCount) {
     paletteCount.textContent = total > rows.length
-      ? `${rows.length} of ${total.toLocaleString()}`
-      : `${total.toLocaleString()} result${total === 1 ? "" : "s"}`;
+      ? `${formatInt(rows.length)} of ${formatInt(total)}`
+      : plural(total, "result");
   }
 }
 
@@ -3085,12 +4511,19 @@ document.addEventListener("keydown", event => {
   }
   if (event.key === "Escape") {
     if (paletteIsOpen()) { closePalette(); return; }
+    if (inspectorPane && inspectorPane.classList.contains("sheet-open")) { closeInspectorSheet(); return; }
     if (shortcutSheet && !shortcutSheet.hidden) { setSheetOpen(false); return; }
     if (anyPaneMenuOpen()) { setPaneMenu(null, false); return; }
     return;
   }
-  if (paletteIsOpen() || typingInField(event.target)) return;
+  if (event.defaultPrevented || paletteIsOpen() || typingInField(event.target)) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
+  // Nothing acts behind an open dialog: the drawer handles its own keys, and
+  // the shortcut sheet only answers to the key that closes it.
+  if (document.getElementById("runDetails")?.classList.contains("open")) return;
+  if (shortcutSheet && !shortcutSheet.hidden && event.key !== "?") return;
+  // A focused seam uses the arrows to resize itself.
+  if (event.target.closest && event.target.closest("[role='separator']")) return;
 
   switch (event.key) {
     case "/":
@@ -3141,7 +4574,7 @@ document.addEventListener("keydown", event => {
       }
       break;
     case "z":
-      fitZoomToData();
+      fitZoomToData(true);
       resetMatrixCache();
       render(true);
       status.textContent = "Zoom fitted to the data.";
@@ -3213,21 +4646,30 @@ function renderOverview() {
     const n = visibleClusters.length;
     const genomes = Math.max(1, data.genomes.length);
     if (n) {
-      // One bar per device column: with more clusters than pixels, take the
-      // strongest cluster in each bucket so a single high-prevalence column in
-      // a crowd of empty ones is still visible.
-      octx.fillStyle = colors.P;
-      octx.globalAlpha = 0.45;
+      // One bar per device column: the mean prevalence of the clusters in it
+      // (the maximum filled every column at 30,000 clusters and said nothing),
+      // and a mark on top where any of them has evidence behind a change.
       for (let x = 0; x < width; x += 1) {
         const from = Math.floor(x / width * n);
         const to = Math.max(from + 1, Math.floor((x + 1) / width * n));
-        let best = 0;
+        let sum = 0;
+        let count = 0;
+        let changed = 0;
         for (let i = from; i < to && i < n; i += 1) {
-          const present = data.clusters[visibleClusters[i]]?.present || 0;
-          if (present > best) best = present;
+          const idx = visibleClusters[i];
+          sum += data.clusters[idx]?.present || 0;
+          count += 1;
+          if (evidenceCount(idx)) changed += 1;
         }
-        const h = Math.max(1, Math.round(best / genomes * (height - 4)));
+        const h = Math.max(1, Math.round(sum / Math.max(1, count) / genomes * (height - 6)));
+        octx.globalAlpha = 0.55;
+        octx.fillStyle = colors.P;
         octx.fillRect(x, height - 2 - h, 1, h);
+        if (changed) {
+          octx.globalAlpha = 0.35 + 0.65 * Math.min(1, changed / Math.max(1, count) * 4);
+          octx.fillStyle = colors.R;
+          octx.fillRect(x, 0, 1, 3);
+        }
       }
       octx.globalAlpha = 1;
       const at = visibleClusters.indexOf(selected);
@@ -3263,8 +4705,19 @@ if (overviewStrip) {
   });
 }
 
+/* The genome card names the selected cluster, so it follows every change of
+   selection, not only a click on a tip. */
+let genomeCardKey = "";
+afterRender = () => {
+  const key = `${selected}|${selectedGenome}`;
+  if (key === genomeCardKey) return;
+  genomeCardKey = key;
+  renderGenomeDetails();
+};
+
 renderGenomeDetails();
 populateOptions();
 render(false);
+window.recoreExplorerRunning = true;
 
 })();

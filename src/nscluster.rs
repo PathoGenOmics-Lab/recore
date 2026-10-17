@@ -11,7 +11,7 @@
 //! - Rayon parallel sketch computation + comparison
 //! - Integrated with Recore's PresenceAbsence for in-place matrix correction
 
-use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use ahash::{HashMap, HashMapExt, HashSet};
 use anyhow::{Context, Result};
 use log::{debug, info};
 use rayon::prelude::*;
@@ -23,16 +23,21 @@ use crate::types::ClusterIdx;
 // ── MinHash sketching ──
 
 const SKETCH_SIZE: usize = 128;
-/// Number of bands for LSH pre-filter. More bands = fewer false negatives but more comparisons.
-const NUM_BANDS: usize = 16;
-const ROWS_PER_BAND: usize = SKETCH_SIZE / NUM_BANDS; // 8
+/// Candidate pairs share at least this many sketch values.
+const MIN_SHARED_HASHES: u32 = 2;
+/// A hash in more sketches than this is a repeat or low-complexity k-mer; it
+/// says nothing about which clusters belong together and would make the
+/// candidate search quadratic.
+const MAX_HASH_FANOUT: usize = 500;
 
 /// FNV-1a inspired fast hash for k-mers. Deterministic, no random seed needed.
 #[inline]
 fn hash_kmer(kmer: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
+    // Uppercase, as hash_kmer_rc does: a soft-masked (lowercase) copy of a
+    // sequence used to hash to different values on one strand only.
     for &b in kmer {
-        h ^= b as u64;
+        h ^= b.to_ascii_uppercase() as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
     h
@@ -155,35 +160,38 @@ fn jaccard_from_sketches(a: &[u64], b: &[u64]) -> f64 {
 
 /// Estimate Jaccard *containment* of `a` in `b`: |A∩B| / |A|.
 /// More appropriate than similarity when sequences differ in length.
+///
+/// A full bottom-k sketch of B only knows B's hashes up to its largest value,
+/// so only A's values at or below it can be checked. Counting the rest as
+/// misses put a gene's own first half at about 0.5 contained in it.
 fn containment_from_sketches(a: &[u64], b: &[u64]) -> f64 {
-    let a_size = a.iter().filter(|&&v| v != u64::MAX).count();
-    if a_size == 0 {
+    let b_full = b.last().is_some_and(|&v| v != u64::MAX);
+    let limit = if b_full { b[b.len() - 1] } else { u64::MAX - 1 };
+    let a_checked: Vec<u64> = a
+        .iter()
+        .copied()
+        .filter(|&v| v != u64::MAX && v <= limit)
+        .collect();
+    if a_checked.is_empty() {
         return 0.0;
     }
 
     let mut i = 0;
     let mut j = 0;
     let mut intersection = 0u64;
-
-    while i < a.len() && j < b.len() {
-        if a[i] == u64::MAX {
-            break;
-        }
-        if b[j] == u64::MAX {
-            break;
-        }
-        if a[i] == b[j] {
+    while i < a_checked.len() && j < b.len() && b[j] != u64::MAX {
+        if a_checked[i] == b[j] {
             intersection += 1;
             i += 1;
             j += 1;
-        } else if a[i] < b[j] {
+        } else if a_checked[i] < b[j] {
             i += 1;
         } else {
             j += 1;
         }
     }
 
-    intersection as f64 / a_size as f64
+    intersection as f64 / a_checked.len() as f64
 }
 
 /// Max containment: max(containment(a,b), containment(b,a)).
@@ -192,52 +200,45 @@ fn max_containment_from_sketches(a: &[u64], b: &[u64]) -> f64 {
     containment_from_sketches(a, b).max(containment_from_sketches(b, a))
 }
 
-// ── LSH banding for candidate pair pre-filter ──
+// ── Candidate pairs ──
 
-/// Hash a band (slice of sketch values) to a single u64 for LSH bucketing.
-fn band_hash(band: &[u64]) -> u64 {
-    let mut h: u64 = 0;
-    for &v in band {
-        h = h.wrapping_mul(6364136223846793005).wrapping_add(v);
-    }
-    h
-}
-
-/// Find candidate pairs using LSH banding. Two sketches are candidates if they
-/// share at least one identical band. This dramatically reduces comparisons.
+/// Pairs of sketches that share at least MIN_SHARED_HASHES values, found
+/// through an index from hash to sketches. Positional bands of sorted bottom-k
+/// sketches almost never line up between a gene and a near copy or a fragment
+/// of it: they found 0 of 10 fragment pairs and 6 of 10 pairs at 99.5% identity.
 fn find_candidate_pairs(sketches: &[Vec<u64>]) -> HashSet<(usize, usize)> {
     let n = sketches.len();
-    let mut candidates = HashSet::new();
-
-    for band_idx in 0..NUM_BANDS {
-        let start = band_idx * ROWS_PER_BAND;
-        let end = start + ROWS_PER_BAND;
-
-        // Build bucket: band_hash → list of sketch indices
-        let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
-        for (i, sketch) in sketches.iter().enumerate() {
-            let bh = band_hash(&sketch[start..end]);
-            buckets.entry(bh).or_default().push(i);
+    let mut index: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (i, sketch) in sketches.iter().enumerate() {
+        for &value in sketch {
+            if value != u64::MAX {
+                index.entry(value).or_default().push(i);
+            }
         }
-
-        // All pairs within each bucket are candidates
-        for members in buckets.values() {
-            if members.len() > 1 {
-                for (mi, &a) in members.iter().enumerate() {
-                    for &b in &members[mi + 1..] {
-                        let pair = if a < b { (a, b) } else { (b, a) };
-                        candidates.insert(pair);
-                    }
+    }
+    let mut shared: HashMap<(usize, usize), u32> = HashMap::new();
+    for members in index.values() {
+        if members.len() < 2 || members.len() > MAX_HASH_FANOUT {
+            continue;
+        }
+        for (mi, &a) in members.iter().enumerate() {
+            for &b in &members[mi + 1..] {
+                if a != b {
+                    *shared.entry((a.min(b), a.max(b))).or_default() += 1;
                 }
             }
         }
     }
-
+    let candidates: HashSet<(usize, usize)> = shared
+        .into_iter()
+        .filter(|&(_, count)| count >= MIN_SHARED_HASHES)
+        .map(|(pair, _)| pair)
+        .collect();
     debug!(
-        "LSH banding: {} candidate pairs from {} sketches ({} bands)",
+        "NSC: {} candidate pairs from {} sketches sharing at least {} hashes",
         candidates.len(),
         n,
-        NUM_BANDS
+        MIN_SHARED_HASHES
     );
     candidates
 }
@@ -398,9 +399,12 @@ pub fn run_nscluster(
             .collect()
     });
 
-    // ── 3. LSH banding to find candidate pairs ──
+    // ── 3. Candidate pairs: sketches that share hashes ──
     let candidates = find_candidate_pairs(&sketches);
-    info!("NSC: {} candidate pairs from LSH banding", candidates.len());
+    info!(
+        "NSC: {} candidate pairs sharing sketch hashes",
+        candidates.len()
+    );
 
     // ── 4. Compute max containment for candidates, merge above threshold ──
     let n = cluster_seqs.len();
@@ -808,10 +812,55 @@ mod tests {
         assert_eq!(comps.len(), 2);
     }
 
+    /// A pseudo-random sequence with no stop structure, deterministic.
+    fn random_seq(len: usize, seed: u64) -> Vec<u8> {
+        let mut x = seed;
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                b"ACGT"[(x % 4) as usize]
+            })
+            .collect()
+    }
+
+    /// Soft-masked (lowercase) copies hashed differently on one strand, so
+    /// identical sequences in different case were never candidates.
     #[test]
-    fn test_band_hash_deterministic() {
-        let band = [1u64, 2, 3, 4, 5, 6, 7, 8];
-        assert_eq!(band_hash(&band), band_hash(&band));
+    fn test_case_does_not_change_the_sketch() {
+        let upper = random_seq(1200, 7);
+        let lower = upper.to_ascii_lowercase();
+        assert_eq!(minhash_sketch(&upper, 21), minhash_sketch(&lower, 21));
+    }
+
+    /// A gene's own first half is fully contained in it, and a 99.5% copy
+    /// nearly so; both must reach the candidate list and pass 0.8.
+    #[test]
+    fn test_fragments_and_near_copies_are_found_and_contained() {
+        let full = random_seq(1200, 11);
+        let half = full[..600].to_vec();
+        let mut near = full.clone();
+        for i in (100..1200).step_by(200) {
+            near[i] = if near[i] == b'A' { b'C' } else { b'A' };
+        }
+        let other = random_seq(1200, 99);
+        let sketches = vec![
+            minhash_sketch(&full, 21),
+            minhash_sketch(&half, 21),
+            minhash_sketch(&near, 21),
+            minhash_sketch(&other, 21),
+        ];
+        let candidates = find_candidate_pairs(&sketches);
+        assert!(
+            candidates.contains(&(0, 1)),
+            "fragment pair not a candidate"
+        );
+        assert!(candidates.contains(&(0, 2)), "near copy not a candidate");
+        assert!(!candidates.contains(&(0, 3)));
+        assert!(containment_from_sketches(&sketches[1], &sketches[0]) > 0.95);
+        assert!(max_containment_from_sketches(&sketches[0], &sketches[2]) > 0.8);
+        assert!(max_containment_from_sketches(&sketches[0], &sketches[3]) < 0.2);
     }
 
     #[test]

@@ -7,7 +7,54 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- `--write-html-report` no longer fails, and no longer drops a cluster's
+  mechanism and wording, when a genome or cluster name starts with a double
+  quote: recore's TSVs are read back without CSV quoting.
+- MinHash NSC finds fragments and near copies: candidates come from shared
+  sketch hashes instead of positional bands (which found 0 of 10 fragment
+  pairs), containment is estimated over the range a full sketch covers, and
+  soft-masked (lowercase) sequence sketches like upper case.
+- Corrected GFF3 files put rescue features on the GFF's own seqid when that
+  seqid was mapped onto a differently named FASTA contig.
+- `benchmarks/recore_report.py` writes `recore_compact_report.html` and refuses
+  to replace the binary's interactive `recore_report.html` without `--force`.
+- Synteny no longer FAILs, and rejects the rescue as an incompatible context,
+  when no genome carrying the cluster has it in a GFF: with nothing to compare
+  with, synteny is left unassessed. Reference copies found next to no clustered
+  gene still FAIL.
+- Overlapping rescues are resolved strongest first, so a rescue that loses no
+  longer removes another one whose only conflict was with it.
+- A cluster whose carriers are all off the tree reads `not_assessed` for
+  phylogenetic reliability and blink, instead of `moderate`.
+- `cluster_locus_summary.tsv` writes an empty `dominant_context_fraction` when
+  no context could be mapped, instead of 0.000.
+- The minimum supported Rust is 1.85, what the dependencies need; it was
+  declared as 1.70, which no longer built. CI now builds on it.
+- The benchmark scripts only delete a `--workdir` they created, instead of
+  removing whatever path they were given.
+
 ### Changed
+
+- `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
+  Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
+  or `held_out_quality` instead of a `corrected...` value, and a strict
+  correction whose span is not a whole number of codons reads `corrected_review`
+  instead of `publication_ready_correction`.
+- `genome_qc.tsv` no longer marks a genome `review` because its searched gaps
+  had no evidence, or because NSC added presence; both stay as informational
+  flags. A new `correction_burden_above_cohort` flag asks for review when a
+  genome's corrections sit above the cohort median plus three median absolute
+  deviations.
+- `run_manifest.json` records `created_utc` and `command_line`, and the output
+  schema is `recore.outputs.v7`.
+- The HTML report's run details open with a methods paragraph, the caveats the
+  evidence calls for, the parameters and a downloadable table of changed cells,
+  and list the files actually in the output directory.
+- The HTML report draws cells kept out of the matrix in their own colour, shows
+  each cell's evidence row on click, and colours input presence grey so that
+  corrections stand out. See the report guide for the new palette.
 
 - `--min-identity` and every identity threshold now compare against exact
   identity. It used to read 5 to 10 points low, so more distant copies clear the

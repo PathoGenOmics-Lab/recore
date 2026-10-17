@@ -62,11 +62,22 @@
   --info-soft: #ecfeff;
   --violet: #8b5cf6;
   --violet-soft: #f5f3ff;
-  --rescue: #059669;
-  --present: #6366f1;
-  --nsc: #8b5cf6;
-  --absent: #ffffff;
+  /* Cell states. Input presence is the quiet grey background of the matrix,
+     so what Recore found (corrected, kept out) is what draws the eye. Every
+     pair stays apart under deutan and protan vision (dE00 >= 14). */
+  --present: #b3bbc7;
+  --rescue: #0f6fd6;
+  --nsc: #e07b00;
+  --kept: #c01048;
+  --absent: #f4f5f7;
   --absent-stroke: #d4d4d8;
+  /* Mechanism families, kept off the cell-state hues and CVD-checked. */
+  --mech-retained: #667085;
+  --mech-gain: #4ca30d;
+  --mech-loss: #7a2e0e;
+  --mech-disruption: #fac515;
+  --mech-paralog: #15b79e;
+  --mech-unresolved: #1d2939;
 
   --link: #4f46e5;
   --link-hover: #4338ca;
@@ -105,11 +116,18 @@
   --info-soft: rgba(34, 211, 238, 0.14);
   --violet: #a78bfa;
   --violet-soft: rgba(167, 139, 250, 0.14);
-  --rescue: #34d399;
-  --present: #818cf8;
-  --nsc: #a78bfa;
-  --absent: #18181b;
+  --present: #525a68;
+  --rescue: #4ea1ff;
+  --nsc: #f5a524;
+  --kept: #fd6f8e;
+  --absent: #1f2026;
   --absent-stroke: #3f3f46;
+  --mech-retained: #667085;
+  --mech-gain: #66c61c;
+  --mech-loss: #b54708;
+  --mech-disruption: #fef08a;
+  --mech-paralog: #2ed3b7;
+  --mech-unresolved: #f2f4f7;
 
   --link: #a5b4fc;
   --link-hover: #c7d2fe;
@@ -631,9 +649,55 @@ td a {
   justify-content: flex-end;
 }
 
-.legend span {
+.legend {
+  align-items: center;
+}
+
+/* A swatch sits closer to its own label than to the next key, so each pair
+   reads as one. */
+.legend .key {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.legend .key-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.legend .key-btn:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.sw-stack {
+  display: inline-flex;
+}
+
+.sw-stack .sw {
+  width: 7px;
+  margin-right: 0;
+  border-radius: 0;
+}
+
+.sw-stack .sw:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.sw-stack .sw:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.legend .key .sw {
+  margin-right: 0;
+  vertical-align: 0;
+  flex: 0 0 auto;
 }
 
 .sw {
@@ -648,6 +712,7 @@ td a {
 .sw.p { background: var(--present); }
 .sw.r { background: var(--rescue); }
 .sw.n { background: var(--nsc); }
+.sw.k { background: var(--kept); }
 .sw.a {
   background: var(--absent);
   border: 1px solid var(--absent-stroke);
@@ -822,18 +887,27 @@ td a {
   gap: 5px;
 }
 
-.process-selected {
+.process-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
-  gap: 7px;
-  align-items: center;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 6px;
+  background: var(--bg-elev);
   color: var(--ink-soft);
   font-size: 12px;
 }
 
+.process-head span {
+  flex: 1 1 auto;
+}
+
 .process-clear {
   border-radius: var(--radius-pill) !important;
-  padding: 4px 12px !important;
+  padding: 3px 10px !important;
   background: var(--accent-soft) !important;
   border-color: transparent !important;
   color: var(--accent-ink) !important;
@@ -843,57 +917,76 @@ td a {
 .process-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
+  gap: 1px;
 }
 
 .process-item {
   display: grid !important;
-  grid-template-columns: 10px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+  grid-template-columns: 14px 10px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 26px;
   text-align: left;
-  border: 1px solid var(--soft-line);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  padding: 7px 9px;
-  transition: border-color var(--transition), background var(--transition);
+  border: 0 !important;
+  border-radius: var(--radius-sm);
+  background: transparent !important;
+  padding: 2px 6px !important;
+  font-size: 12.5px;
+  color: var(--ink);
 }
 
-.process-item:hover {
-  border-color: var(--line);
-  background: var(--bg-subtle);
+.process-item:hover,
+.process-item:focus-visible {
+  background: var(--bg-subtle) !important;
 }
 
-.process-item.active {
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  background: var(--accent-soft);
+.process-item.active .process-name {
+  font-weight: 600;
 }
 
-.process-item.filtered {
-  border-color: var(--accent);
+.process-check {
+  color: var(--accent-ink);
+  font-weight: 700;
+  text-align: center;
 }
 
 .process-swatch {
   width: 10px;
   height: 10px;
   border-radius: 3px;
-  margin-top: 4px;
-}
-
-.process-item strong {
-  display: block;
-  font-size: 13px;
-  color: var(--ink);
-  font-weight: 600;
 }
 
 .process-item small {
-  display: block;
-  margin-top: 2px;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  font-weight: 400;
+}
+
+.filter-chips {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.filter-chip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
 }
 
 .lineage-legend {
@@ -936,6 +1029,21 @@ td a {
 .lineage-chip small {
   font-size: 12px;
   color: var(--muted);
+}
+
+.lineage-chip i.ramp-zero {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--faint);
+  background: var(--panel);
+}
+
+.burden-ramp {
+  display: inline-block;
+  width: 120px;
+  height: 9px;
+  border-radius: 2px;
 }
 
 /* ===== Drag handles between panes =====
@@ -984,6 +1092,17 @@ td a {
 .split-handle[aria-orientation="vertical"]::after {
   width: 2px;
   height: 36px;
+}
+
+/* The widened hit area must not reach into a data pane: over the matrix it ate
+   the first 4px, which at the opening zoom is the first eleven clusters, and
+   those are the top of any sorted order. Widen toward the quieter side only. */
+#treeHandle::before {
+  inset: 0 0 0 -4px;
+}
+
+#inspectorHandle::before {
+  inset: 0 -4px 0 0;
 }
 
 .split-handle[aria-orientation="horizontal"]::after {
@@ -1231,7 +1350,7 @@ body.app {
      min-content, so a chrome row that wants 1656px silently widens the page and
      takes the workspace with it. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
@@ -1239,10 +1358,38 @@ body.app {
    coloured by lineage, and with implicit placement its absence slid the
    workspace into the auto row and handed the free space to the status bar. */
 body.app > .topbar { grid-row: 1; }
-body.app > .lineage-legend { grid-row: 2; }
+body.app > .workspace-notices { grid-row: 2; }
+body.app > .lineage-legend { grid-row: 3; }
 body.app > .workspace,
-body.app > .explorer-fallback { grid-row: 3; }
-body.app > .statusbar { grid-row: 4; }
+body.app > .explorer-fallback { grid-row: 4; }
+body.app > .statusbar { grid-row: 5; }
+
+/* What the report had to leave out or assume, said once above the workspace
+   instead of being discovered from an empty panel. */
+.workspace-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px var(--space-4);
+  background: var(--warning-soft);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.workspace-notices[hidden] {
+  display: none;
+}
+
+.workspace-notices p {
+  margin: 0;
+}
+
+.explorer-failed {
+  margin: var(--space-6);
+  border: 1px solid var(--danger);
+  background: var(--danger-soft);
+}
 
 .topbar {
   display: flex;
@@ -1539,13 +1686,15 @@ kbd {
 }
 
 .readout.pos b { color: var(--positive); }
+.readout.rescue b { color: var(--rescue); }
+.readout.kept b { color: var(--kept); }
 .readout.warn b { color: var(--warning); }
 
 /* Chrome is one row now, so it gives things up in a deliberate order rather than
    overflowing: policy first, then the derived figures, then the title, then the
    readout entirely. What is dropped is always still in the details drawer. */
 @media (max-width: 1560px) {
-  .readout:nth-child(7) { display: none; }
+  .readout:nth-child(8) { display: none; }
 }
 
 /* The annotation is a courtesy preview; the cluster name is the answer. */
@@ -1559,10 +1708,11 @@ kbd {
 }
 
 @media (max-width: 1340px) {
-  .readout:nth-child(5) { display: none; }
+  .readout:nth-child(6),
+  .readout:nth-child(7) { display: none; }
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1360px) {
   .topbar-title,
   .brand-rule { display: none; }
 }
@@ -2229,6 +2379,391 @@ input.switch:focus-visible {
   color: var(--faint);
 }
 
+/* ===== Cell readout =====
+   The tooltip follows the pointer over the matrix; it was unstyled, so it sat
+   static and transparent under the scroller and nobody ever saw it. */
+.matrix-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  display: none;
+  max-width: 300px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: var(--bg-elev);
+  box-shadow: var(--shadow-3);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+  will-change: transform;
+}
+
+.matrix-tooltip strong {
+  font-weight: 600;
+}
+
+.matrix-tooltip .tt-state,
+.matrix-tooltip .tt-mech {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.matrix-tooltip .tt-mech {
+  color: color-mix(in srgb, var(--bg-elev) 70%, var(--ink));
+}
+
+.matrix-tooltip .sw {
+  margin-right: 0;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-elev) 40%, transparent);
+}
+
+.cell-card {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.cell-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cell-card-head .card-title {
+  margin-top: 0;
+}
+
+.cell-close {
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cell-name {
+  margin: 2px 0 0;
+  font-weight: 600;
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.cell-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.cell-state .sw,
+.changed-cell .sw {
+  margin-right: 0;
+  flex: 0 0 auto;
+}
+
+.cell-empty {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+}
+
+.evidence-row {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.evidence-row.rejected {
+  opacity: 0.85;
+}
+
+.ev-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.ev-type {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ev-action {
+  color: var(--muted);
+}
+
+.ev-locus {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.ev-metrics,
+.ev-facts,
+.ev-pub {
+  margin-top: 2px;
+}
+
+.ev-notes {
+  margin-top: var(--space-2);
+}
+
+.lineage-rows {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--space-2);
+}
+
+.lineage-row {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.lineage-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+
+.lineage-name i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.lineage-bar {
+  display: flex;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--soft-line);
+  overflow: hidden;
+}
+
+.lineage-bar b.r { background: var(--rescue); }
+.lineage-bar b.k { background: var(--kept); }
+
+.changed-cells {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changed-cell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changed-cell:hover,
+.changed-cell:focus-visible {
+  background: var(--bg-hover);
+}
+
+.changed-cell small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.changed-genome {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changed-more {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+/* ===== Using these results (drawer) ===== */
+#candidatesTable .wording {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+#candidatesTable {
+  table-layout: fixed;
+  width: 100%;
+}
+
+#candidatesTable th:nth-child(1) { width: 22%; }
+#candidatesTable th:nth-child(2) { width: 18%; }
+#candidatesTable th:nth-child(3) { width: 10%; }
+
+#candidatesTable td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.candidates-foot {
+  margin-top: 8px;
+}
+
+.bar.danger { background: var(--danger); }
+
+.using .methods {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.using .methods p {
+  margin: 0 0 var(--space-3);
+  line-height: 1.55;
+}
+
+.using .caveats {
+  margin: var(--space-3) 0 0;
+  padding-left: 1.2em;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.corrections-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.corrections-head h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.corrections-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+table.corrections {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.corrections th,
+table.corrections td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--soft-line);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+table.corrections th.num,
+table.corrections td.num {
+  text-align: right;
+}
+
+table.corrections tbody tr {
+  cursor: pointer;
+}
+
+table.corrections tbody tr:hover,
+table.corrections tbody tr:focus-visible {
+  background: var(--bg-hover);
+}
+
+.state-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--muted);
+}
+
+.state-chip.r { background: var(--rescue); }
+.state-chip.k { background: var(--kept); }
+.state-chip.n { background: var(--nsc); }
+.state-chip.a { background: var(--faint); }
+
+details.parameters {
+  margin-top: var(--space-4);
+}
+
+details.parameters summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+details.parameters dd {
+  overflow-wrap: anywhere;
+}
+
+.qc-line {
+  margin: 4px 0 0;
+}
+
+.qc-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-subtle);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+}
+
+.qc-chip.review { color: var(--warning); border-color: var(--warning); }
+.qc-chip.fail { color: var(--danger); border-color: var(--danger); }
+
 .prevalence-bar {
   height: 6px;
   margin-top: var(--space-3);
@@ -2406,11 +2941,17 @@ input.switch:focus-visible {
   text-overflow: ellipsis;
 }
 
+.pane-head small.warn {
+  color: var(--warning);
+}
+
 .pane-head .legend {
   margin-left: auto;
   font-size: 12px;
-  gap: var(--space-2);
-  flex: 0 0 auto;
+  gap: 12px;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .tree-pane {
@@ -2439,11 +2980,37 @@ input.switch:focus-visible {
   display: block;
 }
 
+/* Hover and selection marks, drawn above the data and never part of it. */
+.pane-overlay {
+  pointer-events: none;
+}
+
+.synteny-unclustered {
+  fill: var(--faint) !important;
+  font-style: italic;
+}
+
+/* Held for the instant an export reads light-theme styles off the page. */
+.theme-frozen,
+.theme-frozen * {
+  transition: none !important;
+}
+
 .pane-scroll {
   position: absolute;
   inset: 0;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+#matrixPane:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+tr[data-cluster]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .pane-spacer {
@@ -2554,6 +3121,11 @@ input.switch:focus-visible {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+.sheet-close {
+  display: none !important;
+  margin-left: auto;
 }
 
 .inspector {
@@ -2814,13 +3386,34 @@ input.switch:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* A narrow window cannot give the inspector a column, and hiding it meant a
+   click opened tabs nobody could see. It becomes a sheet over the bottom of
+   the workspace instead, opened by a selection and closed with x or Esc. */
 @media (max-width: 1100px) {
-  .inspector,
   .inspector-handle {
     display: none;
   }
-  .topbar-title {
-    display: none;
+  .inspector {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto !important;
+    height: 45vh;
+    z-index: 40;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    background: var(--bg-elev);
+    box-shadow: var(--shadow-3);
+    overflow: auto;
+    transform: translateY(100%);
+    transition: transform var(--transition);
+  }
+  .inspector.sheet-open {
+    transform: translateY(0);
+  }
+  .sheet-close {
+    display: inline-flex !important;
   }
 }
 
@@ -2864,7 +3457,49 @@ input.switch:focus-visible {
   }
 }
 
+.print-figure {
+  display: none;
+}
+
 @media print {
+  .pane-overlay,
+  .tip-bubble,
+  .matrix-tooltip,
+  .toolbar-inline,
+  .corrections-actions,
+  #copyMethods,
+  .workspace .panes-wrap {
+    display: none !important;
+  }
+
+  .print-figure {
+    display: block;
+    width: 100%;
+    height: auto;
+    break-after: page;
+  }
+
+  #candidatesTable,
+  table.corrections {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  /* Paper has no Show all button: print every candidate. */
+  #candidatesTable tbody tr.hidden {
+    display: table-row !important;
+  }
+
+  #candidatesMore {
+    display: none !important;
+  }
+
+  #candidatesTable td,
+  table.corrections td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   /* Reports get printed and pasted into supplementary material, so force the
      light palette even if the reader is in dark mode. */
   :root,
@@ -2884,8 +3519,18 @@ input.switch:focus-visible {
     --line: #d4d4d8;
     --line-strong: #a1a1aa;
     --soft-line: #e4e4e7;
-    --absent: #ffffff;
+    --present: #b3bbc7;
+    --rescue: #0f6fd6;
+    --nsc: #e07b00;
+    --kept: #c01048;
+    --absent: #f4f5f7;
     --absent-stroke: #d4d4d8;
+    --mech-retained: #667085;
+    --mech-gain: #4ca30d;
+    --mech-loss: #7a2e0e;
+    --mech-disruption: #fac515;
+    --mech-paralog: #15b79e;
+    --mech-unresolved: #1d2939;
     --shadow-1: none;
     --shadow-2: none;
     --shadow-3: none;

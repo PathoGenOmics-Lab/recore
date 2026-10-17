@@ -51,6 +51,9 @@ pub(super) struct FitchNodeSummary {
     pub(super) present_tips: usize,
     pub(super) changes: usize,
     pub(super) children: Vec<FitchNodeSummary>,
+    /// Fewest changes in this subtree with the node absent ([0]) or present
+    /// ([1]).
+    pub(super) cost: [usize; 2],
 }
 
 pub(super) struct NewickParser<'a> {
@@ -230,29 +233,108 @@ pub(super) fn load_phylo_tree(
     Ok(PhyloTree { root })
 }
 
+/// Match tree tips to matrix genomes, one tip per genome.
+///
+/// A second tip that resolves to a genome another tip already took, by the
+/// same name or through a shared AS identifier, used to be matched as well:
+/// the genome was counted twice, the genome the tip really stood for was
+/// hidden, and the coverage check, which compares counts, saw nothing wrong.
+/// An exact name beats an AS-identifier match, and otherwise the first tip in
+/// the tree keeps the genome; the others are left unmatched, by name, in a
+/// warning.
 pub(super) fn resolve_phylo_tips(
     node: &mut PhyloNode,
     pa: &crate::parser::PresenceAbsence,
 ) -> (usize, usize) {
+    let mut candidates: Vec<(Option<(GenomeIdx, bool)>, String)> = Vec::new();
+    collect_tip_candidates(node, pa, &mut candidates);
+
+    let mut winner: HashMap<GenomeIdx, usize> = HashMap::new();
+    for (i, (candidate, _)) in candidates.iter().enumerate() {
+        let Some((gi, exact)) = candidate else {
+            continue;
+        };
+        match winner.get(gi) {
+            None => {
+                winner.insert(*gi, i);
+            }
+            Some(&j) => {
+                let held_exact = candidates[j].0.is_some_and(|(_, e)| e);
+                if *exact && !held_exact {
+                    winner.insert(*gi, i);
+                }
+            }
+        }
+    }
+
+    let mut duplicates = Vec::new();
+    let assigned: Vec<Option<GenomeIdx>> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, (candidate, label))| {
+            let (gi, _) = (*candidate)?;
+            if winner[&gi] == i {
+                Some(gi)
+            } else {
+                duplicates.push(format!("{} (as {})", label, pa.genome_name(gi)));
+                None
+            }
+        })
+        .collect();
+    if !duplicates.is_empty() {
+        warn!(
+            "{} tree tips resolve to a genome another tip already matched, and are left unmatched: {}",
+            duplicates.len(),
+            duplicates.join(", ")
+        );
+    }
+
+    let matched = assigned.iter().filter(|gi| gi.is_some()).count();
+    let unmatched = assigned.len() - matched;
+    let mut assigned = assigned.into_iter();
+    assign_tip_genomes(node, &mut assigned);
+    (matched, unmatched)
+}
+
+fn collect_tip_candidates(
+    node: &PhyloNode,
+    pa: &crate::parser::PresenceAbsence,
+    out: &mut Vec<(Option<(GenomeIdx, bool)>, String)>,
+) {
     if node.children.is_empty() {
-        node.genome_idx = node
+        let label = node.label.clone().unwrap_or_default();
+        let candidate = node
             .label
             .as_deref()
-            .and_then(|label| resolve_tree_tip(label, pa));
-        return if node.genome_idx.is_some() {
-            (1, 0)
-        } else {
-            (0, 1)
-        };
+            .and_then(|label| resolve_tree_tip_with_kind(label, pa));
+        out.push((candidate, label));
+        return;
     }
-    let mut matched = 0usize;
-    let mut unmatched = 0usize;
+    for child in &node.children {
+        collect_tip_candidates(child, pa, out);
+    }
+}
+
+fn assign_tip_genomes(
+    node: &mut PhyloNode,
+    assigned: &mut impl Iterator<Item = Option<GenomeIdx>>,
+) {
+    if node.children.is_empty() {
+        node.genome_idx = assigned.next().flatten();
+        return;
+    }
     for child in &mut node.children {
-        let (m, u) = resolve_phylo_tips(child, pa);
-        matched += m;
-        unmatched += u;
+        assign_tip_genomes(child, assigned);
     }
-    (matched, unmatched)
+}
+
+/// The genome a tip label stands for, and whether it matched by exact name
+/// (true) or only through an embedded AS identifier (false).
+fn resolve_tree_tip_with_kind(
+    label: &str,
+    pa: &crate::parser::PresenceAbsence,
+) -> Option<(GenomeIdx, bool)> {
+    resolve_tree_tip(label, pa).map(|gi| (gi, pa.genome_name(gi) == label))
 }
 
 pub(super) fn resolve_tree_tip(
@@ -277,9 +359,18 @@ pub(super) fn resolve_tree_tip(
     None
 }
 
+/// Parsimony over presence and absence, as Sankoff costs per state.
+///
+/// It used to be Fitch's rule applied to children one pair at a time, which is
+/// only right for two children: at a node with three or more, the result
+/// depended on the order the siblings were written in the Newick file, and the
+/// counts could contradict themselves (two changes reported as two gains and a
+/// loss). Per-state costs summed over all children give the same answer for
+/// any order and any number of children.
 pub(super) fn fitch_postorder(node: &PhyloNode, present_by_genome: &[bool]) -> FitchNodeSummary {
     const ABSENT: u8 = 0b01;
     const PRESENT: u8 = 0b10;
+    const UNREACHABLE: usize = usize::MAX / 4;
 
     if node.children.is_empty() {
         let Some(gi) = node.genome_idx else {
@@ -292,49 +383,47 @@ pub(super) fn fitch_postorder(node: &PhyloNode, present_by_genome: &[bool]) -> F
             present_tips: usize::from(present),
             changes: 0,
             children: Vec::new(),
+            cost: if present {
+                [UNREACHABLE, 0]
+            } else {
+                [0, UNREACHABLE]
+            },
         };
     }
 
     let mut children = Vec::new();
-    let mut state_set = 0u8;
     let mut matched_tips = 0usize;
     let mut present_tips = 0usize;
-    let mut changes = 0usize;
+    let mut cost = [0usize; 2];
     for child in &node.children {
         let summary = fitch_postorder(child, present_by_genome);
-        if summary.matched_tips == 0 {
-            children.push(summary);
-            continue;
-        }
-        matched_tips += summary.matched_tips;
-        present_tips += summary.present_tips;
-        changes += summary.changes;
-        if state_set == 0 {
-            state_set = summary.state_set;
-        } else {
-            let intersection = state_set & summary.state_set;
-            if intersection == 0 {
-                state_set |= summary.state_set;
-                changes += 1;
-            } else {
-                state_set = intersection;
+        if summary.matched_tips > 0 {
+            matched_tips += summary.matched_tips;
+            present_tips += summary.present_tips;
+            for (state, total) in cost.iter_mut().enumerate() {
+                *total += summary.cost[state].min(summary.cost[1 - state] + 1);
             }
         }
         children.push(summary);
     }
+    if matched_tips == 0 {
+        return FitchNodeSummary {
+            children,
+            ..FitchNodeSummary::default()
+        };
+    }
 
+    let best = cost[0].min(cost[1]);
+    let state_set =
+        (if cost[0] == best { ABSENT } else { 0 }) | (if cost[1] == best { PRESENT } else { 0 });
     FitchNodeSummary {
         state_set,
         matched_tips,
         present_tips,
-        changes,
+        changes: best,
         children,
+        cost,
     }
-}
-
-pub(super) fn state_set_contains(state_set: u8, present: bool) -> bool {
-    let bit = if present { 0b10 } else { 0b01 };
-    state_set & bit != 0
 }
 
 pub(super) fn choose_root_state(summary: &FitchNodeSummary) -> bool {
@@ -356,8 +445,10 @@ pub(super) fn assign_fitch_states(
     if summary.matched_tips == 0 || summary.state_set == 0 {
         return None;
     }
+    // Keep the parent's state whenever that costs no more than switching.
     let state = if let Some(parent) = parent_state {
-        if state_set_contains(summary.state_set, parent) {
+        let (keep, switch) = (usize::from(parent), usize::from(!parent));
+        if summary.cost[keep] <= summary.cost[switch] + 1 {
             parent
         } else {
             !parent
@@ -804,9 +895,10 @@ pub(super) fn nearest_mobile_element_for_rescue(
             identity: Some(hit.identity),
             coverage: Some(hit.coverage),
         };
-        if best.as_ref().map_or(true, |current| {
-            mobile_evidence_is_better(&candidate, current)
-        }) {
+        if best
+            .as_ref()
+            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
+        {
             best = Some(candidate);
         }
     }
@@ -835,9 +927,10 @@ pub(super) fn nearest_mobile_element_for_rescue(
             identity: None,
             coverage: None,
         };
-        if best.as_ref().map_or(true, |current| {
-            mobile_evidence_is_better(&candidate, current)
-        }) {
+        if best
+            .as_ref()
+            .is_none_or(|current| mobile_evidence_is_better(&candidate, current))
+        {
             best = Some(candidate);
         }
     }
@@ -990,7 +1083,9 @@ pub(super) fn paralog_locus_risk(
 }
 
 pub(super) fn phylogenetic_reliability(phylo: &PhyloPatternSummary) -> &'static str {
-    if !phylo.assessed {
+    // No carrier on the tree is no reading at all, not a moderate one: it used
+    // to score above a cluster with no tree.
+    if !phylo.assessed || phylo.pattern == "absent_from_tree" {
         return "not_assessed";
     }
     if matches!(
@@ -1249,7 +1344,7 @@ pub(super) fn classify_mechanism(input: MechanismInput<'_>) -> MechanismCall {
 }
 
 fn phylogenetic_blink_flag(phylo: &PhyloPatternSummary) -> &'static str {
-    if !phylo.assessed {
+    if !phylo.assessed || phylo.pattern == "absent_from_tree" {
         "not_assessed"
     } else if matches!(
         phylo.pattern,
@@ -1786,6 +1881,21 @@ pub(super) fn context_signature(
     }
 }
 
+/// Whether two (upstream, downstream) contexts name a neighbouring cluster in
+/// common. A context with no named neighbour carries no evidence either way.
+pub(super) fn shares_neighbour(a: &(String, String), b: &(String, String)) -> bool {
+    let names = |c: &(String, String)| -> Vec<String> {
+        [&c.0, &c.1]
+            .iter()
+            .flat_map(|side| side.split('|'))
+            .filter(|n| !n.is_empty() && *n != "NA")
+            .map(str::to_string)
+            .collect()
+    };
+    let (na, nb) = (names(a), names(b));
+    na.is_empty() || nb.is_empty() || na.iter().any(|n| nb.contains(n))
+}
+
 pub(super) fn context_interpretation(
     n_mapped: usize,
     n_unique_contexts: usize,
@@ -2108,7 +2218,29 @@ pub(super) fn write_cluster_locus_contexts(
         } else {
             0.0
         };
-        let interpretation = context_interpretation(n_mapped, n_unique_contexts, dominant_fraction);
+        // Judged by neighbourhood, not by exact signature. A context that shares
+        // even one neighbouring cluster with the dominant one is the same locus
+        // with something gained, lost or unannotated next to it: a pseudogene,
+        // a missing CDS or a true loss beside a single-copy gene changes its
+        // signature without making it a second copy. Only a context with no
+        // neighbour in common is evidence of another locus. Signature
+        // differences alone used to label single-copy genes as paralogs.
+        let dominant = context_counts
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+            .map(|(key, _)| key.clone());
+        let compatible: usize = context_counts
+            .iter()
+            .filter(|(key, _)| dominant.as_ref().is_none_or(|d| shares_neighbour(d, key)))
+            .map(|(_, count)| *count)
+            .sum();
+        let compatible_fraction = if n_mapped > 0 {
+            compatible as f64 / n_mapped as f64
+        } else {
+            0.0
+        };
+        let interpretation =
+            context_interpretation(n_mapped, n_unique_contexts, compatible_fraction);
         summaries.push(ClusterContextSummary {
             cluster_idx: ci,
             n_present: pa.present_count(ci),
@@ -2180,7 +2312,13 @@ pub(super) fn write_cluster_locus_contexts(
                 summary.n_unresolved.to_string(),
                 summary.n_unique_contexts.to_string(),
                 summary.dominant_count.to_string(),
-                format!("{:.3}", summary.dominant_fraction),
+                // 0 of 0 is no reading, not a fraction of 0: blank, so a filter
+                // for multi-locus clusters (fraction < 0.5) does not pick it up.
+                if summary.n_mapped == 0 {
+                    String::new()
+                } else {
+                    format!("{:.3}", summary.dominant_fraction)
+                },
                 summary.interpretation.to_string(),
             ],
         )?;

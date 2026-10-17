@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum MatrixPolicy {
-    /// Paper-grade: correct only strict same-locus or cluster-alias evidence.
+    /// Most conservative: correct only strict same-locus or cluster-alias evidence.
     Strict,
-    /// Default: correct strict/alias/full-sequence evidence; keep partial/disrupted evidence multistate-only.
+    /// Recommended for publication (default): correct strict/alias/full-sequence evidence; keep partial/disrupted evidence multistate-only.
     Balanced,
     /// Exploratory: correct all accepted rescues, including partial/disrupted evidence.
     Sensitive,

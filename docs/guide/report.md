@@ -16,9 +16,13 @@ twelve genomes, twenty-four clusters, eleven planted false absences. It is the
 whole file, opened straight from this page, which is the point of it being
 self-contained.
 
-Without `--tree` the report is still written, but it is the run-details document
-only. The phylogeny, matrix and synteny workspace needs a tree, because the tree
-is what orders the rows.
+Without `--tree` the workspace still opens: the rows follow the matrix order, the
+tree pane only lists the genomes, and a notice above the workspace says so.
+Ancestral readings, tree colouring by subtree and rerooting need a real tree.
+
+If the workspace cannot start (a browser that cannot hold the embedded data, for
+instance), the report says why in place of the workspace, and ++d++ still opens
+the run details.
 
 ## The workspace
 
@@ -66,7 +70,38 @@ A plain click on a tip opens that genome in the inspector: its lineage, its
 state in the selected cluster, its counts across all clusters, and its distance
 from the root.
 
+The burden modes draw a ramp from the line colour to the state colour, with a
+hollow ring for zero, and a key under the top bar gives the ramp's maximum.
+
 ## The matrix
+
+Each cell is one cluster in one genome, in one of five states:
+
+| State | Colour | Meaning |
+|-------|--------|---------|
+| input | grey | present in the input matrix |
+| corrected | blue | absent in the input; Recore found the gene and corrected the cell |
+| NSC | orange | absent in the input; near-identical clusters were merged and the merged cluster is present (only when NSC ran) |
+| kept out | crimson | Recore found sequence evidence, but the matrix policy, a quality floor or a synteny or paralog guard kept it out of the corrected matrix |
+| absent | pale | absent, with no evidence |
+
+Input presence is the quiet background on purpose, so what Recore found is what
+draws the eye at any zoom. The five colours stay distinguishable under deutan and
+protan colour vision. The legend in the matrix header only lists the states the
+run has.
+
+**Cell evidence.** Hover a cell for its genome, cluster and state; for a
+corrected or kept-out cell the tooltip adds the rescue type, identity and
+coverage. Click a cell for the full row from `orthology_evidence.tsv` at the top
+of the inspector: the locus, the synteny and ORF checks, whether it went into
+the matrix and why not, and its publication status. The cluster card lists every
+evidence row of the cluster, corrections first; clicking one opens that cell and
+brings its tip into view.
+
+**Mechanism colour.** In mechanism mode the input cells take the colour of their
+cluster's mechanism family (retained, gain, loss, disruption, paralog or context
+change, artifact or unresolved), while corrected and kept-out cells keep their
+own colours. The legend key opens the full list, with counts and filters.
 
 The sliders icon in the matrix header holds cell colour, column order, the
 reference-absent filter and the mechanism filter.
@@ -74,20 +109,32 @@ reference-absent filter and the mechanism filter.
 **Column order.** Input matrix order, prevalence, mechanism, number of corrected
 cells, or cluster name.
 
-**Mechanism filter.** The mechanism cards double as filters: clicking one adds or
-removes that mechanism from the visible columns. The header button stays lit
-while any filter is on, so a filter left running two minutes ago does not
-silently explain a matrix that looks wrong.
+**Mechanism filter.** The matrix menu lists the mechanisms in view as a
+checklist, with each one's description in its tip. Ticking one shows only its
+clusters and refits the columns to the pane; active filters appear as chips
+beside the matrix count, and a click on a chip removes it. **Download TSV**
+saves the clusters in view with their counts of input, corrected, NSC,
+kept-out and absent cells.
 
-**Zoom.** The slider in each pane header drives its own axis. ++shift++ and the
-wheel zooms columns; ++cmd++ and the wheel zooms rows. Press ++z++ to fit the
-data back to the window.
+**Corrections by lineage.** For MTBC-style genome names the cluster card shows,
+per lineage, how many genomes were corrected or had evidence kept out, out of
+the lineage's genomes.
 
-Above 40 columns a prevalence strip appears under the matrix: one bar per pixel
-showing how prevalent the clusters at that position are, with the current
-viewport marked. At 30,000 columns the scrollbar tells you where you are and
-nothing about what is there; the strip tells you what is there, and clicking it
-jumps.
+**Zoom.** The slider in each pane header drives its own axis, in equal ratios
+from end to end. A plain wheel always scrolls. ++cmd++ (or ++ctrl++) and the
+wheel zoom columns, which is also what a trackpad pinch does; ++alt++ and the
+wheel zoom rows. Each notch is a factor of 1.25 and the cell under the pointer
+stays under the pointer. Press ++z++ to fit the data back to the window.
+
+Press ++z++ to see the whole matrix at once. When that makes cells smaller than
+a pixel, the matrix is drawn as density: each pixel shows the share of present
+cells it covers, between the absent and present colours, and is tinted blue
+where any cell in it was corrected (crimson where evidence was kept out), more
+strongly the larger that share. Zoom in on a region to get back to single cells.
+
+Above 40 columns a strip under the matrix shows the mean prevalence of the
+clusters at each position, with a blue mark where any of them has a changed
+cell, and the current viewport outlined. Clicking it jumps.
 
 ## Synteny
 
@@ -107,15 +154,49 @@ shows one representative locus.
 
 This needs `cluster_synteny_blocks.tsv`, which means GFFs were loaded.
 
+## Run details
+
+++d++ or the info button opens the run details. They start with what you need
+to write the run up:
+
+- **Using these results**: a methods paragraph built from the run's own
+  settings and counts, with a button that copies it; the caveats the evidence
+  calls for (cells kept out of the matrix, corrections whose span is not whole
+  codons, rejected candidates, synteny or the tree being off); and the
+  parameters, the command line and the time the report was written.
+- **Changed cells**: every evidence row, corrections first, with a button that
+  copies them as tab-separated text and one that downloads
+  `recore_changed_cells.tsv`. Clicking a row opens that cell in the matrix.
+
+Below come the run statistics, the dominant mechanisms, the top candidate
+clusters (the first ten, then **Show all**) and every file in the output
+directory with its row count. The links open the files beside the report, so
+they work while the report sits in its output directory.
+
+The genome card shows each genome's QC status and flags from `genome_qc.tsv`,
+and tips can be coloured by QC status.
+
 ## Getting figures out
 
-The download button writes `recore_matrix.png` (the tree, lineage strip, column
-header and matrix composited at 2x) and `recore_synteny.svg` (vector, so the gene
-arrows stay crisp at print resolution).
+The download button writes `recore_matrix.png` and, when the synteny band is
+open, `recore_synteny.svg`.
 
-++cmd+p++ prints the whole thing: the workspace as page one, then the run details
-as a document. The canvases are redrawn for the print layout rather than being
-clipped to whatever the screen happened to be.
+The PNG is drawn for the page, not copied from the screen: the tree, the lineage
+strip, the column names and the matrix share one geometry, so every tip sits on
+its row, at three times the on-screen size, always in the light palette and
+without the hover crosshair or the selection marks. Below the matrix come a key
+for the cell states, the tree's scale bar and a caption with what is shown, the
+root, the matrix policy and the Recore version. When the whole matrix fits in
+4,000 by 4,000 screen pixels it is drawn in full; otherwise the window on screen
+is drawn and the caption names its rows and columns.
+
+The SVG carries every colour and font as a plain attribute, with no stylesheet
+or CSS variables, so illustration software and PDF tools draw it as the page
+does.
+
+++cmd+p++ prints the figure described above for the whole matrix (in the light
+palette, whatever the screen is in), then the run details as a document with
+every candidate. The live panes are swapped for the figure only while printing.
 
 ## Keyboard shortcuts
 
@@ -134,16 +215,11 @@ Press ++question++ for this list in the report itself.
 | ++c++ | phylogram or cladogram |
 | ++r++ | reroot at the midpoint |
 | ++z++ | fit the matrix to the window |
-| ++shift++ + wheel | zoom columns |
-| ++cmd++ + wheel | zoom rows |
+| ++cmd++ / ++ctrl++ + wheel, or pinch | zoom columns under the pointer |
+| ++alt++ + wheel | zoom rows under the pointer |
+| ++shift++ + wheel | scroll sideways |
 | ++alt++ + click a tip | root the tree on that genome |
 | ++esc++ | close whatever is open |
-
-## Run details
-
-The info button opens the drawer: the run summary, the QC breakdowns, the top
-candidate clusters, and links to the exact TSV files behind every number.
-Clicking a candidate takes you to it in the matrix.
 
 ## Scale
 
@@ -160,5 +236,7 @@ shipping something a browser cannot open.
 
 ## If you did not use `--write-html-report`
 
-`benchmarks/recore_report.py` builds a compact Markdown or HTML report from an
-existing output directory.
+`benchmarks/recore_report.py` builds a compact Markdown and HTML report
+(`recore_report.md` and `recore_compact_report.html`) from an existing output
+directory. It refuses to replace an interactive `recore_report.html` unless
+given `--force`.

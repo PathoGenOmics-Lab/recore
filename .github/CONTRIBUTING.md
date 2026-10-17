@@ -190,26 +190,25 @@ bundler; the Python is benchmarks and asset generation, run by hand.
 
 ## Rust version, and one trap worth naming
 
-`Cargo.toml` declares `rust-version = "1.70"`. That minimum exists so Recore
-stays installable on the older toolchains that cluster modules tend to ship.
-CI builds on stable, so nothing automatically catches an accidental use of a
-newer standard-library API; if you reach for something recent, check it with a
-1.70 toolchain before assuming it is fine.
+`Cargo.toml` declares `rust-version = "1.85"`, the oldest compiler the
+dependency set builds on (clap 4.6 sets it). The `msrv` job in `ci.yml` builds
+the crate with that toolchain and checks that `Cargo.toml` still names it, so
+an accidental use of a newer standard-library API fails the pull request.
 
-If you ever add or edit a workflow job that verifies the minimum, pass the
-version through the action's `toolchain:` input:
+The job passes the version through the action's `toolchain:` input:
 
 ```yaml
-- uses: dtolnay/rust-toolchain@stable
+- uses: dtolnay/rust-toolchain@master
   with:
-    toolchain: "1.70"
+    toolchain: "1.85"
 ```
 
-Never encode it in the action's git ref as `dtolnay/rust-toolchain@1.70`.
+Never encode it in the action's git ref as `dtolnay/rust-toolchain@1.85`.
 Dependabot treats that ref as a version to keep current, bumps it like any other
 action pin, and from then on the job that is supposed to prove Recore builds on
-1.70 quietly proves it builds on something else. The failure mode is a green
-check that means nothing, which is worse than no check at all.
+1.85 quietly proves it builds on something else. The failure mode is a green
+check that means nothing, which is worse than no check at all. When the minimum
+moves, change `rust-version`, the job's `toolchain:` and its check together.
 
 ## Python in this repository
 
