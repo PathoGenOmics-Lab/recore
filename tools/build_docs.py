@@ -31,7 +31,9 @@ from pathlib import Path
 DOCS = Path("docs")
 REPO = "https://github.com/PathoGenOmics-Lab/recore"
 
-# The Docs tab, in reading order: (section, markdown path, title, one line).
+# The Docs tab, in reading order: (section, path, title, one line). A path to
+# a .md file is built into a page; an .html path is a page written by hand and
+# only gets its place in the list.
 PAGES = [
     ("Getting started", "getting-started/tutorial.md", "Tutorial", "The example run, number by number."),
     ("Getting started", "getting-started/inputs.md", "Inputs", "What each tool writes, and how names match."),
@@ -39,6 +41,7 @@ PAGES = [
     ("Guide", "guide/matrix-policies.md", "Matrix policies", "The three policies and the quality guard."),
     ("Guide", "guide/outputs.md", "Output files", "Every table, column by column."),
     ("Guide", "guide/report.md", "The report", "Every pane and control of the viewer."),
+    ("How it works", "how-it-works.html", "Step by step, illustrated", "Seven animated steps from an empty cell to a decision."),
     ("How it works", "how-it-works/algorithm.md", "Algorithm", "Each step of the pipeline."),
     ("How it works", "how-it-works/evidence-states.md", "Evidence states", "What each cell of the states matrix means."),
     ("How it works", "how-it-works/rescue-types.md", "Rescue types", "What Recore saw where a gene was found."),
@@ -71,6 +74,11 @@ INLINE_TAGS = re.compile(r"</?(kbd|br|sup|sub|strong|em|b|i)\s*/?>", re.I)
 
 
 # ── Markdown ──
+
+
+def href(path: str) -> str:
+    """Where a PAGES entry lives on the site, relative to docs/."""
+    return path[: -len(".md")] + ".html" if path.endswith(".md") else path
 
 
 def slugify(text: str, seen: dict[str, int]) -> str:
@@ -114,7 +122,7 @@ class Renderer:
             inside = resolved.relative_to(DOCS.resolve())
         except ValueError:
             inside = None
-        if inside is not None and inside.suffix == ".md" and str(inside) in {p[1] for p in PAGES}:
+        if inside is not None and inside.suffix == ".md" and inside.as_posix() in {p[1] for p in PAGES}:
             new = path[: -len(".md")] + ".html"
         elif inside is not None and inside.suffix != ".md":
             new = path
@@ -391,10 +399,10 @@ class Renderer:
 
 
 def header(root: str, current: str) -> str:
-    def nav(href: str, label: str, key: str, optional: bool = True) -> str:
-        cls = ' class="nav-optional"' if optional else ""
+    def nav(target: str, label: str, key: str, optional: bool = True, wide: bool = False) -> str:
+        cls = ' class="nav-wide"' if wide else ' class="nav-optional"' if optional else ""
         here = ' aria-current="page"' if key == current else ""
-        return f'      <a{cls} href="{href}"{here}>{label}</a>\n'
+        return f'      <a{cls} href="{target}"{here}>{label}</a>\n'
 
     return (
         '<header class="top">\n  <div class="wrap">\n'
@@ -403,9 +411,10 @@ def header(root: str, current: str) -> str:
         f'      <img class="logo-dark" src="{root}assets/recore_logo_dark.svg" alt="Recore" width="74" height="34">\n'
         "    </a>\n"
         '    <nav class="nav" aria-label="Site">\n'
-        + nav(f"{root}index.html#start", "Install", "install")
-        + nav(f"{root}index.html#command", "Your command", "command")
-        + nav(f"{root}index.html#try", "Try it", "try")
+        + nav(f"{root}index.html#start", "Install", "install", wide=True)
+        + nav(f"{root}index.html#command", "Your command", "command", wide=True)
+        + nav(f"{root}index.html#try", "Try it", "try", wide=True)
+        + nav(f"{root}how-it-works.html", "How it works", "how")
         + nav(f"{root}{INDEX}", "Docs", "docs", optional=False)
         + nav(f"{root}reference.html", "Reference", "reference")
         + f'      <a class="gh-link" href="{REPO}">{GH_SVG}<span>GitHub</span></a>\n'
@@ -448,7 +457,7 @@ def sidebar(root: str, current: str | None) -> str:
             out.append(f'    <p class="docs-section">{sec}</p>\n    <ul>\n')
             section = sec
         here = ' aria-current="page"' if path == current else ""
-        out.append(f'      <li><a href="{root}{path[:-3]}.html"{here}>{title}</a></li>\n')
+        out.append(f'      <li><a href="{root}{href(path)}"{here}>{title}</a></li>\n')
     out.append("    </ul>\n  </details>\n</aside>\n")
     return "".join(out)
 
@@ -486,9 +495,9 @@ def doc_page(position: int) -> tuple[Path, str, list[dict]]:
     next_page = PAGES[position + 1] if position + 1 < len(PAGES) else None
     pager = '<nav class="pager" aria-label="Previous and next page">'
     if prev_page:
-        pager += f'<a class="prev" href="{root}{prev_page[1][:-3]}.html"><span>Previous</span>{prev_page[2]}</a>'
+        pager += f'<a class="prev" href="{root}{href(prev_page[1])}"><span>Previous</span>{prev_page[2]}</a>'
     if next_page:
-        pager += f'<a class="next" href="{root}{next_page[1][:-3]}.html"><span>Next</span>{next_page[2]}</a>'
+        pager += f'<a class="next" href="{root}{href(next_page[1])}"><span>Next</span>{next_page[2]}</a>'
     pager += "</nav>"
     body = (
         header(root, "docs")
@@ -524,7 +533,7 @@ def index_page() -> tuple[Path, str]:
                 cards.append("</div>\n")
             cards.append(f'<h2 class="docs-group">{sec}</h2>\n<div class="deep">\n')
             section = sec
-        cards.append(f'<a href="{path[:-3]}.html"><b>{title}</b><span>{line}</span></a>\n')
+        cards.append(f'<a href="{href(path)}"><b>{title}</b><span>{line}</span></a>\n')
     cards.append("</div>\n")
     body = (
         header("", "docs")
@@ -544,6 +553,8 @@ def build() -> dict[Path, str]:
     files: dict[Path, str] = {}
     entries: list[dict] = []
     for position in range(len(PAGES)):
+        if not PAGES[position][1].endswith(".md"):
+            continue
         path, text, page_entries = doc_page(position)
         files[path] = text
         entries += page_entries

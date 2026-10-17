@@ -57,11 +57,17 @@ python3 -m http.server 8000 --directory out/
 
 ## Documentation
 
-The website is `docs/index.html` and `docs/reference.html`, styled by
-`docs/assets/site.css` and driven by `docs/assets/site.js`: plain files, so
-opening `docs/index.html` in a browser shows a change. Keep the front page
-short. It is there to get someone running in two minutes; the details belong in
-the documentation.
+The website is `docs/index.html`, `docs/how-it-works.html` and
+`docs/reference.html`, styled by `docs/assets/site.css` and driven by
+`docs/assets/site.js`: plain files, so opening `docs/index.html` in a browser
+shows a change. Keep the front page short. It is there to get someone running in
+two minutes; the details belong in the documentation.
+
+The drawings of How it works are `docs/assets/how.js`. They decide with a copy
+of `evidence_state` and `matrix_policy_corrects` from `src/pipeline.rs`, so a
+change to those rules is a change there too; `tools/check_site.py` fails if the
+policy table, a state, a rescue type, a matrix action or a column no longer
+matches the code.
 
 The Docs tab is these markdown pages. `tools/build_docs.py` turns each one into
 an `.html` page next to it, with the site's header, sidebar, contents and

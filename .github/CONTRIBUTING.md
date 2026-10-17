@@ -235,15 +235,19 @@ you anything tends not to get run.
 
 ## Documentation
 
-The website is plain HTML in `docs/` (`index.html`, `reference.html` and
-`assets/`): open `docs/index.html` to see a change. The Docs tab is the
-markdown under `docs/`, turned into pages by `tools/build_docs.py`; after
-editing a `.md` file, run it and commit what it writes. The documentation
-workflow runs `tools/check_site.py`, which fails on a documentation page that
-no longer matches its markdown, a dead link or anchor, an option `recore --help` does not have, an option missing from the
-reference, a default that differs from the binary's, or an example run whose
-counts differ from the page's, instead of a stale page somebody finds six
-months later. The markdown also reads on GitHub as it is.
+The website is plain HTML in `docs/` (`index.html`, `how-it-works.html`,
+`reference.html` and `assets/`): open `docs/index.html` to see a change. The
+drawings of How it works (`assets/how.js`) decide with a copy of
+`evidence_state` and `matrix_policy_corrects` from `src/pipeline.rs`; change
+them together. The Docs tab is the markdown under `docs/`, turned into pages by
+`tools/build_docs.py`; after editing a `.md` file, run it and commit what it
+writes. The documentation workflow runs `tools/check_site.py`, which fails on a
+documentation page that no longer matches its markdown, a dead link or anchor,
+an option `recore --help` does not have, an option missing from the reference,
+a default that differs from the binary's, a walkthrough that decides
+differently from the code, or an example run whose counts differ from the
+page's, instead of a stale page somebody finds six months later. The markdown
+also reads on GitHub as it is.
 
 `docs/assets/example-report.html` is the tutorial run's own output, linked from
 the [Run report](../docs/guide/report.md) page. If you change the viewer, that

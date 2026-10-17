@@ -108,7 +108,11 @@ and Recore uses semantic versioning.
   contents that follow the reading, previous and next links, a search box over
   all of them and an edit link to GitHub; `tools/build_docs.py` builds the pages
   from the markdown, which stays the source and still reads on GitHub. Code
-  boxes are light in the light theme.
+  boxes are light in the light theme. A How it works page follows one empty
+  cell through seven animated drawings, from the search to what gets written
+  down: pick what the search finds, whether the neighbours agree and the
+  policy, and the drawings decide by the same rules as the code, which
+  `tools/check_site.py` holds them to.
 - `publication_status` in `orthology_evidence.tsv` follows `matrix_action`.
   Evidence the matrix policy or a quality floor kept out reads `held_out_policy`
   or `held_out_quality` instead of a `corrected...` value, and a strict

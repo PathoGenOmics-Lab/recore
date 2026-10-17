@@ -2,16 +2,18 @@ name: Documentation
 
 # Checks the website in docs/ against the code it describes.
 #
-# The site is plain HTML with no build step (docs/index.html, reference.html and
-# assets/), so there is nothing to build or deploy: GitHub Pages can serve the
-# folder as it is, with Settings -> Pages -> "Deploy from a branch" -> main ->
-# /docs, once the repository is public or the organisation is on a paid plan.
-# The Docs tab is built from the markdown by tools/build_docs.py and committed.
-# What can still go wrong is drift, and tools/check_site.py fails on it: a
-# documentation page that no longer matches its markdown, a dead link or anchor, an option the pages show that `recore --help` does not have,
-# an option or a default the reference gets wrong, and an example run whose
-# counts are not the ones the page promises. That last part runs the "Try it"
-# commands for real, which is why this needs minimap2 and a build.
+# The site is plain HTML with no build step (docs/index.html, how-it-works.html,
+# reference.html and assets/), so there is nothing to build or deploy: GitHub
+# Pages can serve the folder as it is, with Settings -> Pages -> "Deploy from a
+# branch" -> main -> /docs, once the repository is public or the organisation is
+# on a paid plan. The Docs tab is built from the markdown by tools/build_docs.py
+# and committed. What can still go wrong is drift, and tools/check_site.py fails
+# on it: a documentation page that no longer matches its markdown, a dead link
+# or anchor, an option the pages show that `recore --help` does not have, an
+# option or a default the reference gets wrong, a walkthrough that decides
+# differently from src/pipeline.rs, and an example run whose counts are not the
+# ones the page promises. That last part runs the "Try it" commands for real,
+# which is why this needs minimap2 and a build.
 #
 # The workflow and job names are what the Dependabot auto-merge gate waits for
 # ("Documentation" / "Build"); tools/check_automerge_gate.py fails CI if they

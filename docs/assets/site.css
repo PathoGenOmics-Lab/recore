@@ -885,6 +885,12 @@ kbd {
   color: var(--on-accent);
 }
 
+.seg button[aria-pressed="true"] code {
+  background: color-mix(in srgb, var(--on-accent) 14%, transparent);
+  border-color: transparent;
+  color: inherit;
+}
+
 .opt {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -2157,4 +2163,586 @@ td.wrap-code code {
 .docs-group {
   font-size: 1.1rem !important;
   margin: 1.6em 0 0.7em !important;
+}
+
+/* ── How it works: the illustrated walk through one cell ── */
+
+.nav-wide {
+  white-space: nowrap;
+}
+
+@media (max-width: 1060px) {
+  .nav .nav-wide {
+    display: none;
+  }
+}
+
+.how-hero h1 {
+  font-size: clamp(2.1rem, 5vw, 3.2rem);
+}
+
+.how {
+  padding: 8px 0 24px;
+}
+
+.how-pick {
+  margin: 18px 0 22px;
+}
+
+.how-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .how-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.how-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  position: sticky;
+  top: 84px;
+}
+
+.how-steps button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  font: 600 0.95rem var(--font);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.how-steps button:hover {
+  color: var(--ink);
+  background: var(--bg-subtle);
+}
+
+.how-steps .n {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  font-size: 0.8rem;
+  flex: none;
+}
+
+.how-steps button.done .n {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.how-steps button[aria-current="step"] {
+  color: var(--ink);
+  background: var(--bg-elev);
+  border-color: var(--line);
+}
+
+.how-steps button[aria-current="step"] .n {
+  background: linear-gradient(135deg, #0274b8, var(--brand-c));
+  border-color: transparent;
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .how-steps {
+    position: static;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .how-steps button span:not(.n) {
+    display: none;
+  }
+
+  .how-steps button {
+    padding: 4px;
+  }
+}
+
+.how-stage-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.how-progress {
+  height: 4px;
+  background: var(--bg-subtle);
+}
+
+.how-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--grad-a), var(--grad-c));
+  transition: width 0.4s ease;
+}
+
+.stage {
+  display: block;
+  width: 100%;
+  height: auto;
+  background:
+    radial-gradient(70% 90% at 50% 30%, color-mix(in srgb, var(--brand-b) 10%, transparent), transparent 75%),
+    var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font);
+}
+
+.how-text {
+  padding: 20px 24px 6px;
+}
+
+.how-kicker {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.how-text h2 {
+  font-size: 1.5rem;
+  margin: 6px 0 8px;
+}
+
+.how-text p {
+  color: var(--ink-soft);
+  max-width: 62ch;
+}
+
+.how-control:not(:empty) {
+  margin-top: 14px;
+}
+
+.how-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 24px 20px;
+  flex-wrap: wrap;
+}
+
+.how-nav [data-next] {
+  margin-left: auto;
+}
+
+.how-nav button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.how-note {
+  margin-top: 16px;
+  max-width: 80ch;
+}
+
+/* Things in the drawings. */
+
+.stage text {
+  fill: var(--ink);
+}
+
+.stage .axis {
+  fill: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.stage .small-label {
+  fill: var(--muted);
+  font-size: 15px;
+}
+
+.stage .col-label,
+.stage .row-label {
+  fill: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.stage .is-x {
+  fill: var(--rescue);
+}
+
+.stage .big-num {
+  font-size: 26px;
+  font-weight: 750;
+}
+
+.stage .gene path {
+  stroke: color-mix(in srgb, var(--ink) 25%, transparent);
+  stroke-width: 1;
+}
+
+.stage .gene-label {
+  font-size: 14px;
+  font-weight: 650;
+  fill: #0b0d12;
+}
+
+.stage .gx path { fill: var(--rescue); }
+.stage .gx .gene-label { fill: #fff; }
+.stage .ga path { fill: #3fb6a8; }
+.stage .gb path { fill: #e2a03f; }
+.stage .gc path { fill: #9a8cf8; }
+.stage .gd path { fill: #ec7fae; }
+.stage .ge path { fill: #8fa88a; }
+.stage .gf path { fill: #b49b7a; }
+.stage .gg path { fill: #7d93b3; }
+.stage .gh path { fill: #a98bb0; }
+.stage .go path { fill: var(--nsc); }
+
+.stage .gp path {
+  fill: var(--bg-subtle);
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.stage .gp .gene-label {
+  fill: var(--ink-soft);
+}
+
+.stage .gx-ghost path {
+  fill: transparent;
+  stroke: var(--rescue);
+  stroke-dasharray: 5 4;
+  stroke-width: 2;
+}
+
+.stage .gx-ghost .gene-label {
+  fill: var(--rescue);
+}
+
+.stage .contig {
+  stroke: var(--line-strong);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.stage .m-present { fill: var(--present); }
+.stage .m-empty { fill: var(--absent); stroke: var(--absent-stroke); }
+.stage .m-put { fill: var(--rescue); }
+.stage .m-state { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+
+.stage .m-target {
+  fill: var(--absent);
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 6 4;
+  animation: target-pulse 1.6s ease-in-out infinite;
+}
+
+.stage .m-question {
+  fill: var(--accent);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.stage .callout path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-dasharray: 4 5;
+}
+
+.stage .callout-text {
+  fill: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.stage .file path {
+  fill: var(--bg-subtle);
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.stage .file .file-fold {
+  fill: none;
+}
+
+.stage .file-line {
+  fill: var(--line-strong);
+}
+
+.stage .base-a { fill: #3fb6a8; }
+.stage .base-c { fill: #5aa8ff; }
+.stage .base-g { fill: #e2a03f; }
+.stage .base-t { fill: #ec7fae; }
+
+.stage .flow-arrow,
+.stage .guide {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+
+.stage .guide {
+  stroke-dasharray: 1;
+  opacity: 0.7;
+}
+
+.stage .bact {
+  fill: color-mix(in srgb, var(--grad-a) 10%, var(--bg-elev));
+  stroke: color-mix(in srgb, var(--grad-a) 55%, transparent);
+  stroke-width: 3;
+}
+
+.stage .chromosome {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 3;
+  stroke-dasharray: 2 6;
+}
+
+.stage .arc {
+  fill: none;
+  stroke-width: 12;
+  stroke-linecap: round;
+}
+
+.stage .arc.ga { stroke: #3fb6a8; }
+.stage .arc.gb { stroke: #e2a03f; }
+.stage .arc.gc { stroke: #9a8cf8; }
+.stage .arc.gd { stroke: #ec7fae; }
+.stage .arc.gp { stroke: var(--line-strong); }
+
+.stage .lens circle {
+  fill: color-mix(in srgb, var(--bg-elev) 55%, transparent);
+  stroke: var(--ink);
+  stroke-width: 4;
+}
+
+.stage .lens line {
+  stroke: var(--ink);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.stage .glow {
+  fill: none;
+  stroke: var(--rescue);
+  stroke-width: 4;
+}
+
+.stage .panel rect {
+  fill: var(--bg-subtle);
+  stroke: var(--line);
+}
+
+.stage .badge-svg rect {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.stage .badge-svg text {
+  fill: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.stage .badge-svg.is-good rect { fill: color-mix(in srgb, var(--ok) 16%, var(--bg-elev)); stroke: var(--ok); }
+.stage .badge-svg.is-good text { fill: var(--ok); }
+.stage .badge-svg.is-bad rect { fill: color-mix(in srgb, var(--kept) 14%, var(--bg-elev)); stroke: var(--kept); }
+.stage .badge-svg.is-bad text { fill: var(--kept); }
+.stage .badge-svg.is-muted rect { fill: var(--bg-subtle); stroke: var(--line-strong); }
+.stage .badge-svg.is-muted text { fill: var(--muted); }
+
+.stage .bracket {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+.stage .is-el rect { fill: #8b5cf6; }
+.stage .is-el text { fill: #fff; font-size: 13px; font-weight: 800; }
+
+.stage .cross path {
+  stroke: var(--kept);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.stage .stop-sign polygon { fill: var(--kept); }
+.stage .stop-sign text { fill: #fff; font-size: 8px; font-weight: 800; }
+.stage .stop-tick { fill: var(--kept); }
+
+.stage .track .faint {
+  opacity: 0.4;
+}
+
+.stage .link {
+  fill: none;
+  stroke-width: 3;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+
+.stage .link-good { stroke: var(--ok); }
+.stage .link-bad { stroke: var(--kept); stroke-dasharray: 0.04 0.03; }
+
+.stage .chip-svg rect {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.stage .chip-svg text {
+  fill: var(--accent);
+  font: 700 14px var(--mono);
+}
+
+.stage .chip-svg text.long,
+.stage .state-label.long {
+  font-size: 12px;
+}
+
+.stage .gate text {
+  fill: var(--muted);
+  font: 700 15px var(--mono);
+}
+
+.stage .gate .frame {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 3;
+}
+
+.stage .gate .door {
+  fill: var(--bg-subtle);
+  stroke: var(--line);
+}
+
+.stage .gate.allows .door {
+  fill: color-mix(in srgb, var(--rescue) 16%, var(--bg-subtle));
+}
+
+.stage .gate.is-on text { fill: var(--accent); }
+.stage .gate.is-on .frame { stroke: var(--accent); }
+.stage .gate:not(.is-on) > * { opacity: 0.45; }
+
+.stage .r-put { fill: var(--rescue); }
+
+.stage .result-head {
+  fill: var(--ink);
+  font-weight: 700;
+}
+
+.stage .r-kept {
+  fill: var(--absent);
+  stroke: var(--kept);
+  stroke-width: 3;
+}
+
+.stage .doc .doc-bg {
+  fill: var(--bg-subtle);
+  stroke: var(--line-strong);
+}
+
+.stage .token {
+  fill: var(--accent);
+}
+
+.stage .file-line.is-x {
+  fill: var(--rescue);
+}
+
+.stage .doc .doc-title {
+  font: 700 14px var(--mono);
+  fill: var(--ink-soft);
+}
+
+.stage .state-label {
+  font-family: var(--mono);
+  fill: var(--accent);
+  font-weight: 700;
+}
+
+.stage .tsv-key {
+  font: 600 11px var(--mono);
+  fill: var(--muted);
+}
+
+.stage .tsv-val {
+  font: 700 13px var(--mono);
+  fill: var(--ink);
+}
+
+.stage .hl {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+/* On a phone the drawing is about half its drawn size: give it the whole
+   width and larger labels. */
+@media (max-width: 600px) {
+  .how-stage-card {
+    margin: 0 -24px;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  .stage .small-label,
+  .stage .axis,
+  .stage .gate text {
+    font-size: 18px;
+  }
+
+  .stage .gene-label { font-size: 16px; }
+  .stage .badge-svg text { font-size: 19px; }
+  .stage .chip-svg text { font-size: 16px; }
+  .stage .col-label,
+  .stage .row-label { font-size: 19px; }
+  .stage .callout-text { font-size: 21px; }
+}
+
+/* How things arrive. */
+
+.stage .in-fade { animation: in-fade 0.6s ease both; }
+.stage .in-pop { animation: in-pop 0.45s cubic-bezier(.3,1.4,.6,1) both; transform-box: fill-box; transform-origin: center; }
+.stage .in-rise { animation: in-rise 0.6s ease both; }
+.stage .in-draw { animation: in-draw 0.9s ease both; }
+.stage .in-pulse { animation: in-pulse 1.4s ease-in-out 3 both; transform-box: fill-box; transform-origin: center; }
+
+@keyframes in-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes in-pop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes in-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes in-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes in-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+@keyframes target-pulse { 0%, 100% { stroke-opacity: 1; } 50% { stroke-opacity: 0.35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .stage *,
+  .stage *::before {
+    animation: none !important;
+    transition: none !important;
+  }
 }

@@ -1018,7 +1018,7 @@ window.RECORE_DOCS_INDEX = [
 "page": "Contributing",
 "section": "Documentation",
 "url": "about/contributing.html#documentation",
-"text": "The website is docs/index.html and docs/reference.html, styled by docs/assets/site.css and driven by docs/assets/site.js: plain files, so opening docs/index.html in a browser shows a change. Keep the front page short. It is there to get someone running in two minutes; the details belong in the documentation. The Docs tab is these markdown pages. tools/build_docs.py turns each one into an .html page next to it, with the site's header, sidebar, contents and search, and writes docs/documentation.html and the search index. The pages are committed, so after editing a .md file, rebuild them: A new p"
+"text": "The website is docs/index.html, docs/how-it-works.html and docs/reference.html, styled by docs/assets/site.css and driven by docs/assets/site.js: plain files, so opening docs/index.html in a browser shows a change. Keep the front page short. It is there to get someone running in two minutes; the details belong in the documentation. The drawings of How it works are docs/assets/how.js. They decide with a copy of evidence_state and matrix_policy_corrects from src/pipeline.rs, so a change to those rules is a change there too; tools/check_site.py fails if the policy table, a state, a rescue type, a"
 },
 {
 "page": "Contributing",

@@ -13,6 +13,9 @@ fails when it drifts. This does, in four parts:
   flags    every option the pages or the command builder mention exists in
            `recore --help`, the reference lists every option there is, and
            its defaults are the ones the binary prints;
+  walk     the illustrated walkthrough (how-it-works.html) decides with the
+           policy table, evidence states, rescue types, matrix actions and
+           columns of src/pipeline.rs;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -37,11 +40,15 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 SITE = Path("docs")
-PAGES = ["index.html", "reference.html"]
+PAGES = ["index.html", "reference.html", "how-it-works.html"]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_docs  # noqa: E402  (tools/build_docs.py, next to this file)
-SCRIPTS = [SITE / "assets" / "site.js", SITE / "assets" / "site.css"]
+SCRIPTS = [SITE / "assets" / "site.js", SITE / "assets" / "how.js", SITE / "assets" / "site.css"]
 DATASET_SCRIPT = Path("benchmarks/make_tutorial_dataset.py")
+HOW_JS = SITE / "assets" / "how.js"
+PIPELINE = Path("src/pipeline.rs")
+STATES_WRITER = Path("src/pipeline/output.rs")
+RESCUE_TYPES = Path("src/rescue/types.rs")
 
 
 class Page(HTMLParser):
@@ -215,11 +222,17 @@ def check_flags(pages: dict[str, Page], recore: str) -> list[str]:
                         note(command, name)
             elif text.startswith("recore ") or text.startswith("-"):
                 note(text, name)
-    # The command builder's lines are written as line(["-p", tool.p]).
+    # The command builder's lines are written as line(["-p", tool.p]), and the
+    # walkthrough's text names options inside <code> in its strings.
     js = (SITE / "assets" / "site.js").read_text(encoding="utf-8")
     for args in re.findall(r"line\(\[([^\]]*)\]", js):
         for flag in re.findall(r"\"(-{1,2}[a-zA-Z][a-z0-9-]*)\"", args):
             note(flag, "site.js")
+    for script in ("site.js", "how.js"):
+        source = (SITE / "assets" / script).read_text(encoding="utf-8")
+        for snippet in re.findall(r"<code>([^<]+)</code>", source):
+            if snippet.startswith("recore ") or snippet.startswith("-"):
+                note(snippet, script)
     for flag, where in sorted(mentioned_long.items()):
         if flag not in longs:
             problems.append(f"{where}: mentions {flag}, which recore --help does not have")
@@ -240,6 +253,59 @@ def check_flags(pages: dict[str, Page], recore: str) -> list[str]:
             problems.append(
                 f"reference.html: {flag} default reads {default!r}, recore --help says {defaults[flag]!r}"
             )
+    return problems
+
+
+def block(source: str, opener: str, closer: str) -> str:
+    """The text from `opener` to the first `closer` after it, or ""."""
+    start = source.find(opener)
+    if start < 0:
+        return ""
+    end = source.find(closer, start)
+    return source[start:] if end < 0 else source[start:end]
+
+
+def check_walkthrough() -> list[str]:
+    """The walkthrough's drawings decide the way src/pipeline.rs does."""
+    js = HOW_JS.read_text(encoding="utf-8")
+    rust = PIPELINE.read_text(encoding="utf-8")
+    problems = []
+
+    corrects = block(rust, "fn matrix_policy_corrects(", "\n}\n")
+    code_policies = {
+        name.lower(): set(re.findall(r'"([A-Z_]+)"', arm))
+        for name, arm in re.findall(r"MatrixPolicy::(\w+) =>(.*?)(?=MatrixPolicy::|\Z)", corrects, re.S)
+    }
+    page_policies = {
+        name: set(re.findall(r'"([A-Z_]+)"', states))
+        for name, states in re.findall(r"(\w+): \[([^\]]*)\]", block(js, "var CORRECTS = {", "};"))
+    }
+    if not code_policies or page_policies != code_policies:
+        problems.append(f"{HOW_JS}: CORRECTS is {page_policies}, matrix_policy_corrects says {code_policies}")
+
+    code_states = set(re.findall(r'"([A-Z_]+)"', block(rust, "fn evidence_state(", "\n}\n")))
+    if '"ABSENT"' in STATES_WRITER.read_text(encoding="utf-8"):
+        code_states.add("ABSENT")
+    # Only what the JavaScript functions return, not what they compare with.
+    returned = r'(?:return|\?|:)\s*"([{}_]+)"'
+    for state in sorted(set(re.findall(returned.format("A-Z"), block(js, "function evidenceState()", "\n  }\n"))) - code_states):
+        problems.append(f"{HOW_JS}: evidence state {state} is not one evidence_state writes")
+
+    code_actions = set(re.findall(r'"([a-z_]+)"', block(rust, "fn matrix_action(", "\n}\n")))
+    for action in sorted(set(re.findall(returned.format("a-z"), block(js, "function matrixAction()", "\n  }\n"))) - code_actions):
+        problems.append(f"{HOW_JS}: matrix action {action} is not one matrix_action writes")
+
+    # Each rescue_type the drawings write has to fit one of the Display formats.
+    formats = re.findall(r'write!\(\s*f,\s*"([^"]+)"', block(RESCUE_TYPES.read_text(encoding="utf-8"), "impl std::fmt::Display for RescueType", "\n}\n"))
+    patterns = [re.compile("".join(".+" if part.startswith("{") else re.escape(part) for part in re.split(r"(\{[^}]*\})", f)) + "$") for f in formats]
+    for written in re.findall(r'written: "([^"]+)"', js):
+        if not any(p.match(written) for p in patterns):
+            problems.append(f"{HOW_JS}: rescue_type {written} is not a form RescueType prints")
+
+    columns = set(re.findall(r'"([a-z_]+)"', block(rust, "ORTHOLOGY_EVIDENCE_COLUMNS", "];")))
+    for column in re.findall(r'\["([a-z_]+)", ', block(js, "var rows = [", "];")):
+        if column not in columns:
+            problems.append(f"{HOW_JS}: {column} is not a column of orthology_evidence.tsv")
     return problems
 
 
@@ -307,7 +373,7 @@ def main() -> int:
 
     pages = all_pages()
     front = {name: pages[name] for name in PAGES}
-    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_dashes(pages)
+    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_walkthrough() + check_dashes(pages)
     if args.run_tutorial:
         if not shutil.which("minimap2"):
             problems.append("Try it: minimap2 is not on PATH")
@@ -318,7 +384,7 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    checked = "generated pages, links, options, defaults, dashes" + (", and the Try-it run" if args.run_tutorial else "")
+    checked = "generated pages, links, options, defaults, walkthrough, dashes" + (", and the Try-it run" if args.run_tutorial else "")
     print(f"docs/: {checked} all agree with the code")
     return 0
 
