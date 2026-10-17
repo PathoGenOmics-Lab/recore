@@ -988,6 +988,17 @@ td a {
   height: 36px;
 }
 
+/* The widened hit area must not reach into a data pane: over the matrix it ate
+   the first 4px, which at the opening zoom is the first eleven clusters, and
+   those are the top of any sorted order. Widen toward the quieter side only. */
+#treeHandle::before {
+  inset: 0 0 0 -4px;
+}
+
+#inspectorHandle::before {
+  inset: 0 -4px 0 0;
+}
+
 .split-handle[aria-orientation="horizontal"]::after {
   width: 44px;
   height: 3px;
@@ -2441,6 +2452,11 @@ input.switch:focus-visible {
   display: block;
 }
 
+/* Hover and selection marks, drawn above the data and never part of it. */
+.pane-overlay {
+  pointer-events: none;
+}
+
 .pane-scroll {
   position: absolute;
   inset: 0;
@@ -2867,6 +2883,10 @@ input.switch:focus-visible {
 }
 
 @media print {
+  .pane-overlay {
+    display: none !important;
+  }
+
   /* Reports get printed and pasted into supplementary material, so force the
      light palette even if the reader is in dark mode. */
   :root,

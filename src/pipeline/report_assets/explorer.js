@@ -18,6 +18,8 @@ function refreshThemeColors() {
   panelBg = readVar("--panel", "#ffffff");
   headerBg = readVar("--bg-subtle", "#f8fafc");
   hoverColTint = readVar("--warning-soft", "#fff7ed");
+  hoverStroke = readVar("--muted", "#667085");
+  markInk = readVar("--ink", "#101828");
   selectColTint = readVar("--accent-soft", "#eef4ff");
   selectStroke = readVar("--accent-ink", "#1d4ed8");
   gridStroke = readVar("--faint", "#98a2b3");
@@ -29,6 +31,8 @@ const strokes = {P:"#155eef", R:"#067647", N:"#6941c6", A:"#d0d5dd"};
 let panelBg = "#ffffff";
 let headerBg = "#f8fafc";
 let hoverColTint = "#fff7ed";
+let hoverStroke = "#667085";
+let markInk = "#101828";
 let selectColTint = "#eef4ff";
 let selectStroke = "#1d4ed8";
 let gridStroke = "#98a2b3";
@@ -179,6 +183,15 @@ const topTreeMeta = document.getElementById("topTreeMeta");
 const topMatrixMeta = document.getElementById("topMatrixMeta");
 const topSyntenyMeta = document.getElementById("topSyntenyMeta");
 const tooltip = document.getElementById("matrixTooltip");
+// Hover and selection marks live on transparent canvases above the data, so
+// moving the pointer repaints a few lines instead of every pane, and the data
+// canvases (and the exported figure) never carry a crosshair.
+const matrixOverlay = document.getElementById("matrixOverlay");
+const matrixOverlayCtx = matrixOverlay ? matrixOverlay.getContext("2d") : null;
+const headerOverlay = document.getElementById("headerOverlay");
+const headerOverlayCtx = headerOverlay ? headerOverlay.getContext("2d") : null;
+const treeOverlay = document.getElementById("treeOverlay");
+const treeOverlayCtx = treeOverlay ? treeOverlay.getContext("2d") : null;
 const syntenyPanel = document.getElementById("syntenyPanel");
 const syntenySummary = document.getElementById("syntenySummary");
 const syntenySvg = document.getElementById("syntenySvg");
@@ -250,6 +263,9 @@ let mechanismFilters = new Set();
 /* Rows matching the genome search, marked on the tree and the lineage strip. */
 let highlightedRows = new Set();
 let overviewKey = "";
+/* Set once the genome card exists (it is declared further down); render() runs
+   before that during start-up. */
+let afterRender = null;
 let treeRoot = data.tree;
 
 /* ---- Cell decoding -------------------------------------------------------
@@ -330,7 +346,31 @@ function decodeClusterSets(encoded, nGenomes) {
   }
   return sets;
 }
+/* Drawing wants a set as matrix rows, sorted, so the visible band is a binary
+   search plus a walk over what is on screen. Walking genome indices instead
+   costs the whole set per column: a 50%-prevalence cluster at 10,000 genomes is
+   5,000 checks to paint the 700 rows in view. Rebuilt when the tree order
+   changes (rerooting moves every row). */
+let rowEpoch = 0;
+const rowSets = new Map();
+function clusterRowSets(clusterIdx) {
+  const cached = rowSets.get(clusterIdx);
+  if (cached && cached.epoch === rowEpoch) return cached.rows;
+  const rows = clusterSets(clusterIdx).map(set => {
+    if (set.kind === "all") return null;
+    const out = new Int32Array(set.idx.length);
+    let n = 0;
+    for (let i = 0; i < set.idx.length; i += 1) {
+      const row = rowOfGenome[set.idx[i]];
+      if (row >= 0) out[n++] = row;
+    }
+    return out.subarray(0, n).sort();
+  });
+  rowSets.set(clusterIdx, {epoch: rowEpoch, rows});
+  return rows;
+}
 function buildRowOfGenome() {
+  rowEpoch += 1;
   rowOfGenome = new Int32Array(data.genomes.length).fill(-1);
   for (let row = 0; row < leafOrder.length; row += 1) {
     const genomeIdx = leafOrder[row];
@@ -834,7 +874,9 @@ function clusterLabel(cluster) {
 }
 /** Horizontal room the branches actually get, once labels are accounted for. */
 function treeUsableWidth() {
-  const labelPad = labelToggle.checked && leafOrder.length <= 1500 ? 150 : 24;
+  // Reserve room exactly when names are drawn (see renderTree), whatever the
+  // tip count, or a zoomed-in large tree truncates every name to "L4…".
+  const labelPad = labelToggle.checked && cellH >= 5 ? 150 : 24;
   return Math.max(80, treeWidth - 22 - labelPad);
 }
 function xForNode(node) {
@@ -1727,87 +1769,75 @@ function renderMatrix(scrollToSelected) {
   // of fading out when several clusters share a pixel column.
   const drawW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
   const drawH = Math.max(1, cellH > 2 ? cellH - 1 : cellH);
-  const gutterRows = cellH >= 2;
+  // A gutter exists only when drawH < cellH. At exactly 2px rows there is none,
+  // and drawing row by row there was pure cost.
+  const gutterRows = drawH < cellH;
   const byProcess = matrixColorMode.value === "process";
-  const spanTop = firstRow * cellH - top;
-  const spanHeight = (lastRow - firstRow) * cellH;
 
-  for (let c = firstCol; c < lastCol; c += 1) {
-    const clusterIdx = originalClusterAtVisibleColumn(c);
-    if (clusterIdx < 0) continue;
-    const sets = clusterSets(clusterIdx);
-    const x = c * cellW - left;
-    const processFill = byProcess
-      ? processColor(processKind(data.clusters[clusterIdx]))
-      : null;
-    const fillWholeColumn = () => {
-      if (gutterRows) {
-        for (let r = firstRow; r < lastRow; r += 1) {
-          ctx.fillRect(x, r * cellH - top, drawW, drawH);
-        }
-      } else {
-        ctx.fillRect(x, spanTop, drawW, spanHeight);
+  // Runs of adjacent rows are one rect each; row gutters, when rows are tall
+  // enough to have them, are cut afterwards as one background line per visible
+  // row. Drawing every cell as its own rect cost 340,000 fillRect calls for a
+  // dense window at 3px rows; this is a few thousand.
+  const fillRows = (x, a, b) => {
+    ctx.fillRect(x, a * cellH - top, drawW, (b - a) * cellH);
+  };
+  const paintSet = (set, rows, x) => {
+    if (set.kind === "list") {
+      let i = lowerBound(rows, firstRow);
+      while (i < rows.length && rows[i] < lastRow) {
+        const from = rows[i];
+        let to = from + 1;
+        i += 1;
+        while (i < rows.length && rows[i] === to && to < lastRow) { to += 1; i += 1; }
+        fillRows(x, from, to);
       }
-    };
-    for (let state = 0; state < STORED_STATES; state += 1) {
-      const set = sets[state];
-      ctx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
-      if (set.kind === "all") {
-        fillWholeColumn();
-        continue;
-      }
-      if (set.kind === "complement" && state > 0) {
-        // Punching the excluded rows out with the background is only right
-        // for the first state, which has nothing under it. For a later state
-        // it erased the cells of the earlier ones: present cells drew as
-        // absent whenever a rescued or NSC set came in complement form.
-        for (let r = firstRow; r < lastRow; r += 1) {
-          const genome = leafOrder[r];
-          if (genome >= 0 && setContains(set, genome)) {
-            ctx.fillRect(x, r * cellH - top, drawW, drawH);
-          }
-        }
-        continue;
-      }
-      if (set.kind === "complement") {
-        fillWholeColumn();
-        ctx.fillStyle = panelBg;
-        for (let i = 0; i < set.idx.length; i += 1) {
-          const row = rowOfGenome[set.idx[i]];
-          if (row >= firstRow && row < lastRow) {
-            ctx.fillRect(x, row * cellH - top, drawW, Math.max(1, cellH));
-          }
-        }
-        continue;
-      }
-      // Only the genomes inside the visible band are worth walking.
-      const idx = set.idx;
-      for (let i = 0; i < idx.length; i += 1) {
-        const row = rowOfGenome[idx[i]];
-        if (row >= firstRow && row < lastRow) {
-          ctx.fillRect(x, row * cellH - top, drawW, drawH);
-        }
+      return;
+    }
+    // "all" or "complement": paint the visible runs between excluded rows. No
+    // background punch-out, so a later state never erases an earlier one.
+    const excluded = set.kind === "all" ? null : rows;
+    const n = excluded ? excluded.length : 0;
+    let i = n ? lowerBound(excluded, firstRow) : 0;
+    let from = firstRow;
+    while (from < lastRow) {
+      const stop = i < n ? Math.min(excluded[i], lastRow) : lastRow;
+      if (stop > from) fillRows(x, from, stop);
+      from = stop + 1;
+      i += 1;
+    }
+  };
+  // Input and NSC cells first for the whole window, then evidence kept out of
+  // the matrix, then rescued cells last. Below one pixel per column neighbours
+  // share pixels, and painting column by column let the next cluster's cells
+  // cover the corrections, which are the cells this report exists to show.
+  for (const states of [[0, 2], [3], [1]]) {
+    for (let c = firstCol; c < lastCol; c += 1) {
+      const clusterIdx = originalClusterAtVisibleColumn(c);
+      if (clusterIdx < 0) continue;
+      const sets = clusterSets(clusterIdx);
+      const rowsets = clusterRowSets(clusterIdx);
+      // Below a pixel per column, snap to whole pixels: a fractional x is
+      // antialiased into a blend of neighbours, and a green cell blended into
+      // blue reads as neither.
+      const x = cellW < 1 ? Math.floor(c * cellW - left) : c * cellW - left;
+      const processFill = byProcess
+        ? processColor(processKind(data.clusters[clusterIdx]))
+        : null;
+      for (const state of states) {
+        const set = sets[state];
+        if (set.kind === "list" && !set.idx.length) continue;
+        ctx.fillStyle = processFill || colors[STATE_CODES[state]] || colors.A;
+        paintSet(set, rowsets[state], x);
       }
     }
   }
 
-  const bandH = Math.max(0, Math.min(view.h, virtualH - top));
-  const selectedCol = selectedVisibleColumn();
-  if (selectedCol >= firstCol && selectedCol < lastCol && bandH > 0) {
-    const x = selectedCol * cellW - left;
-    ctx.fillStyle = "rgba(37,99,235,.13)";
-    ctx.fillRect(x, 0, Math.max(1, cellW), bandH);
-    ctx.strokeStyle = selectStroke;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, 0.5, Math.max(1, cellW - 1), bandH - 1);
-  }
-  if (hoverRow >= firstRow && hoverRow < lastRow) {
-    ctx.fillStyle = "rgba(245,158,11,.14)";
-    ctx.fillRect(0, hoverRow * cellH - top, Math.min(view.w, virtualW - left), Math.max(1, cellH));
-  }
-  if (hoverCol >= firstCol && hoverCol < lastCol && bandH > 0) {
-    ctx.fillStyle = "rgba(245,158,11,.10)";
-    ctx.fillRect(hoverCol * cellW - left, 0, Math.max(1, cellW), bandH);
+  if (gutterRows) {
+    ctx.fillStyle = panelBg;
+    const gutterW = Math.min(view.w, virtualW - left);
+    for (let r = firstRow; r < lastRow; r += 1) {
+      ctx.fillRect(0, r * cellH - top + drawH, gutterW, cellH - drawH);
+    }
   }
   if (rows === 0 || cols === 0) {
     ctx.fillStyle = labelInk;
@@ -1820,7 +1850,10 @@ function columnLabelsFlat() {
   return cellW >= LABEL_HORIZONTAL_CELL_W;
 }
 function columnLabelBand() {
-  if (cellW < LABEL_MIN_CELL_W || visibleClusters.length > 4000) return 0;
+  // Gate on the cell, not the run: only the columns in view are labelled, so a
+  // 30,000-cluster run zoomed to 10px columns labels about 80 of them. The old
+  // count cap meant a large run never showed a single cluster name.
+  if (cellW < LABEL_MIN_CELL_W) return 0;
   return columnLabelsFlat() ? LABEL_BAND_H_FLAT : LABEL_BAND_H;
 }
 function renderColumnHeader() {
@@ -1843,7 +1876,14 @@ function renderColumnHeader() {
   const byProcess = matrixColorMode.value === "process";
   const tickW = Math.max(1, cellW > 2 ? cellW - 1 : cellW);
 
-  for (let c = firstCol; c < lastCol; c += 1) {
+  // Ticks that touch and share a colour are one bar: a rect per column cost a
+  // fillRect per cluster in view, thousands of them, on every repaint.
+  if (!byProcess && cellW <= 2) {
+    headerCtx.fillStyle = gridStroke;
+    const x0 = firstCol * cellW - left;
+    headerCtx.fillRect(x0, cssH - 9, Math.max(1, (lastCol - firstCol) * cellW), 6);
+  }
+  for (let c = firstCol; c < lastCol && (byProcess || cellW > 2); c += 1) {
     const clusterIdx = originalClusterAtVisibleColumn(c);
     if (clusterIdx < 0) continue;
     const x = c * cellW - left;
@@ -1854,10 +1894,6 @@ function renderColumnHeader() {
     if (byProcess && band) {
       headerCtx.fillRect(x, band, tickW, 6);
     }
-  }
-  if (hoverCol >= firstCol && hoverCol < lastCol) {
-    headerCtx.fillStyle = hoverColTint;
-    headerCtx.fillRect(hoverCol * cellW - left, 0, Math.max(1, cellW), cssH);
   }
   if (selectedCol >= firstCol && selectedCol < lastCol) {
     const x = selectedCol * cellW - left;
@@ -2008,20 +2044,13 @@ function renderTree() {
 
   const top = matrixScrollTop();
   const [firstRow, lastRow] = visibleRowRange(view.h);
-  const showLabels = labelToggle.checked && cellH >= 5 && leafOrder.length <= 4000;
+  // Only tips in the visible band are drawn, so the tip count is no reason to
+  // hide names once a row is tall enough to carry one.
+  const showLabels = labelToggle.checked && cellH >= 5;
 
   treeCtx.lineWidth = 1;
   treeCtx.strokeStyle = gridStroke;
   drawTreeNode(treeRoot, top, firstRow, lastRow, view.h, showLabels);
-
-  if (hoverRow >= firstRow && hoverRow < lastRow) {
-    const y = hoverRow * cellH + cellH / 2 - top;
-    treeCtx.strokeStyle = "rgba(249,115,22,.55)";
-    treeCtx.beginPath();
-    treeCtx.moveTo(0, y);
-    treeCtx.lineTo(width, y);
-    treeCtx.stroke();
-  }
   renderLineageStrip(view.h, top, firstRow, lastRow);
 }
 function drawTreeNode(node, top, firstRow, lastRow, viewH, showLabels) {
@@ -2219,6 +2248,8 @@ function render(scrollToSelected = false) {
   renderTreeScaleBar();
   renderOverview();
   updateTopBarMeta();
+  renderOverlays();
+  if (afterRender) afterRender();
 }
 function scheduleRender(scrollToSelected = false) {
   if (scrollToSelected) {
@@ -2232,12 +2263,89 @@ function scheduleRender(scrollToSelected = false) {
     render(false);
   });
 }
+/* Marks a column or row with lines that sit in the gutters when cells have
+   gutters, and just outside the cells when they do not, so no cell is tinted:
+   a selected absent cell still reads as absent. */
+function markColumn(context, x, w, h, width) {
+  if (w >= 3) {
+    context.fillRect(x - width, 0, width, h);
+    context.fillRect(x + w - 1, 0, width, h);
+    return;
+  }
+  const bx = Math.floor(x);
+  context.fillRect(bx - width, 0, width, h);
+  context.fillRect(bx + Math.max(1, Math.ceil(w)), 0, width, h);
+}
+function markRow(context, y, h, w, width) {
+  if (h >= 3) {
+    context.fillRect(0, y - width, w, width);
+    context.fillRect(0, y + h - 1, w, width);
+    return;
+  }
+  const by = Math.floor(y);
+  context.fillRect(0, by - width, w, width);
+  context.fillRect(0, by + Math.max(1, Math.ceil(h)), w, width);
+}
+function clearOverlay(target, context, base) {
+  if (!target || !context || !base) return false;
+  const w = base.clientWidth;
+  const h = base.clientHeight;
+  if (target.width !== base.width || target.height !== base.height) {
+    sizeCanvas(target, context, w, h, base.width / Math.max(1, w));
+  } else {
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, target.width, target.height);
+    context.setTransform(base.width / Math.max(1, w), 0, 0, base.width / Math.max(1, w), 0, 0);
+  }
+  return true;
+}
+function renderOverlays() {
+  const left = matrixScrollLeft();
+  const top = matrixScrollTop();
+  const selectedCol = selectedVisibleColumn();
+  if (clearOverlay(matrixOverlay, matrixOverlayCtx, canvas)) {
+    const o = matrixOverlayCtx;
+    const w = Math.min(canvas.clientWidth, virtualW - left);
+    const h = Math.min(canvas.clientHeight, virtualH - top);
+    if (hoverRow >= 0 && h > 0) {
+      o.fillStyle = hoverStroke;
+      markRow(o, hoverRow * cellH - top, cellH, w, 1);
+    }
+    if (hoverCol >= 0 && h > 0) {
+      o.fillStyle = hoverStroke;
+      markColumn(o, hoverCol * cellW - left, cellW, h, 1);
+    }
+    if (selectedCol >= 0 && h > 0) {
+      o.fillStyle = markInk;
+      markColumn(o, selectedCol * cellW - left, cellW, h, cellW >= 3 ? 2 : 1);
+    }
+  }
+  if (clearOverlay(headerOverlay, headerOverlayCtx, headerCanvas) && hoverCol >= 0) {
+    const o = headerOverlayCtx;
+    o.fillStyle = hoverStroke;
+    markColumn(o, hoverCol * cellW - left, cellW, headerCanvas.clientHeight, 1);
+  }
+  if (clearOverlay(treeOverlay, treeOverlayCtx, treeCanvas) && hoverRow >= 0) {
+    const o = treeOverlayCtx;
+    o.fillStyle = hoverStroke;
+    markRow(o, hoverRow * cellH - top, cellH, treeCanvas.clientWidth, 1);
+  }
+}
+let overlayQueued = false;
+function scheduleOverlays() {
+  if (overlayQueued) return;
+  overlayQueued = true;
+  requestAnimationFrame(() => {
+    overlayQueued = false;
+    renderOverlays();
+  });
+}
 function setHover(row, col, text) {
   const changed = hoverRow !== row || hoverCol !== col;
   hoverRow = row;
   hoverCol = col;
   if (text) status.textContent = text;
-  if (changed) scheduleRender(false);
+  if (changed) scheduleOverlays();
 }
 function setTreeMode(mode) {
   treeMode = mode;
@@ -2268,7 +2376,11 @@ function fitZoomToData() {
   const targetH = viewH > 120 ? viewH - 4 : FIT_TARGET_H;
   const rowFit = Math.max(MIN_ROW_ZOOM, Math.min(MAX_ROW_ZOOM, Math.floor(targetH / tips)));
   // cellW is round(slider * 0.82), so undo that factor when fitting to a width.
-  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW - 2) / cols / 0.82)));
+  // Round down to the slider step (0.25), not to whole units: 1,118 columns in
+  // 788px want 0.86, and flooring that to 0 sent the fit to the 0.25 minimum,
+  // leaving half the pane empty after Z.
+  const colStep = Number(sizeControl.step) || 0.25;
+  const colFit = Math.max(MIN_COL_ZOOM, Math.min(MAX_COL_ZOOM, Math.floor((matrixW - 2) / cols / 0.82 / colStep) * colStep));
   rowHeightControl.value = String(rowFit);
   sizeControl.value = String(colFit);
   labelToggle.checked = tips <= 500 && rowFit >= 4;
@@ -2499,7 +2611,10 @@ if (columnOrder) {
     refreshVisibleClusters();
     populateOptions();
     resetMatrixCache();
-    render(true);
+    // Sorting is asked for to see the top of the new order; following the old
+    // selection used to land the view thousands of columns into it.
+    if (matrixPane) matrixPane.scrollLeft = 0;
+    render(false);
   });
 }
 function adjustRange(control, delta, min, max) {
@@ -2636,7 +2751,15 @@ matrixPane.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
   setHover(-1, -1, defaultStatus);
 });
-matrixPane.addEventListener("click", event => selectVisibleColumn(columnAtPointer(event, matrixPane)));
+matrixPane.addEventListener("click", event => {
+  // A cell is a cluster and a genome. Selecting only the cluster left an open
+  // genome card describing some other genome, in some other cluster.
+  const c = columnAtPointer(event, matrixPane);
+  const r = rowAtPointer(event, matrixPane);
+  if (r >= 0) selectedGenome = leafOrder[r];
+  if (c >= 0) selectVisibleColumn(c);
+  else if (r >= 0) renderGenomeDetails();
+});
 
 /* ---- Print and export ----------------------------------------------------
    Canvases are bitmaps sized to the on-screen viewport, so printing without
@@ -2695,6 +2818,8 @@ function exportViewPng() {
   paste(headerCanvas, treeW + gap, 0, matrixW, headTop);
   paste(treeCanvas, 0, headTop, treeBodyW, bodyH);
   paste(lineageStripCanvas, treeBodyW, headTop, LINEAGE_STRIP_W, bodyH);
+  // Hover and selection marks are on overlay canvases that are not pasted, so
+  // the figure never carries the crosshair of the moment E was pressed.
   paste(canvas, treeW + gap, headTop, matrixW, bodyH);
   out.toBlob(blob => {
     if (blob) downloadBlob(blob, "recore_matrix.png");
@@ -3280,6 +3405,16 @@ if (overviewStrip) {
     if (event.buttons & 1) jumpTo(event.clientX);
   });
 }
+
+/* The genome card names the selected cluster, so it follows every change of
+   selection, not only a click on a tip. */
+let genomeCardKey = "";
+afterRender = () => {
+  const key = `${selected}|${selectedGenome}`;
+  if (key === genomeCardKey) return;
+  genomeCardKey = key;
+  renderGenomeDetails();
+};
 
 renderGenomeDetails();
 populateOptions();

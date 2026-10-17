@@ -2238,7 +2238,7 @@ fn explorer_workspace_html(
     // viewport-sized canvas; the spacers carry the virtual size so the browser
     // still owns the scrollbars.
     html.push_str("<div class='tree-head-spacer' id='treeHeadSpacer' aria-hidden='true'></div>");
-    html.push_str("<div class='pane-viewport tree-viewport'><canvas id='treeCanvas' class='tree-canvas' role='img' aria-label='Matched phylogeny'></canvas><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas><div class='pane-scroll' id='treeScroll'><div class='pane-spacer' id='treeSpacer'></div></div></div>");
+    html.push_str("<div class='pane-viewport tree-viewport'><canvas id='treeCanvas' class='tree-canvas' role='img' aria-label='Matched phylogeny'></canvas><canvas id='lineageStrip' class='lineage-strip' aria-hidden='true'></canvas><canvas id='treeOverlay' class='pane-overlay' aria-hidden='true'></canvas><div class='pane-scroll' id='treeScroll'><div class='pane-spacer' id='treeSpacer'></div></div></div>");
     html.push_str("<div id='treeScaleBar' class='scale-bar' aria-hidden='true'></div>");
     html.push_str("</section>");
 
@@ -2260,8 +2260,8 @@ fn explorer_workspace_html(
     html.push_str("<div class='menu-title'>Filter columns by mechanism</div>");
     html.push_str("<div id='processLegend' class='process-legend'></div>");
     html.push_str("</div>");
-    html.push_str("<div class='matrix-header'><canvas id='columnHeaderCanvas' class='column-head'></canvas><div class='pane-scroll header-scroll' id='headerScroller'><div class='pane-spacer' id='headerSpacer'></div></div></div>");
-    html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas'></canvas><div class='pane-scroll' id='matrixPane'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
+    html.push_str("<div class='matrix-header'><canvas id='columnHeaderCanvas' class='column-head'></canvas><canvas id='headerOverlay' class='pane-overlay' aria-hidden='true'></canvas><div class='pane-scroll header-scroll' id='headerScroller'><div class='pane-spacer' id='headerSpacer'></div></div></div>");
+    html.push_str("<div class='pane-viewport matrix-viewport'><canvas id='matrixCanvas'></canvas><canvas id='matrixOverlay' class='pane-overlay' aria-hidden='true'></canvas><div class='pane-scroll' id='matrixPane'><div class='pane-spacer' id='matrixSpacer'></div></div><div id='matrixTooltip' class='matrix-tooltip'></div></div>");
     // Whole-matrix overview: at 30,000 columns the scrollbar tells you nothing
     // about where the interesting columns are. Prevalence per column does.
     html.push_str("<div class='overview' id='overviewStrip' data-tip='Column prevalence across the whole matrix. Click or drag to jump.'><canvas id='overviewCanvas'></canvas><div class='overview-window' id='overviewWindow'></div></div>");

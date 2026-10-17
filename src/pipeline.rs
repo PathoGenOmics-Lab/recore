@@ -2022,4 +2022,6 @@ fn write_orthology_evidence(
 }
 
 #[cfg(test)]
+mod scale_harness;
+#[cfg(test)]
 mod tests;
