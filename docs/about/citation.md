@@ -37,5 +37,5 @@ PathoGenOmics Lab, [github.com/PathoGenOmics-Lab](https://github.com/PathoGenOmi
 
 ## License
 
-GNU General Public License v3.0. See
+GNU Affero General Public License v3.0 (`AGPL-3.0-only`). See
 [LICENSE](https://github.com/PathoGenOmics-Lab/recore/blob/main/LICENSE).

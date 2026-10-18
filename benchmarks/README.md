@@ -155,43 +155,38 @@ cross-references, a product and a long note), six names per CDS, which is what
 an annotation index has to hold for most real assemblies; that run goes to
 `benchmarks/search_scaling_rich_metrics.tsv`.
 
-## AMAP performance benchmark
+## Performance on your own pangenome
 
-`amap_performance_benchmark.py` profiles Recore on the full local AMAP
-pangenome. It is a resource benchmark, not a precision/recall truth set.
+`performance_benchmark.py` times Recore on a pangenome you have: wall time,
+peak memory of the whole process tree, temporary disk, output size, and the
+rescue counts, appended to `benchmarks/performance_metrics.tsv`. It is a
+resource benchmark, not a truth set.
 
-The script:
-
-- filters `AMAP-gene_presence_absence.csv` with the canonical 459-tip tree
-- links FASTA and GFF inputs instead of copying them
-- runs the release binary with the publication settings
-- records wall time, peak RSS, temporary disk use, output size, rescues, and
-  corrected matrix entries
-
-Run from the repository root:
+Give it the same inputs as Recore. A Newick tree keeps only the genomes that are
+its tips, and `--max-clusters` keeps the first clusters, to time a subset; both
+need a Panaroo or Roary `gene_presence_absence.csv`. FASTA and GFF files are
+linked, not copied. The `publication` profile adds `--synteny`,
+`--multi-allele` and `--nscluster`; `rescue_only` searches without them.
 
 ```bash
-python3 benchmarks/amap_performance_benchmark.py \
-  --threads 8 \
-  --profile publication \
-  --minimap2 /path/to/minimap2
+python3 benchmarks/performance_benchmark.py \
+  -p gene_presence_absence.csv -r pan_genome_reference.fa \
+  -g genomes/ -a annotations/ --tree species.nwk --threads 8
 ```
 
-For a quick smoke test:
+For a quick smoke test on the tutorial dataset (below):
 
 ```bash
-python3 benchmarks/amap_performance_benchmark.py \
-  --max-clusters 50 \
-  --threads 4 \
-  --profile rescue_only \
-  --minimap2 /path/to/minimap2 \
-  --metrics /tmp/recore_amap_smoke_metrics.tsv
+python3 benchmarks/performance_benchmark.py \
+  -p tutorial_data/gene_presence_absence.csv \
+  -r tutorial_data/pan_genome_reference.fa \
+  -g tutorial_data/genomes --max-clusters 20 --profile rescue_only \
+  --threads 4 --metrics recore_smoke_metrics.tsv
 ```
 
-The default AMAP output metrics file is
-`benchmarks/amap_performance_metrics.tsv`. Because it records local hardware
-and temporary paths, treat it as a local run log rather than a portable
-benchmark table.
+It builds `target/release/recore` first unless you pass `--recore` with a
+binary or `--skip-build`. The metrics file records the machine and temporary
+paths, so treat it as a local run log rather than a portable benchmark table.
 
 ## Tutorial dataset
 

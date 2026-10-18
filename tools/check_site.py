@@ -9,7 +9,8 @@ fails when it drifts. This does, in four parts:
            stylesheet, script or image from another host (the site has to open
            from a clone, offline);
   docs     the documentation pages are what tools/build_docs.py makes of the
-           markdown today, so an edited .md cannot ship with a stale page;
+           markdown today, so an edited .md cannot ship with a stale page, and
+           the markdown has no MkDocs syntax left that would print as text;
   flags    every option the pages or the command builder mention exists in
            `recore --help`, the reference lists every option there is, and
            its defaults are the ones the binary prints;
@@ -21,6 +22,10 @@ fails when it drifts. This does, in four parts:
            Try-it block and counts are the website's, every page of the
            website cites Recore the way the README does, and no <picture> sits
            inside a link, where GitHub breaks it;
+  licence  LICENSE decides it: Cargo.toml, CITATION.cff, the README, the
+           contributing guide and the website name the same one;
+  synthetic the example report says its data are made up, next to its title,
+           and so does every link to it;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -197,13 +202,24 @@ def check_links(pages: dict[str, Page]) -> list[str]:
     return problems
 
 
+# MkDocs attribute lists, admonitions, tabs and snippets: GitHub and the Docs
+# tab print them as text.
+MKDOCS_LEFTOVER = re.compile(r"\{ ?\.md-|\{:|^!!! |^\?\?\? |^=== \"|--8<--", re.M)
+
+
 def check_docs_built() -> list[str]:
     stale = [
         path.as_posix()
         for path, text in build_docs.build().items()
         if not path.exists() or path.read_text(encoding="utf-8") != text
     ]
-    return [f"{p}: does not match its markdown; run python3 tools/build_docs.py" for p in stale]
+    problems = [f"{p}: does not match its markdown; run python3 tools/build_docs.py" for p in stale]
+    for _section, path, _title, _line in build_docs.PAGES:
+        if path.endswith(".md"):
+            for number, line in enumerate((SITE / path).read_text(encoding="utf-8").splitlines(), 1):
+                if MKDOCS_LEFTOVER.search(line):
+                    problems.append(f"docs/{path}:{number}: MkDocs syntax that prints as text: {line.strip()[:60]}")
+    return problems
 
 
 def check_flags(pages: dict[str, Page], recore: str) -> list[str]:
@@ -398,6 +414,55 @@ def check_readme(pages: dict[str, Page], recore: str) -> list[str]:
     return problems
 
 
+LICENCES = {"AFFERO": "AGPL-3.0", "LESSER": "LGPL-3.0", "GENERAL PUBLIC LICENSE": "GPL-3.0"}
+LICENCE_MENTION = re.compile(r"\b(A|L)?GPL(?:-?v?3)?\b|GNU (Affero |Lesser )?General Public License")
+
+
+def check_licence(pages: dict[str, Page]) -> list[str]:
+    """One licence: the one LICENSE holds, named the same everywhere else."""
+    head = Path("LICENSE").read_text(encoding="utf-8")[:400].upper()
+    spdx = next((name for marker, name in LICENCES.items() if marker in head), None)
+    if spdx is None:
+        return ["LICENSE: not a GNU licence this check knows; teach check_licence the new one"]
+    problems = []
+    for path, pattern in (("Cargo.toml", r'^license\s*=\s*"([^"]+)"'), ("CITATION.cff", r"^license:\s*(\S+)")):
+        found = re.search(pattern, Path(path).read_text(encoding="utf-8"), flags=re.M) if Path(path).exists() else None
+        if not found or not found.group(1).startswith(spdx):
+            problems.append(f"{path}: licence is {found.group(1) if found else 'missing'}, LICENSE holds {spdx}")
+    texts = {"README.md": README.read_text(encoding="utf-8"), ".github/CONTRIBUTING.md": Path(".github/CONTRIBUTING.md").read_text(encoding="utf-8")}
+    texts.update({name: (SITE / name).read_text(encoding="utf-8") for name in pages})
+    for name, text in texts.items():
+        for mention in LICENCE_MENTION.finditer(text):
+            prefix, variant = mention.group(1) or "", mention.group(2) or ""
+            named = "AGPL-3.0" if prefix == "A" or variant.startswith("Affero") else "LGPL-3.0" if prefix == "L" or variant.startswith("Lesser") else "GPL-3.0"
+            if named != spdx:
+                problems.append(f"{name}: names {mention.group(0)!r}, but LICENSE holds {spdx}")
+    return problems
+
+
+EXAMPLE_REPORT = SITE / "assets" / "example-report.html"
+
+
+def check_synthetic(pages: dict[str, Page]) -> list[str]:
+    """The example report is made from made-up genomes: it says so next to its
+    title, and every link to it says so too."""
+    problems = []
+    report = EXAMPLE_REPORT.read_text(encoding="utf-8")
+    if "<span class='synthetic-note' data-example-note" not in report:
+        problems.append(f"{EXAMPLE_REPORT}: no synthetic-data note; run python3 tools/label_example_report.py {EXAMPLE_REPORT}")
+    for name in pages:
+        text = (SITE / name).read_text(encoding="utf-8")
+        for link in re.finditer(r'(?:href|src)="[^"]*example-report\.html"', text):
+            nearby = re.sub(r"<[^>]+>", " ", text[max(0, link.start() - 400): link.end() + 400])
+            if "synthetic" not in nearby.lower():
+                problems.append(f"{name}: links to the example report without saying its data are synthetic")
+    readme = README.read_text(encoding="utf-8")
+    for link in re.finditer(r"\]\(([^)]*(?:example-report\.html|/recore/#report))\)", readme):
+        if "synthetic" not in readme[max(0, link.start() - 300): link.end() + 300].lower():
+            problems.append(f"README.md: links to the example report ({link.group(1)}) without saying its data are synthetic")
+    return problems
+
+
 def check_dashes(pages: dict[str, Page]) -> list[str]:
     problems = []
     for path in [SITE / p for p in pages] + SCRIPTS:
@@ -462,7 +527,8 @@ def main() -> int:
 
     pages = all_pages()
     front = {name: pages[name] for name in PAGES}
-    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_walkthrough() + check_readme(pages, args.recore) + check_dashes(pages)
+    problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_walkthrough() + check_readme(pages, args.recore)
+    problems += check_licence(pages) + check_synthetic(pages) + check_dashes(pages)
     if args.run_tutorial:
         if not shutil.which("minimap2"):
             problems.append("Try it: minimap2 is not on PATH")
@@ -473,7 +539,7 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    checked = "generated pages, links, options, defaults, walkthrough, README, dashes" + (", and the Try-it run" if args.run_tutorial else "")
+    checked = "generated pages, links, options, defaults, walkthrough, README, licence, synthetic data, dashes" + (", and the Try-it run" if args.run_tutorial else "")
     print(f"docs/: {checked} all agree with the code")
     return 0
 

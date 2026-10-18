@@ -21,7 +21,7 @@ puts back the genes that are really there, and keeps the evidence for each one.
 <sub>For Panaroo, Roary, PPanGGOLiN, PanTA and PIRATE · pure Rust · Linux and macOS</sub>
 
 <a href="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml"><img src="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License: AGPLv3"></a>
 <img src="https://img.shields.io/badge/Rust-1.85%2B-orange.svg" alt="Rust 1.85+">
 
 </div>
@@ -105,8 +105,8 @@ Four files answer most questions. [All of them](docs/guide/outputs.md).
 | `orthology_evidence.tsv` | One row per change: the evidence, the decision, and wording you can use in a paper. |
 | `recore_report.html` | The whole run in one page that works offline. Open it in any browser. |
 
-[Explore a real report](https://pathogenomics-lab.github.io/recore/#report),
-the one the example run writes.
+[Explore an example report](https://pathogenomics-lab.github.io/recore/#report),
+the one the example run writes from synthetic data.
 
 ## 5 · One setting that matters
 
@@ -146,7 +146,7 @@ here as well:
 > Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality
 > control of pangenome presence/absence matrices. *In preparation.*
 
-<sub>GPL-3.0, see [LICENSE](LICENSE) · [PathoGenOmics Lab](https://github.com/PathoGenOmics-Lab) · Paula Ruiz-Rodriguez, paula.ruiz.rodriguez@csic.es</sub>
+<sub>AGPL-3.0, see [LICENSE](LICENSE) · [PathoGenOmics Lab](https://github.com/PathoGenOmics-Lab) · Paula Ruiz-Rodriguez, paula.ruiz.rodriguez@csic.es</sub>
 
 ---
 

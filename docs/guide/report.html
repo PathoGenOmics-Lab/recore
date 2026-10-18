@@ -73,8 +73,8 @@
 <h1 id="run-report">Run report</h1>
 <p><code>--write-html-report</code> writes <code>recore_report.html</code> into the output directory. It is a single file with no external requests: it opens from a results directory on a cluster node with no network, and it keeps working when you email it to a co-author.</p>
 <div class="code" data-lang="bash"><pre>recore ... --tree species.tree --write-html-report -o recore_output/</pre></div>
-<p><a href="../assets/example-report.html">Open an example report</a>{ .md-button .md-button--primary target=_blank }</p>
-<p>That one is the output of the <a href="../getting-started/tutorial.html">tutorial</a> run: twelve genomes, twenty-four clusters, eleven planted false absences. It is the whole file, opened straight from this page, which is the point of it being self-contained.</p>
+<p><a href="../assets/example-report.html">Open an example report</a>, made from synthetic data.</p>
+<p>That one is the output of the <a href="../getting-started/tutorial.html">tutorial</a> run: twelve made-up genomes, twenty-four clusters, eleven planted false absences. It is the whole file, opened straight from this page, which is the point of it being self-contained.</p>
 <p>Without <code>--tree</code> the workspace still opens: the rows follow the matrix order, the tree pane only lists the genomes, and a notice above the workspace says so. Ancestral readings, tree colouring by subtree and rerooting need a real tree.</p>
 <p>If the workspace cannot start (a browser that cannot hold the embedded data, for instance), the report says why in place of the workspace, and <kbd>D</kbd> still opens the run details.</p>
 <h2 id="the-workspace">The workspace<a class="anchor" href="#the-workspace" aria-label="Link to this section">#</a></h2>
@@ -158,7 +158,7 @@
         <li><a href="https://github.com/PathoGenOmics-Lab/recore">GitHub</a></li>
         <li><a href="https://github.com/PathoGenOmics-Lab/recore/discussions">Questions</a></li>
         <li><a href="https://github.com/PathoGenOmics-Lab/recore/issues">Report a bug</a></li>
-        <li>GPL-3.0 &middot; PathoGenOmics Lab</li>
+        <li>AGPL-3.0 &middot; PathoGenOmics Lab</li>
       </ul>
     </div>
   </div>

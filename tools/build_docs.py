@@ -437,7 +437,7 @@ def footer(root: str) -> str:
         f'        <li><a href="{REPO}">GitHub</a></li>\n'
         f'        <li><a href="{REPO}/discussions">Questions</a></li>\n'
         f'        <li><a href="{REPO}/issues">Report a bug</a></li>\n'
-        "        <li>GPL-3.0 &middot; PathoGenOmics Lab</li>\n      </ul>\n    </div>\n  </div>\n</footer>\n"
+        "        <li>AGPL-3.0 &middot; PathoGenOmics Lab</li>\n      </ul>\n    </div>\n  </div>\n</footer>\n"
     )
 
 

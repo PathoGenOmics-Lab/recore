@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Recore"
+abstract: "Post-hoc rescue and quality control of pangenome presence/absence matrices."
+type: software
+authors:
+  - family-names: Ruiz-Rodriguez
+    given-names: Paula
+    orcid: "https://orcid.org/0000-0003-0727-5974"
+    affiliation: "I2SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain"
+    email: paula.ruiz.rodriguez@csic.es
+  - family-names: Coscolla
+    given-names: Mireia
+    orcid: "https://orcid.org/0000-0003-0752-0538"
+    affiliation: "I2SysBio, University of Valencia-CSIC, FISABIO Joint Research Unit Infection and Public Health, Valencia, Spain"
+repository-code: "https://github.com/PathoGenOmics-Lab/recore"
+url: "https://pathogenomics-lab.github.io/recore/"
+license: AGPL-3.0-only
+keywords:
+  - pangenome
+  - presence/absence matrix
+  - Panaroo
+  - bioinformatics

@@ -224,8 +224,9 @@ The Python is tooling, not a shipped package, and it is not covered by CI:
   what a change did to real output.
 - `benchmarks/make_tutorial_dataset.py` generates the dataset used by the
   tutorial and by the example report.
-- `benchmarks/amap_performance_benchmark.py` profiles a run on a full local
-  dataset; `benchmarks/README.md` documents its invocation and its output.
+- `benchmarks/performance_benchmark.py` times a run on a pangenome you have
+  (wall time, peak memory, disk); `benchmarks/README.md` documents its
+  invocation and its output.
 - `benchmarks/recore_report.py` and `tools/make_logo_variants.py` generate
   assets.
 
@@ -282,14 +283,9 @@ By contributing you agree that your contribution is licensed under the same
 terms as the project, which are the ones in [LICENSE](../LICENSE) at the
 repository root.
 
-> [!WARNING]
-> The repository currently disagrees with itself about which licence that is.
-> `Cargo.toml`, the README and the documentation all say GNU General Public
-> License v3.0 (`GPL-3.0-only`), while the committed `LICENSE` file contains the
-> text of the GNU **Affero** General Public License v3. Those are different
-> licences with different obligations for anyone running a modified copy over a
-> network. This needs resolving by the maintainer, one way or the other, before
-> the first outside contribution lands.
+That licence is the GNU Affero General Public License v3.0 (`AGPL-3.0-only`).
+`Cargo.toml`, `CITATION.cff`, the README and the website name it too, and
+`tools/check_site.py` fails if one of them drifts from `LICENSE`.
 
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 Security issues do not go in the issue tracker: see [SECURITY.md](SECURITY.md).

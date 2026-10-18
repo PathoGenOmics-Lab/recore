@@ -88,6 +88,25 @@ and Recore uses semantic versioning.
 
 ### Changed
 
+- Recore is licensed under the GNU Affero General Public License v3.0
+  (`AGPL-3.0-only`), the licence its `LICENSE` file holds; `Cargo.toml`, the
+  README and the website said GPL-3.0. A `CITATION.cff` names the authors for
+  GitHub's citation button. `tools/check_site.py` fails if `Cargo.toml`,
+  `CITATION.cff`, the README, the contributing guide or the website name a
+  licence other than the one in `LICENSE`.
+- The example report says it is made from synthetic data: next to its own
+  title, where it shows in the website's frame, full screen and on a phone,
+  and next to every link to it on the website, in the README and in the
+  documentation. `tools/label_example_report.py` adds the note after the report
+  is regenerated, and `tools/check_site.py` fails on a report or a link without
+  it.
+- `benchmarks/performance_benchmark.py` times Recore on any pangenome, given
+  the same inputs as Recore, with an optional tree to keep a subset of genomes
+  and a cluster limit for a quick run. It replaces a benchmark that only ran on
+  one local dataset. `benchmarks/self_benchmark.py` works in the system's
+  temporary directory instead of a macOS path.
+- The Run report page no longer prints a leftover MkDocs button attribute as
+  text, and `tools/check_site.py` fails on MkDocs syntax left in the markdown.
 - The documentation site is now a short website instead of fourteen MkDocs
   pages: an install line, a command builder that writes the run for your
   pangenome tool and the files you have, a one-minute example with the counts it

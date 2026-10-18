@@ -9,10 +9,10 @@ co-author.
 recore ... --tree species.tree --write-html-report -o recore_output/
 ```
 
-[Open an example report](../assets/example-report.html){ .md-button .md-button--primary target=_blank }
+[Open an example report](../assets/example-report.html), made from synthetic data.
 
 That one is the output of the [tutorial](../getting-started/tutorial.md) run:
-twelve genomes, twenty-four clusters, eleven planted false absences. It is the
+twelve made-up genomes, twenty-four clusters, eleven planted false absences. It is the
 whole file, opened straight from this page, which is the point of it being
 self-contained.
 
