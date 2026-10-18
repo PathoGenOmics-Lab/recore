@@ -553,9 +553,20 @@
         b.setAttribute("aria-pressed", b.getAttribute("data-policy") === policy ? "true" : "false");
       });
       if (summary) {
-        summary.innerHTML =
-          "With <code>" + policy + "</code>, <b>" + putBack + " of " + total + "</b> go into the corrected matrix. " +
-          "The other " + (total - putBack) + " stay in the states file and <code>orthology_evidence.tsv</code>, with the reason.";
+        // Built from nodes, not markup: the policy name is read from the
+        // page, and it goes in as text.
+        var code = function (text) {
+          var el = document.createElement("code");
+          el.textContent = text;
+          return el;
+        };
+        var count = document.createElement("b");
+        count.textContent = putBack + " of " + total;
+        summary.textContent = "";
+        summary.append(
+          "With ", code(policy), ", ", count, " go into the corrected matrix. The other " + (total - putBack) +
+            " stay in the states file and ", code("orthology_evidence.tsv"), ", with the reason."
+        );
       }
     }
     buttons.forEach(function (b) {
@@ -599,7 +610,7 @@
     var active = -1;
 
     function escapeHtml(text) {
-      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
     // Words match where a word starts, so "min" finds --min-prevalence and
@@ -669,7 +680,7 @@
           var e = hit.entry;
           var title = e.section ? e.page + " \u203a " + e.section : e.page;
           return (
-            '<a href="' + root + e.url + '"><b>' + highlight(title, words) + "</b><small>" +
+            '<a href="' + escapeHtml(root + e.url) + '"><b>' + highlight(title, words) + "</b><small>" +
             highlight(snippet(e.text, words[0]), words) + "</small></a>"
           );
         })
