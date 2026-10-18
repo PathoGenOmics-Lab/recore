@@ -16,6 +16,23 @@ If you use Recore, please cite:
 }
 ```
 
+The software is archived on Zenodo. Cite
+[doi:10.5281/zenodo.23448590](https://doi.org/10.5281/zenodo.23448590) for Recore in general (it
+resolves to the latest version), or the version you ran, such as
+[doi:10.5281/zenodo.23448591](https://doi.org/10.5281/zenodo.23448591) for 1.0.0:
+
+```bibtex
+@software{recore_software,
+  author    = {Ruiz-Rodriguez, Paula and Coscolla, Mireia},
+  title     = {Recore},
+  version   = {1.0.0},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.23448591},
+  url       = {https://doi.org/10.5281/zenodo.23448591}
+}
+```
+
 Please also cite the tools Recore depends on for the run you report:
 
 - **minimap2**, for every sequence search:

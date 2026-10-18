@@ -23,6 +23,7 @@ puts back the genes that are really there, and keeps the evidence for each one.
 <a href="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml"><img src="https://github.com/PathoGenOmics-Lab/recore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License: AGPLv3"></a>
 <img src="https://img.shields.io/badge/Rust-1.85%2B-orange.svg" alt="Rust 1.85+">
+<a href="https://doi.org/10.5281/zenodo.23448590"><img src="https://img.shields.io/badge/doi-10.5281%2Fzenodo.23448590-%23ff0077" alt="DOI 10.5281/zenodo.23448590"></a>
 
 </div>
 
@@ -145,6 +146,9 @@ here as well:
 
 > Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality
 > control of pangenome presence/absence matrices. *In preparation.*
+
+The software itself is archived on Zenodo: [doi:10.5281/zenodo.23448590](https://doi.org/10.5281/zenodo.23448590)
+for every version, or [doi:10.5281/zenodo.23448591](https://doi.org/10.5281/zenodo.23448591) for 1.0.0.
 
 <sub>AGPL-3.0, see [LICENSE](LICENSE) · [PathoGenOmics Lab](https://github.com/PathoGenOmics-Lab) · Paula Ruiz-Rodriguez, paula.ruiz.rodriguez@csic.es</sub>
 

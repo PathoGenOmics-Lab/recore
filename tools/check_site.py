@@ -27,7 +27,9 @@ fails when it drifts. This does, in four parts:
   synthetic the example report says its data are made up, next to its title,
            and so does every link to it;
   version  the version in Cargo.toml is the one CITATION.cff and the example
-           report carry, and the CHANGELOG has a section and a link for it;
+           report carry, the CHANGELOG has a section and a link for it, and the
+           DOI in CITATION.cff is shown in the README, on the citation page and
+           in the footer;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -478,6 +480,14 @@ def check_versions() -> list[str]:
         problems.append(f"CHANGELOG.md: no dated '## [{version}]' section for the version in Cargo.toml")
     if not re.search(rf"^\[{re.escape(version)}\]: https://", changelog, flags=re.M):
         problems.append(f"CHANGELOG.md: no link line for [{version}] at the bottom")
+    # The archive's DOI, once there is one, is the same everywhere it is shown.
+    doi = re.search(r"^doi:\s*(\S+)", Path("CITATION.cff").read_text(encoding="utf-8"), flags=re.M)
+    if doi:
+        for place, text in (("README.md", README.read_text(encoding="utf-8")),
+                            ("docs/about/citation.md", (SITE / "about" / "citation.md").read_text(encoding="utf-8")),
+                            ("docs/index.html footer", (SITE / "index.html").read_text(encoding="utf-8"))):
+            if doi.group(1) not in text:
+                problems.append(f"{place}: does not show the DOI {doi.group(1)} that CITATION.cff holds")
     shown = re.search(r"<meta name='generator' content='Recore v([^']+)'>", EXAMPLE_REPORT.read_text(encoding="utf-8"))
     if not shown or shown.group(1) != version:
         problems.append(
