@@ -7,6 +7,13 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- The website's policy picker builds its sentence from text nodes instead of
+  markup, so a policy name read from the page is always shown as text and can
+  never run as HTML (CodeQL `js/xss-through-dom`). The documentation search
+  also escapes quotes in the result links it writes.
+
 ### Added
 
 - Recore is archived on Zenodo. The README carries the DOI badge and both DOIs
