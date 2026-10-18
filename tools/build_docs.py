@@ -427,7 +427,8 @@ def footer(root: str) -> str:
     return (
         '<footer class="foot">\n  <div class="wrap">\n    <div>\n      <h3>Cite</h3>\n'
         "      <blockquote>Ruiz-Rodriguez P, Coscolla M. (2026). Recore: post-hoc rescue and quality control of pangenome "
-        "presence/absence matrices. <i>In preparation.</i></blockquote>\n    </div>\n"
+        "presence/absence matrices. <i>In preparation.</i></blockquote>\n"
+        '      <p class="doi">Software: <a href="https://doi.org/10.5281/zenodo.23448590">doi:10.5281/zenodo.23448590</a></p>\n    </div>\n'
         "    <div>\n      <h3>Learn more</h3>\n      <ul>\n"
         f'        <li><a href="{root}index.html">Get started</a></li>\n'
         f'        <li><a href="{root}{INDEX}">Documentation</a></li>\n'

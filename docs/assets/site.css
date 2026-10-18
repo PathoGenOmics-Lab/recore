@@ -1504,6 +1504,10 @@ kbd {
   color: var(--ink-soft);
 }
 
+.foot .doi {
+  margin: 10px 0 0;
+}
+
 @media (max-width: 760px) {
   .foot .wrap {
     grid-template-columns: minmax(0, 1fr);

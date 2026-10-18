@@ -7,6 +7,14 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Recore is archived on Zenodo. The README carries the DOI badge and both DOIs
+  (10.5281/zenodo.23448590 for every version, 10.5281/zenodo.23448591 for 1.0.0), `CITATION.cff` holds
+  them, the citation page has a BibTeX entry for the software, and the
+  website's footer links the archive. `tools/check_site.py` fails if the DOI in
+  `CITATION.cff` is missing from the README, the citation page or the footer.
+
 ## [1.0.0] - 2026-10-18
 
 The first public release, under the GNU Affero General Public License v3.0.
