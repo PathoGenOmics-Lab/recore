@@ -34,13 +34,12 @@ you in the release notes unless you would rather stay anonymous.
 
 | Version | Status |
 |---------|--------|
-| `main` (0.2.0 development line) | supported, fixes land here first |
-| `v0.1.0` | the only tagged release so far |
+| `1.0.x` | supported, fixes land here first |
+| older than 1.0 | not supported: upgrade to the newest release |
 
-Recore has exactly one tag today, so there is deliberately no "previous stable"
-row in that table and no backport branch: there is nothing to backport to. A
-security fix goes onto the development line and out in the next tag, and the
-answer to "which version should I run" is the newest one.
+There is deliberately no backport branch. A security fix goes onto `main` and
+out in the next release, and the answer to "which version should I run" is the
+newest one.
 
 Nothing else is supported. In particular there is no Bioconda package, no
 container image and no third-party build maintained by this project, so a binary

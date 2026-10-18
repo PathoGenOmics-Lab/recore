@@ -41,7 +41,7 @@ body:
     attributes:
       label: Version
       description: The output of `recore --version`, plus the commit if you built from a branch.
-      placeholder: recore 0.2.0
+      placeholder: recore 1.0.0
     validations:
       required: true
 

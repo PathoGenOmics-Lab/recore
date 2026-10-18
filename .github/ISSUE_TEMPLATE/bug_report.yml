@@ -36,9 +36,9 @@ body:
       label: Recore version
       description: >-
         The output of `recore --version`. If you built from a branch rather than
-        a tag, add the commit too: there is one tag so far and `main` moves, so
-        the version string alone does not identify the code you ran.
-      placeholder: recore 0.2.0 (main, 4f9a1c2)
+        a release, add the commit too: `main` moves, so the version string alone
+        does not identify the code you ran.
+      placeholder: recore 1.0.0 (main, 4f9a1c2)
     validations:
       required: true
 

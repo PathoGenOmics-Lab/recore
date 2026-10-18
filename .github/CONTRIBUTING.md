@@ -234,6 +234,27 @@ Keep them dependency-light and runnable with a plain `python3`. They are
 diagnostics, and a diagnostic that needs its own environment before it can tell
 you anything tends not to get run.
 
+## Releasing
+
+A release is one pull request and one tag:
+
+1. Set the new version in `Cargo.toml` and run `cargo build` so `Cargo.lock`
+   follows.
+2. Turn `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] - YYYY-MM-DD`,
+   keep an empty `## [Unreleased]` above it, and add the link line at the
+   bottom.
+3. Set `version` and `date-released` in `CITATION.cff`.
+4. Regenerate the example report with the commands in
+   [docs/about/contributing.md](../docs/about/contributing.md), so the website
+   shows the new version.
+5. Merge, then push the tag `vX.Y.Z`. The release workflow builds the four
+   binaries and publishes the release, and Zenodo archives it with a DOI.
+
+`tools/check_site.py` fails while `Cargo.toml`, `CITATION.cff`, the CHANGELOG
+and the example report disagree on the version. The release workflow also runs
+on any pull request that changes it, without publishing, so a broken build
+shows up before the tag.
+
 ## Documentation
 
 The website is plain HTML in `docs/` (`index.html`, `how-it-works.html`,
