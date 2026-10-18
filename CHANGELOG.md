@@ -7,6 +7,14 @@ and Recore uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-18
+
+The first public release, under the GNU Affero General Public License v3.0.
+Since 0.2.0, Recore also reads PPanGGOLiN, PanTA and PIRATE, needs five to seven
+times less memory per genome, marks the cells it never searched instead of
+calling them absent, and comes with a website and a report that explain every
+decision. Every change, in detail:
+
 ### Fixed
 
 - Memory no longer grows by megabytes with every genome. Each genome's
@@ -100,6 +108,11 @@ and Recore uses semantic versioning.
   documentation. `tools/label_example_report.py` adds the note after the report
   is regenerated, and `tools/check_site.py` fails on a report or a link without
   it.
+- The release workflow builds the four binaries on a pull request that changes
+  it, and by hand, without publishing anything; only a `v*` tag publishes, and
+  only that job can write to the repository. `tools/check_site.py` fails if
+  `Cargo.toml`, `CITATION.cff`, the CHANGELOG and the example report disagree
+  on the version.
 - `benchmarks/performance_benchmark.py` times Recore on any pangenome, given
   the same inputs as Recore, with an optional tree to keep a subset of genomes
   and a cluster limit for a quick run. It replaces a benchmark that only ran on
@@ -722,6 +735,7 @@ and Recore uses semantic versioning.
   preset, thread count, and output directory.
 - CI and release workflow scaffolding.
 
-[Unreleased]: https://github.com/PathoGenOmics-Lab/recore/compare/0.2.0...HEAD
-[0.2.0]: https://github.com/PathoGenOmics-Lab/recore/compare/v0.1.0...0.2.0
+[Unreleased]: https://github.com/PathoGenOmics-Lab/recore/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/PathoGenOmics-Lab/recore/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/PathoGenOmics-Lab/recore/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PathoGenOmics-Lab/recore/releases/tag/v0.1.0

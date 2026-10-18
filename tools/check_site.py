@@ -26,6 +26,8 @@ fails when it drifts. This does, in four parts:
            contributing guide and the website name the same one;
   synthetic the example report says its data are made up, next to its title,
            and so does every link to it;
+  version  the version in Cargo.toml is the one CITATION.cff and the example
+           report carry, and the CHANGELOG has a section and a link for it;
   dashes   no em-dashes;
   try      with --run-tutorial, the "Try it" commands are run as written and
            summary.txt must give the numbers the page promises.
@@ -463,6 +465,28 @@ def check_synthetic(pages: dict[str, Page]) -> list[str]:
     return problems
 
 
+def check_versions() -> list[str]:
+    """A release names one version: Cargo.toml's, also in CITATION.cff, in the
+    CHANGELOG and in the example report the website shows."""
+    version = re.search(r'^version\s*=\s*"([^"]+)"', Path("Cargo.toml").read_text(encoding="utf-8"), flags=re.M).group(1)
+    problems = []
+    cff = re.search(r"^version:\s*([\w.-]+)", Path("CITATION.cff").read_text(encoding="utf-8"), flags=re.M)
+    if not cff or cff.group(1) != version:
+        problems.append(f"CITATION.cff: version is {cff.group(1) if cff else 'missing'}, Cargo.toml says {version}")
+    changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+    if not re.search(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, flags=re.M):
+        problems.append(f"CHANGELOG.md: no dated '## [{version}]' section for the version in Cargo.toml")
+    if not re.search(rf"^\[{re.escape(version)}\]: https://", changelog, flags=re.M):
+        problems.append(f"CHANGELOG.md: no link line for [{version}] at the bottom")
+    shown = re.search(r"<meta name='generator' content='Recore v([^']+)'>", EXAMPLE_REPORT.read_text(encoding="utf-8"))
+    if not shown or shown.group(1) != version:
+        problems.append(
+            f"{EXAMPLE_REPORT}: made by Recore {shown.group(1) if shown else 'unknown'}, Cargo.toml says {version}; "
+            "regenerate it (docs/about/contributing.md has the commands)"
+        )
+    return problems
+
+
 def check_dashes(pages: dict[str, Page]) -> list[str]:
     problems = []
     for path in [SITE / p for p in pages] + SCRIPTS:
@@ -528,7 +552,7 @@ def main() -> int:
     pages = all_pages()
     front = {name: pages[name] for name in PAGES}
     problems = check_docs_built() + check_links(pages) + check_flags(front, args.recore) + check_walkthrough() + check_readme(pages, args.recore)
-    problems += check_licence(pages) + check_synthetic(pages) + check_dashes(pages)
+    problems += check_licence(pages) + check_synthetic(pages) + check_versions() + check_dashes(pages)
     if args.run_tutorial:
         if not shutil.which("minimap2"):
             problems.append("Try it: minimap2 is not on PATH")
@@ -539,7 +563,7 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    checked = "generated pages, links, options, defaults, walkthrough, README, licence, synthetic data, dashes" + (", and the Try-it run" if args.run_tutorial else "")
+    checked = "generated pages, links, options, defaults, walkthrough, README, licence, synthetic data, versions, dashes" + (", and the Try-it run" if args.run_tutorial else "")
     print(f"docs/: {checked} all agree with the code")
     return 0
 
