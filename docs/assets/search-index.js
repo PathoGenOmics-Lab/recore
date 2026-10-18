@@ -430,7 +430,7 @@ window.RECORE_DOCS_INDEX = [
 "page": "The report",
 "section": "",
 "url": "guide/report.html",
-"text": "--write-html-report writes recore_report.html into the output directory. It is a single file with no external requests: it opens from a results directory on a cluster node with no network, and it keeps working when you email it to a co-author. Open an example report{ .md-button .md-button--primary target=_blank } That one is the output of the tutorial run: twelve genomes, twenty-four clusters, eleven planted false absences. It is the whole file, opened straight from this page, which is the point of it being self-contained. Without --tree the workspace still opens: the rows follow the matrix or"
+"text": "--write-html-report writes recore_report.html into the output directory. It is a single file with no external requests: it opens from a results directory on a cluster node with no network, and it keeps working when you email it to a co-author. Open an example report, made from synthetic data. That one is the output of the tutorial run: twelve made-up genomes, twenty-four clusters, eleven planted false absences. It is the whole file, opened straight from this page, which is the point of it being self-contained. Without --tree the workspace still opens: the rows follow the matrix order, the tree"
 },
 {
 "page": "The report",
@@ -994,7 +994,7 @@ window.RECORE_DOCS_INDEX = [
 "page": "Citation",
 "section": "License",
 "url": "about/citation.html#license",
-"text": "GNU General Public License v3.0. See LICENSE."
+"text": "GNU Affero General Public License v3.0 (AGPL-3.0-only). See LICENSE."
 },
 {
 "page": "Contributing",

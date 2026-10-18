@@ -100,7 +100,7 @@ python3 -m http.server 8000 --directory out/</pre></div>
 <div class="code" data-lang="bash"><pre>cargo build
 python3 tools/check_site.py --recore target/debug/recore --run-tutorial</pre></div>
 <p>That fails on a documentation page that no longer matches its markdown, a dead link or anchor, an option the site mentions that <code>recore --help</code> does not have, an option missing from the reference, a default that differs from the binary's, an em-dash, and an example run whose counts differ from the ones the page shows.</p>
-<p><code>docs/assets/example-report.html</code> is the report the website and the <a href="../guide/report.html">Run report</a> page link to. It is the tutorial run's own output, so regenerate it whenever the viewer changes:</p>
+<p><code>docs/assets/example-report.html</code> is the report the website and the <a href="../guide/report.html">Run report</a> page link to. It is the tutorial run's own output, so regenerate it whenever the viewer changes. Its genomes are made up, so the last step marks it as synthetic example data next to its title, and <code>tools/check_site.py</code> fails on a report without that note, or on a link to it that does not say so:</p>
 <div class="code" data-lang="bash"><pre>python3 benchmarks/make_tutorial_dataset.py --out tutorial_data
 recore -p tutorial_data/gene_presence_absence.csv \
        -r tutorial_data/pan_genome_reference.fa \
@@ -108,7 +108,8 @@ recore -p tutorial_data/gene_presence_absence.csv \
        --synteny --multi-allele --matrix-policy balanced \
        --reference-genome L4_AS00401 --tree tutorial_data/species.tree \
        --write-html-report -o tutorial_out/
-cp tutorial_out/recore_report.html docs/assets/example-report.html</pre></div>
+cp tutorial_out/recore_report.html docs/assets/example-report.html
+python3 tools/label_example_report.py docs/assets/example-report.html</pre></div>
 <p>The two logo variants and the report's dark-mode colour overrides all come from one source file, so regenerate those together rather than editing either by hand:</p>
 <div class="code" data-lang="bash"><pre>python3 tools/make_logo_variants.py</pre></div>
 <h2 id="reporting-a-problem">Reporting a problem<a class="anchor" href="#reporting-a-problem" aria-label="Link to this section">#</a></h2>
@@ -139,7 +140,7 @@ cp tutorial_out/recore_report.html docs/assets/example-report.html</pre></div>
         <li><a href="https://github.com/PathoGenOmics-Lab/recore">GitHub</a></li>
         <li><a href="https://github.com/PathoGenOmics-Lab/recore/discussions">Questions</a></li>
         <li><a href="https://github.com/PathoGenOmics-Lab/recore/issues">Report a bug</a></li>
-        <li>GPL-3.0 &middot; PathoGenOmics Lab</li>
+        <li>AGPL-3.0 &middot; PathoGenOmics Lab</li>
       </ul>
     </div>
   </div>

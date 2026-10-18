@@ -17,13 +17,14 @@ import random
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_WORKDIR = Path("/private/tmp/recore_self_benchmark")
+DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "recore_self_benchmark"
 DEFAULT_METRICS = ROOT / "benchmarks" / "self_benchmark_metrics.tsv"
 
 METADATA_COLS = {

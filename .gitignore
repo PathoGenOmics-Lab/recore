@@ -25,10 +25,6 @@ tutorial_out/
 out_strict/
 out_balanced/
 out_sensitive/
-benchmarks/amap_performance_metrics.tsv
+benchmarks/performance_metrics.tsv
 
 
-# Added by cargo
-
-/target
-.claude/

@@ -104,8 +104,11 @@ that differs from the binary's, an em-dash, and an example run whose counts
 differ from the ones the page shows.
 
 `docs/assets/example-report.html` is the report the website and the
-[Run report](../guide/report.md) page link to. It is the tutorial run's own output, so regenerate it whenever the
-viewer changes:
+[Run report](../guide/report.md) page link to. It is the tutorial run's own
+output, so regenerate it whenever the viewer changes. Its genomes are made up,
+so the last step marks it as synthetic example data next to its title, and
+`tools/check_site.py` fails on a report without that note, or on a link to it
+that does not say so:
 
 ```bash
 python3 benchmarks/make_tutorial_dataset.py --out tutorial_data
@@ -116,6 +119,7 @@ recore -p tutorial_data/gene_presence_absence.csv \
        --reference-genome L4_AS00401 --tree tutorial_data/species.tree \
        --write-html-report -o tutorial_out/
 cp tutorial_out/recore_report.html docs/assets/example-report.html
+python3 tools/label_example_report.py docs/assets/example-report.html
 ```
 
 The two logo variants and the report's dark-mode colour overrides all come from

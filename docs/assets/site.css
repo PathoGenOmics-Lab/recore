@@ -40,6 +40,7 @@
   --absent: #1f2128;
   --absent-stroke: #454856;
   --ok: #3fcf8e;
+  --note: #e0a030;
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -81,6 +82,7 @@
   --absent: #eef0f3;
   --absent-stroke: #d2d5db;
   --ok: #0f7a52;
+  --note: #b7791f;
   --shadow: 0 1px 2px rgba(16, 18, 27, 0.06), 0 8px 24px rgba(16, 18, 27, 0.06);
   color-scheme: light;
 }
@@ -1113,6 +1115,22 @@ kbd {
   margin-left: auto;
   font-weight: 600;
   font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Says that what it sits next to was made from synthetic data. */
+.tag-synthetic {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--note) 60%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--note) 14%, transparent);
+  color: var(--ink-soft);
+  font: 650 0.72rem/1.35 var(--font);
+  font-style: normal;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .report-stage {
@@ -1157,6 +1175,11 @@ kbd {
 
 @media (max-width: 700px) {
   .report-stage {
+    display: none;
+  }
+
+  /* The message that replaces the frame says it is synthetic data. */
+  .report-bar .tag-synthetic {
     display: none;
   }
 
