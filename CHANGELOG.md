@@ -18,8 +18,9 @@ and Recore uses semantic versioning.
 
 - Recore is on Bioconda for Linux and macOS, Intel and ARM:
   `conda install -c conda-forge -c bioconda recore` installs it together with
-  minimap2. The README shows the Bioconda version and downloads and leads its
-  install section with that command, and `SECURITY.md` supports the package.
+  minimap2. The README shows the Bioconda version and downloads, the README and
+  the website's Install section lead with that command and keep the source
+  build as the alternative, and `SECURITY.md` supports the package.
 - Recore is archived on Zenodo. The README carries the DOI badge and both DOIs
   (10.5281/zenodo.23448590 for every version, 10.5281/zenodo.23448591 for 1.0.0), `CITATION.cff` holds
   them, the citation page has a BibTeX entry for the software, and the

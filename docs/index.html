@@ -75,11 +75,16 @@
       <div class="section-head">
         <span class="num">1</span>
         <h2>Install</h2>
-        <p>Two commands. Recore uses minimap2 to search.</p>
+        <p>One command. Bioconda installs Recore together with minimap2, which it uses to search.</p>
       </div>
       <div class="cols-2">
         <div class="card">
-          <div class="step-label">minimap2</div>
+          <div class="step-label">Bioconda</div>
+          <div class="code one-line"><pre><span class="p">$ </span>conda install -c conda-forge -c bioconda recore</pre></div>
+          <p class="note">Linux and macOS, Intel and ARM. Check with <code>recore --version</code>. The package is <a href="https://anaconda.org/bioconda/recore">on Bioconda</a>.</p>
+        </div>
+        <div class="card">
+          <div class="step-label">Or from source: minimap2, then Recore</div>
           <div class="tabs" role="tablist" aria-label="Install minimap2 with">
             <button class="tab" role="tab" aria-selected="true" aria-controls="mm-conda" id="mm-conda-tab">conda</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="mm-brew" id="mm-brew-tab">Homebrew</button>
@@ -94,11 +99,8 @@
           <div class="tabpanel" role="tabpanel" id="mm-apt" aria-labelledby="mm-apt-tab" hidden>
             <div class="code"><pre><span class="p">$ </span>sudo apt install minimap2</pre></div>
           </div>
-        </div>
-        <div class="card">
-          <div class="step-label">Recore</div>
           <div class="code one-line"><pre><span class="p">$ </span>cargo install --git https://github.com/PathoGenOmics-Lab/recore --locked</pre></div>
-          <p class="note">Needs Rust 1.85 or newer (<a href="https://rustup.rs">rustup.rs</a>), about a minute to build. Check with <code>recore --version</code>. The source is <a href="https://github.com/PathoGenOmics-Lab/recore">on GitHub</a>.</p>
+          <p class="note">Needs Rust 1.85 or newer (<a href="https://rustup.rs">rustup.rs</a>), about a minute to build. The source is <a href="https://github.com/PathoGenOmics-Lab/recore">on GitHub</a>.</p>
         </div>
       </div>
     </div>
