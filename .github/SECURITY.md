@@ -41,11 +41,12 @@ There is deliberately no backport branch. A security fix goes onto `main` and
 out in the next release, and the answer to "which version should I run" is the
 newest one.
 
-Nothing else is supported. In particular there is no Bioconda package, no
-container image and no third-party build maintained by this project, so a binary
-you did not build yourself or download from this repository's
-[Releases](https://github.com/PathoGenOmics-Lab/recore/releases) page is outside
-what we can speak for.
+The [Bioconda package](https://anaconda.org/bioconda/recore) is built from the
+release tarballs and supported like the release it carries. Nothing else is:
+there is no container image or other third-party build maintained by this
+project, so a binary you did not build yourself, download from this
+repository's [Releases](https://github.com/PathoGenOmics-Lab/recore/releases)
+page or install from Bioconda is outside what we can speak for.
 
 ## What counts as a vulnerability here
 

@@ -24,6 +24,8 @@ puts back the genes that are really there, and keeps the evidence for each one.
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License: AGPLv3"></a>
 <img src="https://img.shields.io/badge/Rust-1.85%2B-orange.svg" alt="Rust 1.85+">
 <a href="https://doi.org/10.5281/zenodo.23448590"><img src="https://img.shields.io/badge/doi-10.5281%2Fzenodo.23448590-%23ff0077" alt="DOI 10.5281/zenodo.23448590"></a>
+<a href="https://anaconda.org/bioconda/recore"><img src="https://img.shields.io/conda/vn/bioconda/recore?label=bioconda&color=009E73" alt="Bioconda version"></a>
+<a href="https://anaconda.org/bioconda/recore"><img src="https://img.shields.io/conda/dn/bioconda/recore?label=downloads&color=009E73" alt="Bioconda downloads"></a>
 
 </div>
 
@@ -42,16 +44,27 @@ __and Mireia Coscolla<sup>1</sup>__
 
 ## 1 · Install
 
-Two commands. Recore uses [minimap2](https://github.com/lh3/minimap2) to search.
+One command. [Bioconda](https://anaconda.org/bioconda/recore) installs Recore
+together with [minimap2](https://github.com/lh3/minimap2), which it uses to
+search, on Linux and macOS, Intel and ARM alike.
+
+```bash
+conda install -c conda-forge -c bioconda recore
+```
+
+Check with `recore --version`.
+
+To build it from source instead, you need Rust 1.85 or newer
+([rustup.rs](https://rustup.rs)) and minimap2 on your `PATH`; the build takes
+about a minute.
 
 ```bash
 conda install -c bioconda minimap2     # or: brew install minimap2 / sudo apt install minimap2
 cargo install --git https://github.com/PathoGenOmics-Lab/recore --locked
 ```
 
-Needs Rust 1.85 or newer ([rustup.rs](https://rustup.rs)), about a minute to
-build. Check with `recore --version`. From a clone, `cargo build --release`
-puts the binary at `target/release/recore`.
+From a clone, `cargo build --release` puts the binary at
+`target/release/recore`.
 
 ## 2 · Your command
 
